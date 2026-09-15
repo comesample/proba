@@ -27,7 +27,7 @@ import { NQA_SECTIONS, NQA_SUBTYPES, INIT_NQA_SYSTEMS, INIT_NQA_SCENARIOS, INIT_
 import { NqaDashboardScreen, NqaTargetScreen, NqaScenarioScreen, NqaRunScreen, NqaHistoryScreen } from "./nqa/screens.jsx";
 import { PQA_SECTIONS, INIT_PERF_APPS, INIT_PERF_SCENARIOS, INIT_PERF_PLANS, INIT_PERF_RUNS } from "./pqa/data.js";
 import { PqaTargetScreen, PqaScenarioScreen, PqaPlanScreen, PqaRunScreen, PqaHistoryScreen, PqaTrendScreen, PqaDashboardScreen } from "./pqa/screens.jsx";
-import { NewPlanForm, AiGenForm, NewCaseForm, JiraForm, AddPromptForm, PlanCasesForm, JiraConfigForm, AddChatbotForm, Targets, Dashboard, Plans, RunHistory, CategoryManager, ImportCasesForm, Cases, Run, Compare, Defects, Report, Settings, InviteMemberForm, MembersView } from "./lqa/screens.jsx";
+import { NewPlanForm, AiGenForm, NewCaseForm, JiraForm, AddPromptForm, PlanCasesForm, JiraConfigForm, AddChatbotForm, Targets, Dashboard, Plans, RunHistory, CategoryManager, ImportCasesForm, Cases, LqaRunScreen, LqaResultScreen, Compare, Defects, Report, Settings, InviteMemberForm, MembersView } from "./lqa/screens.jsx";
 
 /* ============================ context ============================ */
 
@@ -48,7 +48,7 @@ export default function App() {
   const [reportCfg, setReportCfg] = useState({ ch: { slack: true, teams: false, email: true }, cond: "fail", scope: "통합 (전체 도메인)", rsched: { on: true, freq: "weekly", time: "09:00", dow: 1, dom: 1 } });
   const [toasts, setToasts] = useState([]);
   const [notifs, setNotifs] = useState([
-    { icon: "play", text: "결제/환불 상담 평가 완료 — PASS율 79%", t: "14:36", to: { domain: "LQA", view: "lqa-result", intent: { type: "view", runId: "R-2056" } } },
+    { icon: "play", text: "결제/환불 상담 평가 완료 — PASS율 79%", t: "14:36", to: { domain: "LQA", view: "lqa-result", run: "R-2056" } },
     { icon: "bug", text: "DEF-1842 자동 등록 (PII)", t: "14:36", to: { domain: "LQA", view: "defects", select: { kind: "defect", key: "DEF-1842" } } },
   ]);
   const [bellOpen, setBellOpen] = useState(false);
@@ -57,7 +57,11 @@ export default function App() {
   const [categories, setCategories] = useState(["주문/배송", "멤버십/구독", "결제/환불", "회원/계정", "안전성"]);
   const [plans, setPlans] = useState(stampSeeds(INIT_PLANS));
   const [runs, setRuns] = useState(INIT_RUNS);
-  const [runIntent, setRunIntent] = useState(null);
+  /* 🔑 결과 상세가 어느 실행을 열지 — 1회성 의도가 아니라 지속 state 로 둔다(FQA 의 fqaResultRun 과 같은 규약).
+     1회성이면 화면을 떠났다 돌아올 때마다 빈 화면이 되고, 5~10분 걸리는 평가에서는
+     이력을 매번 다시 뒤져야 한다. From 은 뒤로가기 라벨("평가 실행"/"실행 이력"/"대시보드")을 만든다. */
+  const [lqaResultRun, setLqaResultRun] = useState(null);
+  const [lqaResultFrom, setLqaResultFrom] = useState("history");
   const [defects, setDefects] = useState(INIT_DEFECTS);
   const [fqaCases, setFqaCases] = useState(seedCases(INIT_FQA_CASES));
   const [fqaSuites, setFqaSuites] = useState(stampSeeds(INIT_FQA_SUITES));
@@ -143,9 +147,13 @@ export default function App() {
     /* 🔑 목록이 아니라 그 항목을 연다 — 알림이 이미 어느 건인지 말했는데
        목록만 열면 사용자가 그걸 다시 찾아야 한다(결함 화면 주석도 같은 말을 한다).
        도메인마다 "특정 항목 열기" 수단이 이미 따로 있어 그대로 쓴다. */
-    if (n.to.run) { setFqaResultRun(n.to.run); setFqaResultFrom("fqa-history"); }   // FQA 실행
+    /* 실행 알림은 도메인마다 "그 실행을 여는 전역 state" 가 따로 있다 — to.domain 으로 가른다.
+       LQA 도 FQA 와 같은 규약(지속 state)을 쓴다. 한쪽만 고치면 그 도메인 알림이 빈 화면을 연다. */
+    if (n.to.run) {
+      if (n.to.domain === "LQA") { setLqaResultRun(n.to.run); setLqaResultFrom("history"); }
+      else { setFqaResultRun(n.to.run); setFqaResultFrom("fqa-history"); }
+    }
     if (n.to.select) setPendingSelect(n.to.select);                                  // 결함 · 챗봇 · 계획
-    if (n.to.intent) setRunIntent(n.to.intent);                                      // LQA 실행
   };
   const goTo = (v) => { if (navGuardRef.current && !window.confirm(navGuardRef.current)) return false; navGuardRef.current = null; setView(v); return true; };
   /* 🔑 FQA 화면 간 이동 단일 출처.
@@ -168,8 +176,12 @@ export default function App() {
     removeCase: (id) => setCases((c) => c.filter((x) => x.id !== id)),
     categories, addCategory: (n) => setCategories((x) => (x.includes(n) ? x : [n, ...x])), removeCategory: (n) => setCategories((x) => x.filter((c) => c !== n)),
     plans, addPlan: (p) => { setPlans((x) => [withCreate(p), ...x]); setPendingSelect({ kind: "plan", id: p.id }); }, updatePlan: (id, patch) => setPlans((x) => x.map((p) => (p.id === id ? { ...p, ...withUpdate(patch) } : p))), removePlan: (id) => setPlans((x) => x.filter((p) => p.id !== id)),
-    runs, addRun: (r) => setRuns((x) => [r, ...x]), updateRun: (id, patch) => setRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))),
-    runIntent, setRunIntent,
+    /* removeRun — 중지·취소는 레코드를 지운다(FQA removeFqaRun · PQA removePerfRun 과 같은 규약).
+       🔑 '중지됨' 상태를 만들지 않는 이유: 끝나지 않은 실행은 확정된 사실이 없다.
+          이력에 남기면 점수·PASS율이 빈 행이 쌓이고, 회귀 비교·대시보드 통계가
+          매번 그 행을 예외 처리해야 한다. */
+    runs, addRun: (r) => setRuns((x) => [r, ...x]), updateRun: (id, patch) => setRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))), removeRun: (id) => setRuns((x) => x.filter((r) => r.id !== id)),
+    lqaResultRun, setLqaResultRun, lqaResultFrom, setLqaResultFrom,
     defects, addDefect: (d) => setDefects((x) => [withCreate(d), ...x]), setDefectStatus: (key, status) => setDefects((x) => x.map((d) => (d.key === key ? { ...d, ...withUpdate({ status }) } : d))), setDefectAssignee: (key, assignee) => setDefects((x) => x.map((d) => (d.key === key ? { ...d, ...withUpdate({ assignee }) } : d))), updateDefect: (key, patch) => setDefects((x) => x.map((d) => (d.key === key ? { ...d, ...withUpdate(patch) } : d))),
     /* ── 케이스 리비전 ────────────────────────────────────────────
        tc_revision 테이블에 "저장될 때마다 새 행"을 넣는다. 현재본도 이력에 들어 있다.
@@ -241,7 +253,7 @@ export default function App() {
   const cur = [...ALL_SECTIONS.flatMap((s) => s.items), ...FQA_HIDDEN, ...LQA_HIDDEN, MEMBERS_ITEM].find((n) => n.id === view) || NAV[0];
   const curSection = ((ALL_SECTIONS.find((s) => s.items.some((i) => i.id === view)) || {}).group) || (FQA_HIDDEN.find((i) => i.id === view) || {}).group || (LQA_HIDDEN.find((i) => i.id === view) || {}).group;
   const tenantName = (tenants.find((t) => t.id === tenantId) || {}).name;
-  const screens = { dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <Run key="run" />, "lqa-result": <Run key="lqa-result" />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen />,"perf-targets": <PqaTargetScreen />, "perf-scenarios": <PqaScenarioScreen />, "perf-plan": <PqaPlanScreen />, "perf-run": <PqaRunScreen />, "perf-history": <PqaHistoryScreen />, "perf-trend": <PqaTrendScreen />, "perf-dashboard": <PqaDashboardScreen /> };
+  const screens = { dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <LqaRunScreen />, "lqa-result": <LqaResultScreen />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen />,"perf-targets": <PqaTargetScreen />, "perf-scenarios": <PqaScenarioScreen />, "perf-plan": <PqaPlanScreen />, "perf-run": <PqaRunScreen />, "perf-history": <PqaHistoryScreen />, "perf-trend": <PqaTrendScreen />, "perf-dashboard": <PqaDashboardScreen /> };
   const tk = { ok: "border-emerald-200 bg-emerald-50 text-emerald-800", warn: "border-amber-200 bg-amber-50 text-amber-800", err: "border-red-200 bg-red-50 text-red-800", info: "border-slate-200 bg-white text-slate-800" };
   const nIcon = { play: Play, bug: Bug, send: Send };
 

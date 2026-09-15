@@ -41,7 +41,9 @@ export const KIND = {
   targetStatus: { "연결됨": "pass", "오류": "fail", "미확인": "warn" },
   channel:      { "REST API": "info", "Web 대화": "active", "Mobile 앱": "info" },
   trigger:      { "수동": "info", "스케줄": "active", "이벤트": "warn" },
-  runStatus:    { "진행중": "warn", "완료": "pass", "오류": "fail" },
+  /* '대기' 가 빠져 있으면 대시보드 최근 실행에서 대기 행의 배지가 색 없이 뜬다.
+     실행이 길어질수록 대기 상태가 화면에 보일 확률이 올라간다. */
+  runStatus:    { "대기": "info", "진행중": "warn", "완료": "pass", "오류": "fail" },
   severity:     { Critical: "crit", Major: "major", Minor: "minor" },
   issueStatus:  { Open: "fail", "In Progress": "warn", Resolved: "pass" },
   domain:       { LQA: "active", FQA: "info", PQA: "pass", NQA: "warn" },

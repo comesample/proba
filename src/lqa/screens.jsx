@@ -796,7 +796,7 @@ export function Targets() {
 
 /* ============================ screens ============================ */
 export function Dashboard() {
-  const { goto, runs, plans, cases, defects, setRunIntent, toast } = useApp();
+  const { goto, runs, plans, cases, defects, setLqaResultRun, setLqaResultFrom, toast } = useApp();
   const toISO = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
   const [today] = useState(() => toISO(new Date()));
   const [defFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return toISO(d); });
@@ -817,7 +817,11 @@ export function Dashboard() {
   const openDefects = defects.filter((d) => d.status === "Open").length;
   const running = fruns.filter((r) => r.status === "진행중").length;
   const pending = cases.filter((c) => c.status === "검토중" || c.status === "초안").length;
-  const scheduled = plans.filter((p) => p.sched && p.sched !== "예약 없음");
+  /* 🔑 p.sched(표시용 문자열)가 아니라 firesToday(schedule 객체)로 센다.
+     문자열로 세면 "스케줄이 걸려 있는 계획 수"가 되어, 실행 화면의 '예약(오늘)'과
+     같은 자리에서 다른 숫자가 뜬다(예: 대시보드 2 · 실행 화면 0).
+     세는 대상을 하나로 맞추고, 카드 라벨도 '오늘'을 명시한다. */
+  const scheduled = plans.filter(firesToday);
   /* 안전성 경보는 케이스가 아니라 '최근 평가 결과'에서 센다 — 케이스는 결과를 저장하지 않는다.
      완료된 실행(최신순)에서 케이스별 마지막 결과의 safety를 집계. */
   const latestSafety = (() => {
@@ -893,9 +897,9 @@ export function Dashboard() {
           <div className="text-xs text-slate-500 mt-0.5">평가 실행에서 확인</div>
         </Card>
         <Card className="p-4 cursor-pointer hover:border-sky-400" onClick={() => goto("plans")}>
-          <div className="flex items-center justify-between"><span className="text-sm text-slate-700">예약된 평가</span><Calendar size={15} className="text-slate-500" /></div>
+          <div className="flex items-center justify-between"><span className="text-sm text-slate-700">예약된 평가 <span className="text-xs text-slate-500">· 오늘</span></span><Calendar size={15} className="text-slate-500" /></div>
           <div className="mt-2 text-2xl font-bold text-slate-900">{scheduled.length}</div>
-          <div className="text-xs text-slate-500 mt-0.5 truncate">{scheduled.length ? scheduled.map((p) => p.name + " · " + p.sched).slice(0, 2).join(" / ") : "예약 없음"}</div>
+          <div className="text-xs text-slate-500 mt-0.5 truncate">{scheduled.length ? scheduled.map((p) => p.name + " · " + p.sched).slice(0, 2).join(" / ") : "오늘 남은 예약 없음"}</div>
         </Card>
       </div>
       <Card className="p-4">
@@ -904,7 +908,7 @@ export function Dashboard() {
           <thead><tr className="text-slate-500 text-left border-b border-slate-200"><th className="py-2 font-medium">평가 계획</th><th className="font-medium">트리거</th><th className="font-medium">TC</th><th className="font-medium">종합</th><th className="font-medium">상태</th><th className="font-medium">시각</th></tr></thead>
           <tbody className="text-slate-500">
             {fruns.slice(0, 5).map((r) => (
-              <tr key={r.id} onClick={() => { if (r.status !== "완료") { toast(r.id + " 오류로 종료 — 상세 결과 없음", "info"); return; } setRunIntent({ type: "view", runId: r.id }); goto("lqa-result"); }} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"><td className="py-2.5 font-medium text-slate-800">{r.planName}</td><td><Badge kind={trigKind[r.trigger]}>{r.trigger}</Badge></td><td>{r.cases}</td><td className="font-semibold">{r.score != null ? r.score : "—"}</td><td><Badge kind={stKind[r.status]}>{r.status}</Badge></td><td className="text-slate-500">{r.startedAt}</td></tr>
+              <tr key={r.id} onClick={() => { if (r.status !== "완료") { toast(r.id + " 오류로 종료 — 상세 결과 없음", "info"); return; } setLqaResultRun(r.id); setLqaResultFrom("dashboard"); goto("lqa-result"); }} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"><td className="py-2.5 font-medium text-slate-800">{r.planName}</td><td><Badge kind={trigKind[r.trigger]}>{r.trigger}</Badge></td><td>{r.cases}</td><td className="font-semibold">{r.score != null ? r.score : "—"}</td><td><Badge kind={stKind[r.status]}>{r.status}</Badge></td><td className="text-slate-500">{r.startedAt}</td></tr>
             ))}
             {fruns.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-xs text-slate-500">해당 조건의 실행이 없습니다</td></tr>}
           </tbody>
@@ -914,7 +918,7 @@ export function Dashboard() {
   );
 }
 export function Plans() {
-  const { plans, cases, prompts, openModal, toast, goto, chatbots, models, updatePlan, removePlan, setRunIntent, jiraConfig, pendingSelect, setPendingSelect, goTo } = useApp();
+  const { plans, cases, prompts, openModal, toast, goto, chatbots, models, updatePlan, removePlan, jiraConfig, pendingSelect, setPendingSelect, goTo } = useApp();
   // TC 수는 계획에 저장하지 않고 caseIds에서 파생 — 삭제된 케이스는 자동으로 빠진다
   const caseCount = (p) => planCases(cases, p).length;
   /* 계획을 만들려면 대상 챗봇과 승인된 케이스가 있어야 한다 — NewPlanForm이 요구하는 것과 같은 기준이다.
@@ -1130,7 +1134,7 @@ export function Plans() {
 }
 
 export function RunHistory() {
-  const { runs, goto, toast, setRunIntent } = useApp();
+  const { runs, goto, toast, setLqaResultRun, setLqaResultFrom } = useApp();
   const [planF, setPlanF] = useState("전체");
   const [trigF, setTrigF] = useState("전체");
   const [stF, setStF] = useState("전체");
@@ -1150,7 +1154,7 @@ export function RunHistory() {
           <thead><tr className="text-slate-500 text-left border-b border-slate-200"><th className="py-2.5 px-4 font-medium">실행ID</th><th className="font-medium">계획</th><th className="font-medium">트리거</th><th className="font-medium">시각</th><th className="font-medium">상태</th><th className="font-medium">케이스</th><th className="font-medium">종합점수</th><th className="pr-4 font-medium">PASS율</th></tr></thead>
           <tbody>
             {list.map((r) => (
-              <tr key={r.id} onClick={() => { if (r.status !== "완료") { toast(r.id + " 오류로 종료 — 상세 결과 없음", "info"); return; } setRunIntent({ type: "view", runId: r.id }); goto("lqa-result"); }} className="border-b border-slate-200 hover:bg-slate-100 cursor-pointer text-slate-700">
+              <tr key={r.id} onClick={() => { if (r.status !== "완료") { toast(r.id + " 오류로 종료 — 상세 결과 없음", "info"); return; } setLqaResultRun(r.id); setLqaResultFrom("history"); goto("lqa-result"); }} className="border-b border-slate-200 hover:bg-slate-100 cursor-pointer text-slate-700">
                 <td className="py-3 px-4 font-mono text-sky-600">{r.id}</td>
                 <td className="text-slate-800">{r.planName}</td>
                 <td><Badge kind={trigKind[r.trigger]}>{r.trigger}</Badge></td>
@@ -1386,27 +1390,91 @@ export function Cases() {
     </div>
   );
 }
-export function Run() {
-  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, updatePlan, toast, notify, openModal, runIntent, setRunIntent, goto, jiraConfig, setPendingSelect } = useApp();
-  const queueRuns = runs.filter((r) => r.status === "대기" || r.status === "진행중").slice().sort((a, b) => { const rk = (s) => (s === "진행중" ? 0 : 1); return rk(a.status) - rk(b.status) || String(a.id).localeCompare(String(b.id)); });
+/* 케이스 한 건을 처리하는 데 걸리는 시간(목업).
+   실제로는 '챗봇 호출 + LLM Judge 채점' 이라 케이스당 수십 초가 걸린다 —
+   그 감각을 줄여 놓은 값이다. 너무 짧으면 큐에 두 번째 실행을 넣어 볼 틈도,
+   진행 패널에서 케이스가 하나씩 확정되는 것을 볼 틈도 없다. */
+const STEP_MS = 3200;
+
+/* 동시에 돌릴 수 있는 평가 수 = 러너(워커) 슬롯.
+   🔑 LQA 가 여러 슬롯을 가질 수 있는 이유 — PQA 는 성능 측정을 격리해야 숫자를 믿을 수 있어
+      직렬이고, NQA 는 부하 생성기가 하나라 직렬이다. LQA 에는 그런 제약이 없다.
+      대상 챗봇이 다르면 서로 간섭하지 않는다.
+      (같은 챗봇에 둘이 몰리면 rate limit 이 걸릴 수 있다 — 실 구현에서 판단할 일이다.) */
+const RUNNER_SLOTS = 2;
+
+/* 오늘 안에 '아직 발동하지 않은' 스케줄이 있는 계획인가 — 대시보드와 실행 화면이 함께 쓴다.
+   🔑 p.sched(문자열)가 아니라 p.schedule(객체)을 본다. sched 는 계획을 저장할 때
+      schedule.summary 에서 파생되는 표시용 값이라 "오늘 발동하는가"를 알 수 없다.
+      두 화면이 다른 소스를 보면 같은 자리에서 다른 숫자가 뜬다.
+   🔑 이미 지난 발동은 제외한다. 그건 실행 중이거나 완료 쪽에 이미 세어져 있어서,
+      빼지 않으면 같은 실행을 두 번 센다. (FQA·PQA 의 firesToday 와 같은 규칙) */
+const firesToday = (p) => {
+  if (!p || p.status !== "활성") return false;
+  const s = p.schedule;
+  if (!s || s.mode !== "schedule" || !s.active) return false;
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const tMin = (t) => { const x = String(t || "00:00").split(":"); return (+x[0] || 0) * 60 + (+x[1] || 0); };
+  if (s.freq === "hourly") return now.getHours() < 23;      // 남은 정각이 오늘 안에 있다
+  const upcoming = tMin(s.time) > nowMin;                    // 예정 시각이 아직 안 지났나
+  if (s.freq === "daily") return upcoming;
+  if (s.freq === "weekdays") return now.getDay() >= 1 && now.getDay() <= 5 && upcoming;
+  if (s.freq === "weekly") return s.dow === now.getDay() && upcoming;
+  if (s.freq === "monthly") return s.dom === now.getDate() && upcoming;
+  return false;
+};
+
+/* ═══════════ 결함 동일성 판정 — 실행 화면과 결과 화면이 공유 ═══════════
+   중복 결함 판정 키 = (도메인, 대상, TC).
+   결함은 "이 챗봇의 이 발화가 잘못됐다"이므로 챗봇이 다르면 다른 결함이다.
+   Judge 모델·채점 기준이 달라도 챗봇의 행동은 같으므로 같은 결함으로 본다.
+   Resolved만 있으면 재발(regression)이므로 새로 등록할 수 있다.
+
+   🔑 모듈 스코프에 둔다 — 실행 화면(무인 실행의 자동 등록)과 결과 화면(사람의 수동 등록)이
+      반드시 같은 규칙을 써야 한다. 각자 복사해 두면 한쪽만 고쳐져 중복 판정이 갈라지고,
+      같은 결함이 두 번 등록되거나 재발이 재발로 안 보인다. */
+const botOf = (plan) => (plan && plan.bot) || "";
+const defectsOfTc = (defects, id, bot) => (defects || []).filter((d) => d.tc === id && (d.domain || "LQA") === "LQA" && (d.target || "") === bot);
+const openDefectOf = (defects, id, bot) => defectsOfTc(defects, id, bot).find((d) => d.status !== "Resolved");
+const isRegression = (defects, id, bot) => !openDefectOf(defects, id, bot) && defectsOfTc(defects, id, bot).length > 0;
+
+/* ═══════════ 평가 실행 — 진행·대기만 소유한다 ═══════════
+   🔑 결과는 이 화면이 갖지 않는다. 실 운영에서 1회 실행은 5~10분 이상이라
+      아무도 이 화면에 앉아 결과를 기다리지 않는다. 걸어두고 떠났다가
+      알림이나 실행 이력으로 돌아오는 것이 실제 흐름이다.
+      결과를 여기 두면 "왜 결과가 안 열리지"라는 혼란만 남는다.
+      결과는 LqaResultScreen 이 소유하고 lqaResultRun 으로 지목한다. */
+export function LqaRunScreen() {
+  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, removeRun, toast, notify, goto, jiraConfig, setLqaResultRun, setLqaResultFrom } = useApp();
+  /* 큐 = 진행중 + 대기. 진행중 먼저, 그 다음 적재 순서(queuedAt).
+     🔑 id 사전순으로 정렬하지 않는다 — id 가 "R-" + Date.now() 뒷자리라 자리올림에서
+        시간순과 어긋난다(R-99999 다음이 R-00123). PQA 처럼 queuedAt 을 쓴다. */
+  const queueRuns = runs.filter((r) => r.status === "대기" || r.status === "진행중").slice()
+    .sort((a, b) => { const rk = (s) => (s === "진행중" ? 0 : 1); return rk(a.status) - rk(b.status) || (a.queuedAt || 0) - (b.queuedAt || 0); });
   const runnablePlans = plans.filter((p) => p.status === "활성");
-  /* 중복 결함 판정 키 = (도메인, 대상, TC).
-     결함은 "이 챗봇의 이 발화가 잘못됐다"이므로 챗봇이 다르면 다른 결함이다.
-     Judge 모델·채점 기준이 달라도 챗봇의 행동은 같으므로 같은 결함으로 본다.
-     Resolved만 있으면 재발(regression)이므로 새로 등록할 수 있다. */
-  const botOf = (plan) => (plan && plan.bot) || "";
-  const defectsOfTc = (id, bot) => defects.filter((d) => d.tc === id && (d.domain || "LQA") === "LQA" && (d.target || "") === bot);
-  const openDefectOf = (id, bot) => defectsOfTc(id, bot).find((d) => d.status !== "Resolved");
-  const isRegression = (id, bot) => !openDefectOf(id, bot) && defectsOfTc(id, bot).length > 0;
   const [planId, setPlanId] = useState((runnablePlans[0] || plans[0] || {}).id);
-  const [activeRun, setActiveRun] = useState(null);
-  const [fromHistory, setFromHistory] = useState(false);
-  const [sel, setSel] = useState(null);
-  const [revF, setRevF] = useState("검토 필요");
-  const pendingRef = useRef(null);
+  const [selId, setSelId] = useState(null);
+  /* 이번 세션에 완료된 실행 — 큐에서 빠진 뒤 "방금 끝난 것"으로 가는 경로가 사라지지 않게.
+     서버에 남기는 목록이 아니라 화면을 벗어나면 잊는 임시 목록이다. */
+  const [doneIds, setDoneIds] = useState([]);
   const curPlan = plans.find((p) => p.id === planId) || runnablePlans[0] || plans[0];
-  // 보고 있는 실행이 평가한 챗봇 — 결함 동일성 판정의 축
-  const runBot = botOf(plans.find((p) => p.id === (activeRun || {}).planId) || curPlan);
+  const liveRun = runs.find((r) => r.status === "진행중");
+  // 고른 것이 끝나면 선택이 풀린다 — 다음 진행중, 없으면 큐 맨 앞 (FQA·PQA 와 같은 규약)
+  const selRun = queueRuns.find((r) => r.id === selId) || liveRun || queueRuns[0] || null;
+  const doneRuns = doneIds.map((id) => runs.find((r) => r.id === id)).filter((r) => r && r.status === "완료");
+
+  const cnt = (f) => runs.filter(f).length;
+  const openResult = (id, from) => { setLqaResultRun(id); setLqaResultFrom(from); goto("lqa-result"); };
+  const cancelRun = (r) => { if (!window.confirm(r.id + " 평가를 큐에서 취소할까요?")) return; removeRun(r.id); if (selId === r.id) setSelId(null); toast(r.id + " 취소됨 — 큐에서 제거", "info"); };
+  /* 중지도 레코드를 지운다 — 끝나지 않은 실행은 확정된 사실이 없다(App.jsx removeRun 주석 참고).
+     대신 어디까지 갔는지는 토스트로 알린다. Judge 호출이 그만큼 나갔다는 뜻이라 알 가치가 있다. */
+  const stopRun = (r) => {
+    if (!window.confirm(r.id + " 평가를 중지할까요? — 러너에 취소 신호를 보내고 큐에서 제거합니다")) return;
+    const done = String(r.progt || "0").split("/")[0];
+    removeRun(r.id); if (selId === r.id) setSelId(null);
+    toast(r.id + " 중지됨 — " + done + "건 평가 후 중단 · 결과는 남지 않습니다", "warn");
+  };
 
   // 평가 실행 = 서버 잡. 큐에 '대기'로 적재 → 프로세서가 진행중→완료로 처리. 수동·스케줄·이벤트 통일.
   const buildRun = (plan, trigger) => {
@@ -1415,16 +1483,21 @@ export function Run() {
     // 정책 게이트는 금지 행위 텍스트가 있어야만 성립한다 — 비어 있으면 검사하지 않는다
     const gates = plan.opts ? { hall: !!plan.opts.hall, pii: !!plan.opts.pii, policy: !!plan.opts.policy && !!(plan.opts.policyText || "").trim() } : undefined;
     const res = mkResults(planCases(cases, plan), Date.now() % 97, dims, gates);
-    // 집계는 results에서 파생(rollup) — 결과는 완료 시점에 노출
-    return { id: "R-" + Date.now().toString().slice(-5), planId: plan.id, planName: plan.name, trigger, status: "대기", startedAt: nowStamp(), finishedAt: null, ...rollup(res), snapshot: { model: (plan.judgeList && plan.judgeList[0]) || "Claude sonnet-4-6", promptTpl: plan.promptTpl || "—", promptVer: planTpl ? ("v" + planTpl.ver) : "v1", caseVer: "최신" }, results: res };
+    /* 🔑 적재 시점에는 집계를 펴지 않는다 — data.js mkPending 과 같은 규약이다.
+       ("미완료(진행중·오류)는 결과가 없다 — 대상 건수만")
+       대기 상태부터 score 를 채워 두면 아직 채점되지 않은 실행이 점수를 가진 채
+       화면에 노출될 수 있다. 집계는 완료 시점에 rollup 으로 한 번만 편다. */
+    return { id: "R-" + Date.now().toString().slice(-5), planId: plan.id, planName: plan.name, trigger, status: "대기", queuedAt: Date.now(), startedAt: nowStamp(), finishedAt: null,
+      cases: res.length, score: null, passRate: null, pass: 0, warn: 0, fail: 0,
+      snapshot: { model: (plan.judgeList && plan.judgeList[0]) || "Claude sonnet-4-6", promptTpl: plan.promptTpl || "—", promptVer: planTpl ? ("v" + planTpl.ver) : "v1", caseVer: "최신", bot: botOf(plan) }, results: res };
   };
   const enqueue = (plan, trigger) => {
     if (!plan || plan.status !== "활성") { toast("활성 상태의 평가 계획만 실행할 수 있습니다 — 계획을 먼저 활성화하세요", "warn"); return; }
     if (!planCases(cases, plan).length) { toast("이 계획에 선택된 테스트케이스가 없습니다 — 계획에서 케이스를 선택하세요", "warn"); return; }
-    const run = buildRun(plan, trigger); addRun(run); pendingRef.current = run.id; setActiveRun(null); setFromHistory(false);
+    const run = buildRun(plan, trigger); addRun(run); setSelId(run.id);
     toast(plan.name + " 평가 요청 · " + run.id + " — 큐에 적재", "ok");
   };
-  // 완료 처리는 항상 최신 상태로 — ref에 담아 setTimeout에서 호출(스테일 클로저 회피)
+  // 완료 처리는 항상 최신 상태로 — ref에 담아 setInterval에서 호출(스테일 클로저 회피)
   const completeRef = useRef();
   completeRef.current = (id) => {
     const run = runs.find((r) => r.id === id);
@@ -1435,162 +1508,279 @@ export function Run() {
     let made = 0;
     // 자동 결함 등록은 무인 실행(스케줄/이벤트)에서만 — 수동은 사람이 검토 후 등록
     if (run.trigger !== "수동") (run.results || []).filter((r) => r.verdict === "FAIL").forEach((r) => {
-      if (!openDefectOf(r.id, bot)) {
-        addDefect({ key: (jr.project || "AUTO") + "-" + Math.floor(1000 + Math.random() * 9000), tc: r.id, target: bot, sev: r.safety && r.safety.PII !== "PASS" ? "Critical" : "Major", title: (isRegression(r.id, bot) ? "[재발] " : "") + (r.judge || "평가 실패").slice(0, 40), status: "Open", domain: "LQA", project: jr.project || "", assignee: jr.assignee || "",
+      if (!openDefectOf(defects, r.id, bot)) {
+        addDefect({ key: (jr.project || "AUTO") + "-" + Math.floor(1000 + Math.random() * 9000), tc: r.id, target: bot, sev: r.safety && r.safety.PII !== "PASS" ? "Critical" : "Major", title: (isRegression(defects, r.id, bot) ? "[재발] " : "") + (r.judge || "평가 실패").slice(0, 40), status: "Open", domain: "LQA", project: jr.project || "", assignee: jr.assignee || "",
           desc: "[요약] " + (r.judge || "-") + "\n[점수] " + (r.score != null ? r.score + "점" : "-") + "\n[안전성] 환각 " + ((r.safety && r.safety.환각) || "-") + " · PII " + ((r.safety && r.safety.PII) || "-"),
           steps: r.q ? "1. 사전조건: " + (r.pre || "없음") + "\n2. 발화 입력: \"" + r.q + "\"\n3. 챗봇 응답 확인" : "",
           expected: r.golden || "", actual: r.actual || "", evidence: ["대화 로그", "평가 근거", "안전성 결과"] });
         made++;
       }
     });
-    updateRun(id, { status: "완료", finishedAt: nowStamp() });
-    notify({ icon: "play", text: run.planName + " 완료 — PASS " + run.pass + " / FAIL " + run.fail, to: { domain: "LQA", view: "lqa-result", intent: { type: "view", runId: run.id } } });
+    // 집계는 여기서 한 번 편다 — 완료된 실행만 점수를 가진다
+    const agg = rollup(run.results);
+    updateRun(id, { status: "완료", finishedAt: nowStamp(), ...agg });
+    setDoneIds((x) => [id, ...x.filter((v) => v !== id)].slice(0, 5));
+    notify({ icon: "play", text: run.planName + " 완료 — PASS " + agg.pass + " / FAIL " + agg.fail, to: { domain: "LQA", view: "lqa-result", run: run.id } });
     if (made) notify({ icon: "bug", text: "FAIL " + made + "건 결함 자동 등록 (Jira 규칙)", to: { domain: "LQA", view: "defects" } });
-    if (pendingRef.current === id) { pendingRef.current = null; setActiveRun({ ...run, status: "완료" }); setSel((run.results && run.results[0]) || null); setFromHistory(false); toast("평가 완료 · " + run.score + "점 · 실패 " + run.fail + "건" + (made ? " · 결함 " + made + "건 자동 등록" : ""), "ok"); }
+    toast(id + " 평가 완료 · " + agg.score + "점 · 실패 " + agg.fail + "건" + (made ? " · 결함 " + made + "건 자동 등록" : ""), "ok");
   };
-  const procRef = useRef({});
-  useEffect(() => {
-    if (runs.some((r) => r.status === "진행중")) return;   // 러너 사용 중
-    const waiting = runs.filter((r) => r.status === "대기");
-    if (!waiting.length) return;
-    const next = waiting.reduce((a, b) => (String(a.id) <= String(b.id) ? a : b));
-    if (procRef.current[next.id]) return;
-    procRef.current[next.id] = true;
-    const total = (next.results || []).length || 1;
-    updateRun(next.id, { status: "진행중", startedAt: nowStamp(), prog: 0, progt: "0/" + total });
-    // 진행률 시뮬레이션 — 케이스가 하나씩 '챗봇 호출→LLM 판정'을 끝낼 때마다 완료수·비율 증가(완료/전체). 실제도 같은 방식으로 표시 가능.
-    let f = 0; const FR = Math.min(total, 12);
-    const iv = setInterval(() => {
-      f += 1;
-      if (f >= FR) { clearInterval(iv); updateRun(next.id, { prog: 100, progt: total + "/" + total }); completeRef.current && completeRef.current(next.id); }
-      else updateRun(next.id, { prog: Math.round((f / FR) * 100), progt: Math.round((f / FR) * total) + "/" + total });
-    }, 950);
-  }, [runs]);
-  useEffect(() => {
-    if (!runIntent) return;
-    if (runIntent.type === "start") { const p = plans.find((x) => x.id === runIntent.planId) || plans[0]; setPlanId(p.id); setRunIntent(null); enqueue(p, "수동"); }
-    else if (runIntent.type === "select") { const p = plans.find((x) => x.id === runIntent.planId) || plans[0]; if (p) setPlanId(p.id); setRunIntent(null); }
-    else if (runIntent.type === "view") { const r = runs.find((x) => x.id === runIntent.runId); if (r) { setActiveRun(r); setSel((r.results && r.results[0]) || null); setFromHistory(true); } setRunIntent(null); }
-  }, [runIntent]);
+  /* ── 큐 프로세서 — 단일 티커 (PQA 방식) ──
+     🔑 실행마다 setInterval 을 띄우지 않는다. 슬롯이 둘이면 타이머도 둘이 되고,
+        cleanup 을 빠뜨리면 언마운트된 인스턴스의 타이머가 낡은 스냅샷으로 완료를
+        시도한다. 티커 하나가 매 틱마다 "진행중 전부를 한 칸 전진 + 빈 슬롯 채우기"를 한다.
 
-  const res = activeRun && activeRun.results ? activeRun.results : [];
-  const needRev = (r) => r.verdict !== "PASS";
-  const shown = res.filter((r) => (revF === "전체" ? true : revF === "통과" ? r.verdict === "PASS" : needRev(r)));
-  useEffect(() => { if (activeRun && shown.length && (!sel || !shown.some((r) => r.id === sel.id))) setSel(shown[0]); }, [revF, activeRun]);
-  const needTotal = res.filter(needRev).length;
-  const overridden = res.filter((r) => r.final && r.final !== r.verdict).length;
-  const persist = (rs) => { const eff = (r) => r.final || r.verdict; const pass = rs.filter((r) => eff(r) === "PASS").length; const fail = rs.filter((r) => eff(r) === "FAIL").length; const warn = rs.length - pass - fail; const passRate = Math.round((pass / (rs.length || 1)) * 100); const nr = { ...activeRun, results: rs, pass, warn, fail, passRate }; setActiveRun(nr); updateRun(nr.id, { results: rs, pass, warn, fail, passRate }); setSel((cs) => (cs ? rs.find((x) => x.id === cs.id) || cs : cs)); };
-  const setFinal = (id, v) => persist(res.map((r) => (r.id === id ? { ...r, final: (v === r.verdict ? null : v) } : r)));
-  const sm = activeRun ? { total: activeRun.cases, pass: activeRun.pass, fail: activeRun.fail, warn: activeRun.warn, score: activeRun.score } : { total: 0, pass: 0, fail: 0, warn: 0, score: "—" };
+     🔑 진행 상태(prog·progt)는 run 객체가 보관한다 — 타이머 클로저의 카운터가 아니다.
+        그래서 화면을 떠났다 돌아와도 중단된 지점부터 이어진다.
+        (떠나 있는 동안은 멈춘다 — PQA 와 같은 동작이다. 실 제품에서는 러너가 서버에 있어
+         화면과 무관하게 돈다.) */
+  useEffect(() => {
+    const t = setInterval(() => {
+      const running = runs.filter((r) => r.status === "진행중");
+      // 1) 진행 중인 것들을 한 칸씩 — 케이스 하나가 '챗봇 호출 → LLM Judge 채점'을 끝낸 것
+      running.forEach((r) => {
+        const total = (r.results || []).length || 1;
+        const nx = (parseInt(String(r.progt || "0").split("/")[0], 10) || 0) + 1;
+        if (nx >= total) { updateRun(r.id, { prog: 100, progt: total + "/" + total }); completeRef.current && completeRef.current(r.id); }
+        else updateRun(r.id, { prog: Math.round((nx / total) * 100), progt: nx + "/" + total });
+      });
+      // 2) 빈 슬롯이 있으면 대기 큐 맨 앞부터 채운다 (FIFO — queuedAt 기준)
+      if (running.length >= RUNNER_SLOTS) return;
+      const used = new Set(running.map((r) => r.slot).filter(Boolean));
+      const waiting = runs.filter((r) => r.status === "대기").slice().sort((a, b) => (a.queuedAt || 0) - (b.queuedAt || 0));
+      waiting.slice(0, RUNNER_SLOTS - running.length).forEach((r) => {
+        let s = 1; while (used.has(s)) s++;
+        used.add(s);
+        updateRun(r.id, { status: "진행중", startedAt: nowStamp(), prog: 0, progt: "0/" + ((r.results || []).length || 1), slot: s });
+      });
+    }, STEP_MS);
+    return () => clearInterval(t);
+  }, [runs]);
+
+  /* 예약(오늘) — 오늘 중 '아직 발동 전' 인 스케줄 계획 수.
+     🔑 이미 지난 발동은 뺀다. 그건 실행 중이거나 완료 쪽에 이미 세어져 있어서,
+        빼지 않으면 같은 실행을 두 번 센다. (FQA·PQA 의 firesToday 와 같은 규칙)
+     🔑 p.sched 문자열이 아니라 p.schedule 객체를 본다 — sched 는 저장할 때 만들어지는
+        표시용 요약이라 날짜 개념이 없다. 대시보드도 같은 소스를 쓴다. */
+  const scheduledToday = plans.filter(firesToday).length;
+  const today = nowStamp().slice(0, 10);
+  const dateOf = (r) => String(r.finishedAt || r.startedAt || "").slice(0, 10);
+  const KPI = [
+    ["실행 중", cnt((r) => r.status === "진행중"), "text-amber-600"],
+    ["대기", cnt((r) => r.status === "대기"), "text-slate-900"],
+    ["예약(오늘)", scheduledToday, "text-sky-600"],
+    ["완료(오늘)", cnt((r) => r.status === "완료" && dateOf(r) === today), "text-emerald-600"],
+    ["오류(오늘)", cnt((r) => r.status === "오류" && dateOf(r) === today), "text-red-600"],
+  ];
+  const prog = selRun ? (selRun.prog || 0) : 0;
+  const doneN = selRun ? parseInt(String(selRun.progt || "0").split("/")[0], 10) || 0 : 0;
 
   return (
     <div className="space-y-4">
-      {fromHistory && activeRun ? (
-        <PageToolbar desc={<span><button onClick={() => goto("history")} className="text-sky-600 hover:underline">실행 이력</button> <span className="text-slate-500">›</span> <span className="text-slate-700 font-medium">{activeRun.id} 결과</span></span>}>
-          <Btn icon={FileDown} onClick={() => toast("Excel 다운로드 — 케이스별 판정·점수·근거", "ok")}>Excel</Btn>
-          <Btn icon={FileDown} onClick={() => toast("PDF 리포트 다운로드", "ok")}>PDF</Btn>
-          <Btn icon={ChevronLeft} onClick={() => goto("history")}>실행 이력으로</Btn>
-        </PageToolbar>
-      ) : (
-        <PageToolbar desc="평가 실행 및 HITL 검토 · 예외 케이스 중심" />
-      )}
-      {fromHistory && activeRun && (
-        <Card className="flex flex-wrap items-center gap-3 p-3 text-xs text-slate-500"><span className="font-mono text-sky-600">{activeRun.id}</span><span className="text-sm font-medium text-slate-800">{activeRun.planName}</span><Badge kind="info">{activeRun.trigger}</Badge><span>{activeRun.startedAt}</span><span className="text-slate-500">·</span><span>모델 {activeRun.snapshot.model} · 프롬프트 {activeRun.snapshot.promptVer} · 케이스 {activeRun.snapshot.caseVer}</span><span className="text-slate-500">·</span><span>점수 <span className="font-semibold text-sky-600">{activeRun.score != null ? activeRun.score : "—"}</span></span></Card>
-      )}
-      {!fromHistory && (<Card className="p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 text-sm flex-wrap">
-            <div className="flex items-center gap-2"><span className="text-slate-500 text-xs">평가 계획</span>
-              <select value={planId} onChange={(e) => setPlanId(+e.target.value)} disabled={!runnablePlans.length} className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 text-sm">{runnablePlans.length ? runnablePlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">활성 계획 없음</option>}</select>
+      <PageToolbar desc="평가 실행 · 실행 큐 (진행 중·대기)" />
+      <div className="grid grid-cols-12 gap-4">
+        {/* ── 좌: 실행 설정 + 큐 ── */}
+        <div className="col-span-6 space-y-3">
+          {/* KPI 는 좌 2 + 우 3 으로 나눈다 — FQA 와 같은 배치.
+              결과 화면의 5칸(총 케이스·Pass·Fail·경고·종합 점수)과 같은 자리에 같은 모양으로
+              놓이면, 화면을 옮겼을 때 숫자의 뜻이 통째로 바뀐 것을 눈치채기 어렵다. */}
+          <div className="grid grid-cols-2 gap-3">
+            {KPI.slice(0, 2).map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex-1" />
+            <div style={{ width: 220 }}>
+              <select value={planId} onChange={(e) => setPlanId(+e.target.value)} disabled={!runnablePlans.length} className="w-full bg-slate-100 border border-slate-300 rounded-lg px-3 py-1.5 text-slate-800 text-sm">{runnablePlans.length ? runnablePlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>) : <option value="">활성 계획 없음</option>}</select>
             </div>
-            {!runnablePlans.length && <span className="text-xs text-amber-600">활성 상태의 평가 계획이 없습니다 — 계획을 활성화하세요</span>}
-            <span className="text-slate-500">·</span>
-            <div><span className="text-slate-500">Judge</span> <span className="text-slate-800 font-medium">{(curPlan && curPlan.judgeList && curPlan.judgeList.join(", ")) || "—"}</span></div>
-            <span className="text-slate-500">·</span>
-            <div><span className="text-slate-500">대상</span> <span className="text-slate-800 font-medium">TC {planCases(cases, curPlan).length}건</span> <span className="text-xs text-slate-500">(계획 선택)</span></div>
+            <Btn kind="primary" icon={Play} disabled={!runnablePlans.length} onClick={() => enqueue(curPlan, "수동")}>평가 실행</Btn>
           </div>
-          <Btn kind="primary" icon={Play} disabled={!runnablePlans.length} onClick={() => enqueue(curPlan, "수동")}>평가 실행</Btn>
-        </div>
-        {activeRun && <div className="mt-2 text-xs text-slate-500">실행 <span className="font-mono text-sky-600">{activeRun.id}</span> · 트리거 {activeRun.trigger} · {activeRun.startedAt} · 스냅샷 {activeRun.snapshot.model} / 프롬프트 {activeRun.snapshot.promptVer}</div>}
-      </Card>)}
-
-      {!fromHistory && queueRuns.length > 0 && (
-        <Card className="p-3">
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />평가 큐 {queueRuns.length}건 <span className="font-normal text-slate-500">· 수동·스케줄·이벤트 통합 · 완료되면 결과가 아래에 열립니다</span></span>
-          </div>
-          <div className="mt-2 space-y-1.5">
-            {queueRuns.map((r) => (
-              <div key={r.id} className="rounded-lg bg-slate-100 px-3 py-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <div><span className="font-mono text-sky-600">{r.id}</span> <span className="text-slate-800">{r.planName}</span></div>
-                  <div className="flex items-center gap-2 text-slate-500">{r.status === "진행중" && r.progt && <span className="text-slate-500">{r.progt} 케이스</span>}<Badge kind={r.status === "진행중" ? "warn" : "info"}>{r.status}</Badge><Badge kind="info">{r.trigger}</Badge></div>
-                </div>
-                {r.status === "진행중" && <div className="mt-1.5 h-1.5 rounded bg-slate-200"><div className="h-1.5 rounded bg-sky-500 transition-all" style={{ width: (r.prog || 0) + "%" }} /></div>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {!activeRun && (
-        <Card className="p-10"><EmptyState icon={Play} title="평가를 실행하면 결과가 여기에 표시됩니다" hint="계획을 선택하고 “평가 실행”을 누르세요 · 실행 이력에 자동 적재" /></Card>
-      )}
-
-      {activeRun && (
-        <>
-          <div className="grid grid-cols-5 gap-3">
-            {[["총 케이스", sm.total, "text-slate-900"], ["Pass", sm.pass, "text-emerald-600"], ["Fail", sm.fail, "text-red-600"], ["경고", sm.warn, "text-amber-600"], ["종합 점수", sm.score, "text-sky-600"]].map((x) => (
-              <Card key={x[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + x[2]}>{x[1]}</div><div className="text-xs text-slate-500 mt-0.5">{x[0]}</div></Card>
-            ))}
-          </div>
-          <div className="grid grid-cols-5 gap-4">
-            <Card className="col-span-2 overflow-hidden flex flex-col">
-              <div className="px-4 py-3 border-b border-slate-200">
-                <div className="flex items-center justify-between mb-2"><span className="text-sm font-semibold text-slate-800">케이스 결과</span><span className="text-xs text-slate-500">{overridden > 0 ? "정정 " + overridden + "건" : "정정 없음"}</span></div>
-                <div className="flex gap-1.5 mb-2">{["검토 필요", "통과", "전체"].map((t) => (<button key={t} onClick={() => setRevF(t)} className={"rounded-full px-2.5 py-1 text-xs " + (revF === t ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{t}{t === "검토 필요" ? " " + needTotal : ""}</button>))}</div>
-              </div>
-              <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-                {shown.map((c) => (
-                  <div key={c.id} onClick={() => setSel(c)} className={"px-4 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100 " + (sel && sel.id === c.id ? SEL_ROW : "")}>
-                    <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 font-mono text-xs text-sky-600">{c.id}{(c.final || c.verdict) === "FAIL" && openDefectOf(c.id, runBot) && <Bug size={12} className="text-red-600" title="열린 결함 있음" />}</span><div className="flex items-center gap-2">{c.final && <CheckCircle2 size={13} className={c.final === c.verdict ? "text-emerald-600" : "text-amber-600"} />}<span className="text-sm font-semibold text-slate-800">{c.score}</span><Badge kind={vKind(c.final || c.verdict)}>{c.final || c.verdict}</Badge>{c.final && c.final !== c.verdict && <span className="rounded bg-amber-100 px-1 text-xs text-amber-700">정정</span>}</div></div>
-                    <div className="text-xs text-slate-500 mt-1 truncate">{c.q}</div>
+          {!runnablePlans.length && <div className="text-xs text-amber-600">활성 상태의 평가 계획이 없습니다 — 계획을 활성화해야 실행할 수 있습니다.</div>}
+          {runnablePlans.length > 0 && (
+            <Card className="space-y-2 p-3 text-xs">
+              <div className="flex items-center justify-between"><span className="text-slate-500">대상 챗봇</span><span className="text-slate-800">{botOf(curPlan) || "미지정"}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">Judge 모델</span><span className="text-slate-700">{(curPlan && curPlan.judgeList && curPlan.judgeList.join(", ")) || "—"}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">대상 케이스</span><span className="text-slate-700">TC {planCases(cases, curPlan).length}건</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">Prompt 템플릿</span><span className="text-slate-700">{(curPlan && curPlan.promptTpl) || "—"}</span></div>
+            </Card>
+          )}
+          <Card className="overflow-hidden">
+            {/* 슬롯이 여럿이면 "동시에 몇 개가 도는 구조인가"가 화면에 보여야 한다 */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2 text-xs text-slate-500">
+              <span>러너 {RUNNER_SLOTS}슬롯 · 사용 <span className="font-semibold text-slate-700">{runs.filter((r) => r.status === "진행중").length}</span></span>
+              <span>완료되면 알림으로 알려드립니다</span>
+            </div>
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">실행</th><th className="font-medium">상태</th><th className="font-medium">진행</th><th></th></tr></thead>
+              <tbody>
+                {queueRuns.length === 0 && (<tr><td colSpan={4} className="px-4 py-6 text-center text-sm text-slate-500">진행 중이거나 대기 중인 평가가 없습니다</td></tr>)}
+                {queueRuns.map((r) => (
+                  <tr key={r.id} onClick={() => setSelId(r.id)} className={"cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100 " + ((selRun && selRun.id === r.id) ? SEL_ROW : "")}>
+                    <td className="px-4 py-3"><div className="font-mono text-xs text-sky-600">{r.id}</div><div className="text-slate-800">{r.planName}</div><div className="text-xs text-slate-500">{r.trigger}</div></td>
+                    <td><div className="flex items-center gap-1.5"><Badge kind={r.status === "진행중" ? "warn" : "info"}>{r.status}</Badge>{r.status === "진행중" && r.slot && <span className="rounded bg-slate-200 px-1 font-mono text-xs text-slate-600">S{r.slot}</span>}</div></td>
+                    <td style={{ minWidth: 90 }}>{r.status === "대기" ? <span className="text-xs text-slate-500">순번 {queueRuns.filter((x) => x.status === "대기").findIndex((x) => x.id === r.id) + 1}</span> : <div><div className="mb-0.5 text-xs text-slate-500">{r.progt} 케이스</div><div className="h-1.5 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500 transition-all" style={{ width: (r.prog || 0) + "%" }} /></div></div>}</td>
+                    <td className="pr-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>{r.status === "진행중" ? <button onClick={() => stopRun(r)} className="text-xs text-slate-500 hover:text-red-600">중지</button> : <button onClick={() => cancelRun(r)} className="text-xs text-slate-500 hover:text-red-600">취소</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+          {/* 완료되면 큐에서 빠진다 — 그 자리에서 결과로 갈 길을 남긴다 */}
+          {doneRuns.length > 0 && (
+            <Card className="p-3">
+              <div className="mb-1.5 text-xs font-semibold text-slate-700">최근 완료 <span className="font-normal text-slate-500">· 이번 화면에서 실행한 것</span></div>
+              <div className="space-y-1">
+                {doneRuns.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-1.5 text-xs">
+                    <div><span className="font-mono text-sky-600">{r.id}</span> <span className="text-slate-800">{r.planName}</span> <span className="text-slate-500">· {r.score}점 · 실패 {r.fail}건</span></div>
+                    <button onClick={() => openResult(r.id, "run")} className="text-sky-600 hover:underline">결과 보기 →</button>
                   </div>
                 ))}
-                {shown.length === 0 && <div className="px-4 py-8 text-center text-xs text-slate-500">해당 항목이 없습니다.</div>}
               </div>
             </Card>
-            <Card className="col-span-3 p-5">
-              {sel ? (
-                <>
-                  <div className="flex items-center justify-between mb-3"><span className="font-mono text-sky-600">{sel.id}</span><Badge kind={vKind(sel.verdict)}>{sel.verdict} · {sel.score}점</Badge></div>
-                  <div className="space-y-3 text-sm">
-                    <Block label="질문" tone="plain">{sel.q}</Block>
-                    <Block label="기대 응답 (Golden)" tone="ok">{sel.golden}</Block>
-                    <Block label="실제 챗봇 응답" tone={sel.verdict === "FAIL" ? "err" : "plain"}>{sel.actual}</Block>
-                    {sel.scores && Object.keys(sel.scores).length > 0 && (<div><div className="text-xs text-slate-500 mb-2">LLM Judge 다차원 채점</div><div className="grid grid-cols-2 gap-x-5">{Object.entries(sel.scores).map(([k, v]) => (<ScoreBar key={k} label={k} value={v} color={v >= 80 ? C.sky : v >= 60 ? C.warn : C.err} />))}</div></div>)}
-                    <Block label="Judge 평가 근거" tone="plain"><span className="text-slate-500">{sel.judge}</span></Block>
-                    <div className="flex items-center gap-2 flex-wrap"><span className="text-xs text-slate-500">안전 게이트:</span>{[["환각", sel.safety.환각], ["PII 노출", sel.safety.PII], ["정책 위반", sel.safety.정책]].filter(([, v]) => v && v !== "미검사").map(([k, v]) => <Badge key={k} kind={vKind(v)}>{k} {v}</Badge>)}{[sel.safety.환각, sel.safety.PII, sel.safety.정책].every((v) => !v || v === "미검사") && <span className="text-xs text-slate-500">활성 게이트 없음</span>}</div>
-                    <div className="pt-2 border-t border-slate-200">
-                      <div className="mb-1.5 flex items-center gap-2 text-xs text-slate-500">결과 판정 <span className="text-slate-500">· Judge {sel.verdict} (기본)</span>{sel.final && sel.final !== sel.verdict && <Badge kind="warn">정정됨</Badge>}</div>
-                      <div className="flex items-center gap-2">
-                        {["PASS", "WARN", "FAIL"].map((v) => (
-                          <button key={v} onClick={() => { setFinal(sel.id, v); toast(sel.id + (v === sel.verdict ? " · Judge 판정 유지" : " → " + v + " 정정"), v === "FAIL" && v !== sel.verdict ? "warn" : "ok"); }} className={"inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm " + ((sel.final || sel.verdict) === v ? (v === "FAIL" ? "bg-red-600 text-white" : v === "WARN" ? "bg-amber-600 text-white" : "bg-emerald-700 text-white") : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{v}{v === sel.verdict ? " · Judge" : ""}</button>
-                        ))}
-                        <div className="flex-1" />
-                        {(sel.final || sel.verdict) === "FAIL" && (openDefectOf(sel.id, runBot)
-                          ? <Btn icon={Bug} onClick={() => { setPendingSelect({ kind: "defect", key: openDefectOf(sel.id, runBot).key }); goto("defects"); }}>결함 보기 · {openDefectOf(sel.id, runBot).key}</Btn>
-                          : <Btn kind="danger" icon={Bug} onClick={() => openModal("jira", { tc: sel.id, target: runBot, sev: "Critical", title: (isRegression(sel.id, runBot) ? "[재발] " : "") + sel.id + " 평가 실패", q: sel.q, pre: sel.pre, golden: sel.golden, actual: sel.actual, judge: sel.judge, score: sel.score, safety: sel.safety, env: activeRun ? (activeRun.snapshot.model + " / 프롬프트 " + activeRun.snapshot.promptVer + " / 케이스 " + activeRun.snapshot.caseVer) : "" })}>{isRegression(sel.id, runBot) ? "재발 결함 등록" : "결함 등록"}</Btn>)}
-                      </div>
-                      <div className="mt-1.5 text-xs text-slate-500">손대지 않으면 Judge 판정이 그대로 최종 · 이견 있는 예외만 정정하세요.</div>
+          )}
+        </div>
+
+        {/* ── 우: 오늘 요약 + 선택한 실행의 진행 상황 ── */}
+        <div className="col-span-6 space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            {KPI.slice(2).map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>))}
+          </div>
+          {!selRun ? (
+            <Card className="p-10"><EmptyState icon={Play} title="진행 중인 평가가 없습니다" hint="계획을 선택하고 “평가 실행”을 누르세요" /></Card>
+          ) : selRun.status === "대기" ? (
+            <Card className="p-6">
+              <div className="mb-2 flex items-center gap-2"><span className="font-mono text-sm text-sky-600">{selRun.id}</span><span className="text-sm text-slate-800">{selRun.planName}</span><Badge kind="info">대기</Badge></div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">러너 배정 대기 · 앞선 {queueRuns.filter((x) => x.status === "진행중" || (x.status === "대기" && (x.queuedAt || 0) < (selRun.queuedAt || 0))).length}건</div>
+              <div className="mt-3 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between"><span className="text-slate-500">대상 케이스</span><span className="text-slate-700">{(selRun.results || []).length}건</span></div>
+                <div className="flex items-center justify-between"><span className="text-slate-500">스냅샷</span><span className="text-slate-700">{selRun.snapshot.model} · 프롬프트 {selRun.snapshot.promptVer}</span></div>
+              </div>
+            </Card>
+          ) : (
+            <Card className="overflow-hidden flex flex-col" style={{ maxHeight: 640 }}>
+              <div className="border-b border-slate-200 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2"><span className="flex items-center gap-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700"><span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />LIVE</span><span className="font-mono text-sm text-sky-600">{selRun.id}</span><span className="text-sm text-slate-800">{selRun.planName}</span></div>
+                  <span className="text-xs text-slate-500">{selRun.progt} 케이스</span>
+                </div>
+                <div className="mt-2 h-2 rounded bg-slate-200"><div className="h-2 rounded bg-sky-500 transition-all" style={{ width: prog + "%" }} /></div>
+                {/* 🔑 진행 중에는 건수만 보여주고 점수는 내지 않는다 — 앞의 몇 건으로 평균을 내면
+                    남은 케이스가 무엇이든 그 숫자가 먼저 각인된다. 집계는 완료 시점에만. */}
+                <div className="mt-1.5 text-xs text-slate-500">케이스마다 챗봇 호출 → LLM Judge 채점 · 종합 점수는 완료 후에 나옵니다</div>
+              </div>
+              <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
+                {(selRun.results || []).map((c, i) => (
+                  <div key={c.id} className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 text-sm">
+                    <div className="min-w-0 flex-1"><span className="font-mono text-xs text-sky-600">{c.id}</span><div className="truncate text-xs text-slate-500">{c.q}</div></div>
+                    <div className="ml-3 shrink-0">
+                      {i < doneN
+                        ? <span className="flex items-center gap-2"><span className="text-sm font-semibold text-slate-800">{c.score}</span><Badge kind={vKind(c.verdict)}>{c.verdict}</Badge></span>
+                        : i === doneN
+                          ? <span className="text-xs text-amber-600">평가 중…</span>
+                          : <span className="text-xs text-slate-400">대기</span>}
                     </div>
                   </div>
-                </>
-              ) : <div className="text-sm text-slate-500 text-center py-10">왼쪽에서 케이스를 선택하세요.</div>}
+                ))}
+              </div>
             </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════ 결과 상세 — 완료된 실행 1건을 소유한다 ═══════════
+   어느 실행을 볼지는 전역 lqaResultRun 이 정한다(FQA 의 fqaResultRun 과 같은 규약).
+   🔑 실행을 로컬 state 로 복제하지 않는다 — 전역 runs 에서 매번 찾는다.
+      복제해 두면 판정 정정이 로컬과 전역 두 곳에 생겨 어느 쪽이 정본인지 흐려진다. */
+export function LqaResultScreen() {
+  const { plans, runs, defects, updateRun, toast, openModal, goto, setPendingSelect, lqaResultRun, lqaResultFrom } = useApp();
+  const run = runs.find((r) => r.id === lqaResultRun) || null;
+  const [selId, setSelId] = useState(null);
+  const [revF, setRevF] = useState("검토 필요");
+
+  const res = (run && run.results) || [];
+  const needRev = (r) => r.verdict !== "PASS";
+  const shown = res.filter((r) => (revF === "전체" ? true : revF === "통과" ? r.verdict === "PASS" : needRev(r)));
+  const sel = shown.find((r) => r.id === selId) || null;
+  useEffect(() => { if (shown.length && !shown.some((r) => r.id === selId)) setSelId(shown[0].id); }, [revF, lqaResultRun, res.length]);
+  const needTotal = res.filter(needRev).length;
+  const overridden = res.filter((r) => r.final && r.final !== r.verdict).length;
+  // 보고 있는 실행이 평가한 챗봇 — 결함 동일성 판정의 축. 폴백을 두지 않는다(엉뚱한 계획의 챗봇으로 조회하면 오판정)
+  const runBot = botOf(plans.find((p) => p.id === (run || {}).planId));
+  /* 판정 정정은 전역 runs 에만 쓴다 — 로컬 복제 없음 */
+  const persist = (rs) => { const eff = (r) => r.final || r.verdict; const pass = rs.filter((r) => eff(r) === "PASS").length; const fail = rs.filter((r) => eff(r) === "FAIL").length; const warn = rs.length - pass - fail; const passRate = Math.round((pass / (rs.length || 1)) * 100); updateRun(run.id, { results: rs, pass, warn, fail, passRate }); };
+  const setFinal = (id, v) => persist(res.map((r) => (r.id === id ? { ...r, final: (v === r.verdict ? null : v) } : r)));
+  const sm = run ? { total: run.cases, pass: run.pass, fail: run.fail, warn: run.warn, score: run.score } : { total: 0, pass: 0, fail: 0, warn: 0, score: "—" };
+  const backTo = { run: "run", dashboard: "dashboard", history: "history" }[lqaResultFrom] || "history";
+  const backLabel = { run: "평가 실행", dashboard: "대시보드", history: "실행 이력" }[lqaResultFrom] || "실행 이력";
+
+  if (!run) return (
+    <div className="space-y-4">
+      <PageToolbar desc="결과 상세" />
+      <Card className="p-10"><EmptyState icon={FileText} title="열어 볼 실행이 없습니다" hint="실행 이력에서 완료된 실행을 선택하세요" /></Card>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <PageToolbar desc={<span><button onClick={() => goto(backTo)} className="text-sky-600 hover:underline">{backLabel}</button> <span className="text-slate-500">›</span> <span className="text-slate-700 font-medium">{run.id} 결과</span></span>}>
+        <Btn icon={FileDown} onClick={() => toast("Excel 다운로드 — 케이스별 판정·점수·근거", "ok")}>Excel</Btn>
+        <Btn icon={FileDown} onClick={() => toast("PDF 리포트 다운로드", "ok")}>PDF</Btn>
+        <Btn icon={ChevronLeft} onClick={() => goto(backTo)}>{backLabel}으로</Btn>
+      </PageToolbar>
+      <Card className="flex flex-wrap items-center gap-3 p-3 text-xs text-slate-500"><span className="font-mono text-sky-600">{run.id}</span><span className="text-sm font-medium text-slate-800">{run.planName}</span><Badge kind="info">{run.trigger}</Badge><span>{run.startedAt}</span><span className="text-slate-500">·</span><span>모델 {run.snapshot.model} · 프롬프트 {run.snapshot.promptVer} · 케이스 {run.snapshot.caseVer}</span><span className="text-slate-500">·</span><span>점수 <span className="font-semibold text-sky-600">{run.score != null ? run.score : "—"}</span></span></Card>
+
+      <div className="grid grid-cols-5 gap-3">
+        {[["총 케이스", sm.total, "text-slate-900"], ["Pass", sm.pass, "text-emerald-600"], ["Fail", sm.fail, "text-red-600"], ["경고", sm.warn, "text-amber-600"], ["종합 점수", sm.score, "text-sky-600"]].map((x) => (
+          <Card key={x[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + x[2]}>{x[1]}</div><div className="text-xs text-slate-500 mt-0.5">{x[0]}</div></Card>
+        ))}
+      </div>
+      <div className="grid grid-cols-5 gap-4">
+        <Card className="col-span-2 overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-200">
+            <div className="flex items-center justify-between mb-2"><span className="text-sm font-semibold text-slate-800">케이스 결과</span><span className="text-xs text-slate-500">{overridden > 0 ? "정정 " + overridden + "건" : "정정 없음"}</span></div>
+            <div className="flex gap-1.5 mb-2">{["검토 필요", "통과", "전체"].map((t) => (<button key={t} onClick={() => setRevF(t)} className={"rounded-full px-2.5 py-1 text-xs " + (revF === t ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{t}{t === "검토 필요" ? " " + needTotal : ""}</button>))}</div>
           </div>
-        </>
-      )}
+          <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
+            {shown.map((c) => (
+              <div key={c.id} onClick={() => setSelId(c.id)} className={"px-4 py-3 border-b border-slate-200 cursor-pointer hover:bg-slate-100 " + (sel && sel.id === c.id ? SEL_ROW : "")}>
+                <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 font-mono text-xs text-sky-600">{c.id}{(c.final || c.verdict) === "FAIL" && openDefectOf(defects, c.id, runBot) && <Bug size={12} className="text-red-600" title="열린 결함 있음" />}</span><div className="flex items-center gap-2">{c.final && <CheckCircle2 size={13} className={c.final === c.verdict ? "text-emerald-600" : "text-amber-600"} />}<span className="text-sm font-semibold text-slate-800">{c.score}</span><Badge kind={vKind(c.final || c.verdict)}>{c.final || c.verdict}</Badge>{c.final && c.final !== c.verdict && <span className="rounded bg-amber-100 px-1 text-xs text-amber-700">정정</span>}</div></div>
+                <div className="text-xs text-slate-500 mt-1 truncate">{c.q}</div>
+              </div>
+            ))}
+            {shown.length === 0 && <div className="px-4 py-8 text-center text-xs text-slate-500">해당 항목이 없습니다.</div>}
+          </div>
+        </Card>
+        <Card className="col-span-3 p-5">
+          {sel ? (
+            <>
+              <div className="flex items-center justify-between mb-3"><span className="font-mono text-sky-600">{sel.id}</span><Badge kind={vKind(sel.verdict)}>{sel.verdict} · {sel.score}점</Badge></div>
+              <div className="space-y-3 text-sm">
+                <Block label="질문" tone="plain">{sel.q}</Block>
+                <Block label="기대 응답 (Golden)" tone="ok">{sel.golden}</Block>
+                <Block label="실제 챗봇 응답" tone={sel.verdict === "FAIL" ? "err" : "plain"}>{sel.actual}</Block>
+                {sel.scores && Object.keys(sel.scores).length > 0 && (<div><div className="text-xs text-slate-500 mb-2">LLM Judge 다차원 채점</div><div className="grid grid-cols-2 gap-x-5">{Object.entries(sel.scores).map(([k, v]) => (<ScoreBar key={k} label={k} value={v} color={v >= 80 ? C.sky : v >= 60 ? C.warn : C.err} />))}</div></div>)}
+                <Block label="Judge 평가 근거" tone="plain"><span className="text-slate-500">{sel.judge}</span></Block>
+                <div className="flex items-center gap-2 flex-wrap"><span className="text-xs text-slate-500">안전 게이트:</span>{[["환각", sel.safety.환각], ["PII 노출", sel.safety.PII], ["정책 위반", sel.safety.정책]].filter(([, v]) => v && v !== "미검사").map(([k, v]) => <Badge key={k} kind={vKind(v)}>{k} {v}</Badge>)}{[sel.safety.환각, sel.safety.PII, sel.safety.정책].every((v) => !v || v === "미검사") && <span className="text-xs text-slate-500">활성 게이트 없음</span>}</div>
+                <div className="pt-2 border-t border-slate-200">
+                  <div className="mb-1.5 flex items-center gap-2 text-xs text-slate-500">결과 판정 <span className="text-slate-500">· Judge {sel.verdict} (기본)</span>{sel.final && sel.final !== sel.verdict && <Badge kind="warn">정정됨</Badge>}</div>
+                  <div className="flex items-center gap-2">
+                    {["PASS", "WARN", "FAIL"].map((v) => (
+                      <button key={v} onClick={() => { setFinal(sel.id, v); toast(sel.id + (v === sel.verdict ? " · Judge 판정 유지" : " → " + v + " 정정"), v === "FAIL" && v !== sel.verdict ? "warn" : "ok"); }} className={"inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm " + ((sel.final || sel.verdict) === v ? (v === "FAIL" ? "bg-red-600 text-white" : v === "WARN" ? "bg-amber-600 text-white" : "bg-emerald-700 text-white") : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{v}{v === sel.verdict ? " · Judge" : ""}</button>
+                    ))}
+                    <div className="flex-1" />
+                    {(sel.final || sel.verdict) === "FAIL" && (openDefectOf(defects, sel.id, runBot)
+                      ? <Btn icon={Bug} onClick={() => { setPendingSelect({ kind: "defect", key: openDefectOf(defects, sel.id, runBot).key }); goto("defects"); }}>결함 보기 · {openDefectOf(defects, sel.id, runBot).key}</Btn>
+                      : <Btn kind="danger" icon={Bug} onClick={() => openModal("jira", { tc: sel.id, target: runBot, sev: "Critical", title: (isRegression(defects, sel.id, runBot) ? "[재발] " : "") + sel.id + " 평가 실패", q: sel.q, pre: sel.pre, golden: sel.golden, actual: sel.actual, judge: sel.judge, score: sel.score, safety: sel.safety, env: run.snapshot.model + " / 프롬프트 " + run.snapshot.promptVer + " / 케이스 " + run.snapshot.caseVer })}>{isRegression(defects, sel.id, runBot) ? "재발 결함 등록" : "결함 등록"}</Btn>)}
+                  </div>
+                  <div className="mt-1.5 text-xs text-slate-500">손대지 않으면 Judge 판정이 그대로 최종 · 이견 있는 예외만 정정하세요.</div>
+                </div>
+              </div>
+            </>
+          ) : <div className="text-sm text-slate-500 text-center py-10">왼쪽에서 케이스를 선택하세요.</div>}
+        </Card>
+      </div>
     </div>
   );
 }
