@@ -650,8 +650,12 @@ export function PqaRunScreen() {
   return (
     <div className="space-y-4">
       <PageToolbar desc="계획 단위 직렬 큐(측정 격리) · 계획 안에서는 단말 병렬 · 시나리오 순차" />
+      {/* 🔑 실행 화면의 좌우 비율은 네 도메인이 같은 뜻으로 읽히게 맞춘다 —
+          좌측 "무엇을 실행할 것인가 · 실행 큐", 우측 "지금 무슨 일이 벌어지는가".
+          LQA·FQA 와 같은 6:6 이다. 우측 단말×시나리오 매트릭스가 눌리면
+          셀 크기를 줄이지, 비율을 되돌리지 않는다. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-5 space-y-3">
+        <div className="col-span-6 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             {KPI.slice(0, 2).map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>))}
           </div>
@@ -693,7 +697,7 @@ export function PqaRunScreen() {
             </table>
           </Card>
         </div>
-        <div className="col-span-7 space-y-3">
+        <div className="col-span-6 space-y-3">
           <div className="grid grid-cols-3 gap-3">
             {KPI.slice(2).map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>))}
           </div>

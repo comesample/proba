@@ -631,8 +631,12 @@ export function NqaRunScreen({ nav }) {
   return (
     <div className="space-y-4">
       <PageToolbar desc="부하 주입 · 백그라운드 실행 + 실시간 관측(트래픽·오류·응답시간·VU)" />
+      {/* 🔑 실행 화면의 좌우 비율은 네 도메인이 같은 뜻으로 읽히게 맞춘다 —
+          좌측 "무엇을 실행할 것인가 · 대기열", 우측 "지금 무슨 일이 벌어지는가".
+          LQA·FQA 는 6:6, PQA·NQA 는 5:7 이다. 부하는 생성기가 하나뿐이라
+          좌측에 고를 큐가 없고(예약만 있다) 우측 관측 지표가 넓어야 해서 5:7 로 둔다. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-3 space-y-3">
+        <div className="col-span-5 space-y-3">
           <Card className="p-4 space-y-3">
             <div className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Gauge size={15} className="text-sky-600" />실행할 부하 테스트</div>
             <Field label="부하 테스트"><Select value={scnId} onChange={(e) => setScnId(Number(e.target.value))}>{scns.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>
@@ -658,7 +662,7 @@ export function NqaRunScreen({ nav }) {
             </Card>
           )}
         </div>
-        <div className="col-span-9 space-y-3">
+        <div className="col-span-7 space-y-3">
           <Card className="p-3">
             <div className="flex items-center justify-between text-xs"><span className="text-slate-500">부하 생성기</span><span className={anyRunning ? "text-amber-700" : "text-slate-700"}>{anyRunning ? "사용 중 — 한 번에 하나만 실행합니다" : "대기 중"}</span></div>
             {queued.length > 0 && <div className="mt-1.5 text-xs text-amber-700">대기 {queued.length}건 — 러너 여유가 생기면 자동 시작됩니다.</div>}
