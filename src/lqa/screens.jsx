@@ -1446,7 +1446,8 @@ const isRegression = (defects, id, bot) => !openDefectOf(defects, id, bot) && de
       결과를 여기 두면 "왜 결과가 안 열리지"라는 혼란만 남는다.
       결과는 LqaResultScreen 이 소유하고 lqaResultRun 으로 지목한다. */
 export function LqaRunScreen() {
-  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, removeRun, toast, notify, goto, jiraConfig, setLqaResultRun, setLqaResultFrom } = useApp();
+  /* 이 화면은 결과로 이동시키지 않는다 — 완료는 알림이 안내하고, 지난 실행은 실행 이력이 갖는다. */
+  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, removeRun, toast, notify, jiraConfig } = useApp();
   /* 큐 = 진행중 + 대기. 진행중 먼저, 그 다음 적재 순서(queuedAt).
      🔑 id 사전순으로 정렬하지 않는다 — id 가 "R-" + Date.now() 뒷자리라 자리올림에서
         시간순과 어긋난다(R-99999 다음이 R-00123). PQA 처럼 queuedAt 을 쓴다. */
@@ -1455,17 +1456,12 @@ export function LqaRunScreen() {
   const runnablePlans = plans.filter((p) => p.status === "활성");
   const [planId, setPlanId] = useState((runnablePlans[0] || plans[0] || {}).id);
   const [selId, setSelId] = useState(null);
-  /* 이번 세션에 완료된 실행 — 큐에서 빠진 뒤 "방금 끝난 것"으로 가는 경로가 사라지지 않게.
-     서버에 남기는 목록이 아니라 화면을 벗어나면 잊는 임시 목록이다. */
-  const [doneIds, setDoneIds] = useState([]);
   const curPlan = plans.find((p) => p.id === planId) || runnablePlans[0] || plans[0];
   const liveRun = runs.find((r) => r.status === "진행중");
   // 고른 것이 끝나면 선택이 풀린다 — 다음 진행중, 없으면 큐 맨 앞 (FQA·PQA 와 같은 규약)
   const selRun = queueRuns.find((r) => r.id === selId) || liveRun || queueRuns[0] || null;
-  const doneRuns = doneIds.map((id) => runs.find((r) => r.id === id)).filter((r) => r && r.status === "완료");
 
   const cnt = (f) => runs.filter(f).length;
-  const openResult = (id, from) => { setLqaResultRun(id); setLqaResultFrom(from); goto("lqa-result"); };
   const cancelRun = (r) => { if (!window.confirm(r.id + " 평가를 큐에서 취소할까요?")) return; removeRun(r.id); if (selId === r.id) setSelId(null); toast(r.id + " 취소됨 — 큐에서 제거", "info"); };
   /* 중지도 레코드를 지운다 — 끝나지 않은 실행은 확정된 사실이 없다(App.jsx removeRun 주석 참고).
      대신 어디까지 갔는지는 토스트로 알린다. Judge 호출이 그만큼 나갔다는 뜻이라 알 가치가 있다. */
@@ -1519,7 +1515,6 @@ export function LqaRunScreen() {
     // 집계는 여기서 한 번 편다 — 완료된 실행만 점수를 가진다
     const agg = rollup(run.results);
     updateRun(id, { status: "완료", finishedAt: nowStamp(), ...agg });
-    setDoneIds((x) => [id, ...x.filter((v) => v !== id)].slice(0, 5));
     notify({ icon: "play", text: run.planName + " 완료 — PASS " + agg.pass + " / FAIL " + agg.fail, to: { domain: "LQA", view: "lqa-result", run: run.id } });
     if (made) notify({ icon: "bug", text: "FAIL " + made + "건 결함 자동 등록 (Jira 규칙)", to: { domain: "LQA", view: "defects" } });
     toast(id + " 평가 완료 · " + agg.score + "점 · 실패 " + agg.fail + "건" + (made ? " · 결함 " + made + "건 자동 등록" : ""), "ok");
@@ -1623,20 +1618,10 @@ export function LqaRunScreen() {
               </tbody>
             </table>
           </Card>
-          {/* 완료되면 큐에서 빠진다 — 그 자리에서 결과로 갈 길을 남긴다 */}
-          {doneRuns.length > 0 && (
-            <Card className="p-3">
-              <div className="mb-1.5 text-xs font-semibold text-slate-700">최근 완료 <span className="font-normal text-slate-500">· 이번 화면에서 실행한 것</span></div>
-              <div className="space-y-1">
-                {doneRuns.map((r) => (
-                  <div key={r.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-1.5 text-xs">
-                    <div><span className="font-mono text-sky-600">{r.id}</span> <span className="text-slate-800">{r.planName}</span> <span className="text-slate-500">· {r.score}점 · 실패 {r.fail}건</span></div>
-                    <button onClick={() => openResult(r.id, "run")} className="text-sky-600 hover:underline">결과 보기 →</button>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
+          {/* 🔑 "최근 완료" 목록을 두지 않는다 — FQA·PQA 와 같다.
+             완료된 실행으로 가는 길은 이미 둘이다: 완료 알림(결과 상세로 직행)과 실행 이력.
+             여기에 또 두면 "이번 화면에서 실행한 것"이라는 애매한 범위가 하나 더 생기고,
+             화면을 떠났다 오면 비어 있어(로컬 state) 정작 필요한 때 안 보인다. */}
         </div>
 
         {/* ── 우: 오늘 요약 + 선택한 실행의 진행 상황 ── */}
