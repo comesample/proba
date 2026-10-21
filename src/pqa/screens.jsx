@@ -246,6 +246,7 @@ export function PqaScenarioScreen() {
           ) : (<>
           <div className="flex items-center gap-2">
             <div className="w-64 shrink-0"><Input value={scn.name} onChange={(e) => updatePerfScenario(scn.id, { name: e.target.value })} className="text-base font-semibold" /></div><Badge kind="info">{appName(scn.appId)}</Badge>
+            <span className="text-xs text-slate-500">이름은 입력하면 바로 저장됩니다</span>
           </div>
           <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
             <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold text-slate-700">Macrobenchmark 테스트 참조 <span className="font-normal text-slate-500">· 앱 개발자가 작성한 코드를 가리킨다</span></span><div className="flex items-center gap-2">{refDirty && <><span className="text-xs text-amber-700">미저장 변경</span><Btn kind="primary" icon={Save} onClick={applyRef}>참조 저장</Btn></>}{confirmed ? <Badge kind="pass">확정</Badge> : <Badge kind="warn">미확정</Badge>}</div></div>
@@ -253,7 +254,12 @@ export function PqaScenarioScreen() {
               <Field label="모듈" hint="대상 앱 설정에서 상속"><div className="rounded-lg border border-slate-200 bg-slate-100/50 px-2.5 py-2 font-mono text-xs text-slate-500">{scnApp.benchModule || ":benchmark"}</div></Field>
               <Field label="테스트 (클래스#메서드)"><Input value={draft.scriptRef || ""} onChange={(e) => setD({ scriptRef: e.target.value })} placeholder="HomeScrollBenchmark#scrollHome" className="font-mono text-xs" /></Field>
             </div>
-            <Field label="흐름 설명" hint="플랫폼은 코드를 읽지 않는다 — 어떤 조작인지는 사람이 적는다"><Input value={scn.desc || ""} onChange={(e) => updatePerfScenario(scn.id, { desc: e.target.value })} placeholder="예: 로그인 → 홈 진입 → 상품 탭 → 리스트 스크롤 10회" /></Field>
+            {/* 🔑 이름·흐름 설명은 입력 즉시 저장한다(저장 버튼 없음).
+                되돌릴 것이 없는 설명 필드라 확인 단계를 둘 이유가 없다.
+                반대로 바로 위 '테스트 참조'는 바꾸면 확정 지표가 날아가므로 버튼으로 막는다.
+                한 카드 안에 규칙이 둘이면 사용자는 버튼 쪽을 기준으로 읽는다 —
+                버튼 없는 필드가 "저장 안 됨"으로 보이지 않게 즉시 저장임을 적어 둔다. */}
+            <Field label="흐름 설명" hint="플랫폼은 코드를 읽지 않는다 — 어떤 조작인지는 사람이 적는다. 입력하면 바로 저장됩니다"><Input value={scn.desc || ""} onChange={(e) => updatePerfScenario(scn.id, { desc: e.target.value })} placeholder="예: 로그인 → 홈 진입 → 상품 탭 → 리스트 스크롤 10회" /></Field>
             {!confirmed && <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-700">아직 측정한 적이 없어 산출 지표를 모릅니다 — <span className="font-semibold">첫 측정을 마치면 지표·반복·유형이 확정</span>됩니다. 계획에는 지금도 담을 수 있고, 지표 임계(SLA)는 확정 후 설정합니다.</div>}
           </div>
 
