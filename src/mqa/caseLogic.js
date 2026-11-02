@@ -1,0 +1,389 @@
+// ============================================================
+// MQA 테스트케이스 — 순수 로직 (화면과 분리해 단독 검증 가능)
+//   정본 3단:  자연어 절차(의도)  →  실행 스텝(RF 키워드)  →  .robot(생성물)
+//   · 스텝 → .robot 변환은 규칙 기반(결정적)이다 — AI 는 '절차 → 스텝 초안' 에만 쓴다
+//   · 목업의 AI 초안·화면 구조·파서는 흉내 구현이다. 실 구현 교체 지점은 주석으로 표시
+// ============================================================
+
+/* ── 동작 = RF AppiumLibrary 키워드 1:1 ─────────────────────────
+   needs: 이 동작이 확정되려면 무엇이 있어야 하나 (loc = 대상 요소, val = 값) */
+export const ACTS = [
+  { id: "탭", kw: "Click Element", needs: ["loc"] },
+  { id: "입력", kw: "Input Text", needs: ["loc", "val"] },
+  { id: "화면 확인", kw: "Wait Until Page Contains", needs: ["val"], hint: "화면에 보여야 하는 문구" },
+  { id: "요소 확인", kw: "Wait Until Element Is Visible", needs: ["loc"] },
+  { id: "스와이프", kw: "Swipe By Percent", needs: [], opts: ["위로", "아래로"] },
+  { id: "뒤로", kw: "Go Back", needs: [] },
+  { id: "대기", kw: "Sleep", needs: ["val"], hint: "초" },
+];
+export const ACT = Object.fromEntries(ACTS.map((a) => [a.id, a]));
+
+/* 스텝 상태는 저장하지 않고 매번 계산한다 — 사람이 요소를 채우는 순간 '확정' 이 된다 */
+export const stateOf = (s) => {
+  const a = ACT[s.act];
+  if (!a) return "미확정";
+  if (a.needs.includes("loc") && !String(s.loc || "").trim()) return "미확정";
+  if (a.needs.includes("val") && !String(s.val || "").trim()) return "미확정";
+  return "확정";
+};
+export const unresolvedOf = (steps) => (steps || []).filter((s) => stateOf(s) === "미확정").length;
+
+/* ── 자연어 절차 ── 한 줄 = 한 단계, "→" 뒤는 기대 결과 */
+const stripNo = (t) => t.replace(/^\s*(\d+[.)]|[-•*·])\s*/, "").trim();
+export const procFromText = (text) => String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+  const [t, ...e] = l.split(/\s*(?:→|->)\s*/);
+  return { t: stripNo(t), e: e.join(" → ").trim() };
+}).filter((p) => p.t);
+export const procToText = (proc) => (proc || []).map((p) => p.t + (p.e ? " → " + p.e : "")).join("\n");
+
+/* AI 로 양식 정리 (목업) — 자유 서술을 '한 줄 한 단계' 로 쪼갠다.
+   실 구현: LLM 에 "절차/기대 결과 구조로 정리" 를 요청한다. */
+export const tidyProc = (text) => {
+  const COND = [["누르면", "누른다"], ["열면", "연다"], ["들어가면", "들어간다"], ["하면", "한다"]];
+  return String(text || "").replace(/\r/g, "")
+    .replace(/한\s*(?:뒤|후|다음)\s*,?\s*/g, "한다\n").replace(/하고\s+/g, "한다\n").replace(/누르고\s+/g, "누른다\n").replace(/열고\s+/g, "연다\n")
+    .split(/\n|(?<=다)[.]?\s+/).map((x) => stripNo(x.replace(/[.。]\s*$/, ""))).filter(Boolean)
+    .map((x) => {
+      for (const [c, d] of COND) { const i = x.indexOf(c + " "); if (i > 0) return x.slice(0, i) + d + " → " + x.slice(i + c.length + 1); }
+      return x;
+    }).join("\n");
+};
+
+/* ── 샘플 앱 화면 구조 (요소 집기·AI 초안용 흉내) ─────────────
+   실 구현: 실행 PC 의 기기에서 Appium 으로 화면 구조(XML)와 스크린샷을 받는다. */
+export const SAMPLE_PKG = "com.example.shop";
+export const SCREEN_ELEMENTS = [
+  { key: "search", label: "검색창", cls: "EditText", id: "search_bar", acc: "", text: "" },
+  { key: "p0", label: "상품 카드 1", cls: "ViewGroup", id: "", acc: "product_0", text: "수분 립밤" },
+  { key: "p1", label: "상품 카드 2", cls: "ViewGroup", id: "", acc: "", text: "컬러 립밤", xpath: "//androidx.recyclerview.widget.RecyclerView/android.view.ViewGroup[2]" },
+  { key: "cart", label: "장바구니 담기 버튼", cls: "Button", id: "btn_add_cart", acc: "", text: "장바구니 담기" },
+  { key: "toast", label: "안내 문구", cls: "TextView", id: "toast_msg", acc: "", text: "장바구니에 담았습니다" },
+  { key: "my", label: "마이 탭", cls: "FrameLayout", id: "", acc: "마이 탭", text: "마이" },
+  { key: "orders", label: "주문 내역 메뉴", cls: "TextView", id: "menu_orders", acc: "", text: "주문 내역" },
+  { key: "id", label: "아이디 입력칸", cls: "EditText", id: "input_id", acc: "", text: "" },
+  { key: "pw", label: "비밀번호 입력칸", cls: "EditText", id: "input_pw", acc: "", text: "" },
+  { key: "login", label: "로그인 버튼", cls: "Button", id: "btn_login", acc: "", text: "로그인" },
+  { key: "logout", label: "로그아웃 문구", cls: "TextView", id: "txt_logout", acc: "", text: "로그아웃" },
+  { key: "cartTab", label: "장바구니 탭", cls: "FrameLayout", id: "", acc: "장바구니", text: "장바구니" },
+  { key: "cartClear", label: "전체 삭제 버튼", cls: "Button", id: "btn_cart_clear", acc: "", text: "전체 삭제" },
+  { key: "cartEmpty", label: "빈 장바구니 안내", cls: "TextView", id: "txt_cart_empty", acc: "", text: "장바구니가 비어 있습니다" },
+];
+/* 로케이터 추천 — 고유 ID > 접근성 ID > 위치(xpath). 위치는 화면이 조금만 바뀌어도 깨진다 */
+export const recommendLoc = (el, pkg = SAMPLE_PKG) => {
+  if (el.id) return { loc: "id=" + pkg + ":id/" + el.id, kind: "고유 ID", stable: true };
+  if (el.acc) return { loc: "accessibility_id=" + el.acc, kind: "접근성 ID", stable: true };
+  return { loc: "xpath=" + (el.xpath || "//*[@text='" + el.text + "']"), kind: "위치", stable: false };
+};
+
+/* ── 요소 이름 — 스텝에는 로케이터와 함께 사람이 읽는 이름(el)을 둔다
+   요소 집기 · AI 생성은 이름을 같이 저장한다. 이름이 없는 스텝(스크립트 임포트 등)은 로케이터에서 유도한다 */
+export const locKind = (loc) => { const l = String(loc || ""); return /^id=/.test(l) ? "고유 ID" : /^accessibility_id=/.test(l) ? "접근성 ID" : /^xpath=/.test(l) ? "위치" : l ? "기타" : ""; };
+/* 버전별 화면 차이 (목업) — 앱이 업데이트되면 요소 ID가 바뀔 수 있다. 실제 실패의 가장 흔한 원인
+   v3.1.4 → v3.2.0 : '장바구니 담기' 버튼 ID btn_cart_add → btn_add_cart */
+const BUILD_DIFF = { "3.1.4": { cart: { id: "btn_cart_add" } } };
+export const elementsFor = (build) => SCREEN_ELEMENTS.map((e) => ({ ...e, ...((BUILD_DIFF[build] || {})[e.key] || {}) }));
+const ALL_VARIANTS = () => [...SCREEN_ELEMENTS, ...Object.keys(BUILD_DIFF).flatMap((b) => elementsFor(b))];
+export const elOfLoc = (loc) => ALL_VARIANTS().find((e) => recommendLoc(e).loc === loc) || null;
+export const elName = (s) => {
+  if (s.el) return s.el;
+  const e = elOfLoc(s.loc); if (e) return e.label;
+  const l = String(s.loc || "");
+  const m = l.match(/^id=.*?:id\/(.+)$/) || l.match(/^id=(.+)$/); if (m) return m[1];
+  const a = l.match(/^accessibility_id=(.+)$/); if (a) return a[1];
+  return l ? "위치로 지정한 요소" : "";
+};
+
+/* ── 실행 흉내 (목업) — 샘플 화면에 있는 요소 · 문구면 통과, 없으면 그 스텝에서 실패하고 멈춘다
+   실 구현: 러너가 RF 로 실행하고 output.xml 에서 스텝별 결과 · 오류 · 스크린샷을 돌려준다 */
+const KNOWN_TEXTS = () => new Set(SCREEN_ELEMENTS.map((e) => e.text).filter(Boolean));
+export const simulateStep = (s, build) => {
+  const needsLoc = ["탭", "입력", "요소 확인"].includes(s.act);
+  const onScreen = (loc) => elementsFor(build).some((e) => recommendLoc(e).loc === loc);
+  if (needsLoc && !onScreen(s.loc)) return { st: "fail", msg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다" };
+  if (s.act === "화면 확인" && !/^\$\{/.test(s.val || "") && !KNOWN_TEXTS().has(s.val)) return { st: "fail", msg: "화면에서 \"" + s.val + "\" 문구를 찾지 못했습니다" };
+  if (/^xpath=/.test(s.loc || "")) return { st: "warn", msg: "통과 — 위치로 찾은 요소는 화면이 바뀌면 깨지기 쉽습니다" };
+  return { st: "ok", msg: "" };
+};
+
+/* ── AI 스텝 초안 (1단계 · 기기 없이) ────────────────────────
+   목업 규칙: 문장의 동사로 동작을 고르고, 아는 요소 이름이면 로케이터를 채운다.
+   모르는 요소·특정 못 한 확인 문구는 '미확정' 으로 남긴다 (사람이 요소 집기로 채움).
+   실 구현: LLM 이 닫힌 동작 목록(ACTS) 안에서만 고르도록 제한한다. */
+const KNOWN = [
+  { k: ["장바구니 담기"], el: "cart" },
+  { k: ["검색창", "검색 창"], el: "search" },
+  { k: ["마이 탭", "마이"], el: "my" },
+  { k: ["주문 내역"], el: "orders" },
+  { k: ["전체 삭제"], el: "cartClear" },
+  { k: ["로그인 버튼"], el: "login" },
+  { k: ["첫 번째 상품", "첫 상품"], el: "p0" },
+];
+const findKnown = (t) => { const h = KNOWN.find((x) => x.k.some((k) => t.includes(k))); return h ? SCREEN_ELEMENTS.find((e) => e.key === h.el) : null; };
+const quoted = (t) => { const m = String(t || "").match(/["“'‘]([^"”'’]+)["”'’]/); return m ? m[1] : ""; };
+let _sid = 0;
+export const sid = () => "S" + Date.now().toString(36) + (++_sid);
+
+const isField = (loc) => /search_bar|input_|EditText/.test(loc || "");
+export const draftSteps = (proc) => {
+  const out = []; let lastField = "";
+  (proc || []).forEach((p, i) => {
+    const n = i + 1; const t = p.t; const q = quoted(t);
+    const el = findKnown(t);
+    const locOf = (e) => (e ? recommendLoc(e).loc : "");
+    const nameOf = (e) => (e ? e.label : "");
+    let s;
+    /* 로그인은 대부분 '검증 대상' 이 아니라 '들어가기 위한 절차' 다 — FQA 와 같이 전제조건 케이스로 돌린다 */
+    if (/로그인(한다|을 한다|을 수행|된 상태|상태)/.test(t) && !/버튼|누른/.test(t)) s = { act: "탭", loc: "", why: "로그인 절차입니다 — 왼쪽 '전제조건'에 로그인 케이스를 지정하고 이 스텝은 지우는 것을 권장합니다" };
+    else if (/입력|검색한다|적는다|쓴다/.test(t)) { const lc = locOf(el) || (/검색/.test(t) ? locOf(SCREEN_ELEMENTS[0]) : lastField); s = { act: "입력", loc: lc, val: q, why: !q ? "입력할 값을 찾지 못함" : !lc ? "입력할 칸을 특정하지 못함" : "" }; }
+    else if (/스크롤|스와이프|내린다|올린다/.test(t)) s = { act: "스와이프", val: /올린다/.test(t) ? "아래로" : "위로" };
+    else if (/뒤로/.test(t)) s = { act: "뒤로" };
+    else if (/기다린다|대기/.test(t)) s = { act: "대기", val: (t.match(/(\d+)\s*초/) || [])[1] || "2" };
+    else if (/누른다|누르고|탭한다|연다|선택한다|클릭|들어간다|이동한다/.test(t)) s = { act: "탭", loc: locOf(el), why: el ? "" : "화면에서 요소를 특정하지 못함" };
+    else if (/확인|보인다|표시/.test(t)) s = { act: "화면 확인", val: q, why: q ? "" : "확인할 문구를 특정하지 못함" };
+    else s = { act: "탭", loc: "", why: "동작을 판단하지 못함 — 절차를 더 구체적으로 쓰거나 직접 고르세요" };
+    if (s.act === "탭" && isField(s.loc)) lastField = s.loc;
+    out.push({ id: sid(), n, src: t, ...s, ...(s.loc && elOfLoc(s.loc) ? { el: elOfLoc(s.loc).label } : {}) });
+    if (p.e) {
+      const v = quoted(p.e) || (/담기 완료|담았/.test(p.e) ? "장바구니에 담았습니다" : "");
+      out.push({ id: sid(), n, src: p.e, act: "화면 확인", val: v, why: v ? "" : "기대 결과에서 확인할 문구를 특정하지 못함" });
+    }
+  });
+  return out;
+};
+
+/* ── 스텝 → .robot (결정적 변환) ───────────────────────────
+   proba.resource = PROBA 실행기가 제공하는 리소스: '앱 실행' 키워드와 계정 변수를 실행 시 주입한다.
+   (대상·환경의 앱 버전·계정, 테스트 기기 정보가 여기로 들어간다 — 케이스는 환경을 모른다) */
+const SEP = "    ";
+export const stepLine = (s, procLine) => {
+  if (stateOf(s) === "미확정") return "# [미확정] " + s.n + ". " + s.act + " — " + (s.src || procLine || "값을 채워 주세요");
+  switch (s.act) {
+    case "탭": return "Click Element" + SEP + s.loc;
+    case "입력": return "Input Text" + SEP + s.loc + SEP + s.val;
+    case "화면 확인": return "Wait Until Page Contains" + SEP + s.val;
+    case "요소 확인": return "Wait Until Element Is Visible" + SEP + s.loc;
+    case "스와이프": return "Swipe By Percent" + SEP + (s.val === "아래로" ? "50    20    50    80" : "50    80    50    20");
+    case "뒤로": return "Go Back";
+    case "대기": return "Sleep" + SEP + String(s.val).replace(/[^\d.]/g, "") + "s";
+    default: return "# 알 수 없는 동작: " + s.act;
+  }
+};
+export const toRobot = (c) => {
+  const L = ["*** Settings ***", "Library" + SEP + "AppiumLibrary", "Resource" + SEP + "proba.resource" + SEP + "# 앱 실행 · 계정 변수 (실행 시 자동 주입)"];
+  L.push("Test Setup" + SEP + "앱 실행", "Test Teardown" + SEP + "Close Application", "", "*** Test Cases ***", c.id + " " + c.name);
+  if (c.pre) L.push(SEP + "[Documentation]" + SEP + "전제조건: " + c.pre);
+  /* 전제조건 케이스 — PROBA 실행기가 그 케이스를 먼저 수행한 세션에서 시작한다 (집계에는 세지 않음) */
+  if (c.preCase) L.push(SEP + "[Setup]" + SEP + "전제조건 케이스" + SEP + c.preCase + (c.acctRole ? SEP + "역할=" + c.acctRole : ""));
+  const tags = String(c.tags || "").split(/[,\s]+/).filter(Boolean);
+  if (tags.length) L.push(SEP + "[Tags]" + SEP + tags.join(SEP));
+  /* 절차가 있으면 묶음마다 '# 절차 n' 주석을 넣는다 — .robot 만 보는 사람도 무엇을 검증하는 줄인지 알 수 있게 */
+  let lastN = null;
+  (c.steps || []).forEach((s) => {
+    const pl = (c.proc || [])[s.n - 1];
+    if ((c.proc || []).length && s.n !== lastN) { L.push(SEP + "# 절차 " + (pl ? s.n + ": " + pl.t : "연결 없음")); lastN = s.n; }
+    L.push(SEP + stepLine(s, (pl || {}).t));
+  });
+  if (!(c.steps || []).length) L.push(SEP + "# 스텝이 없습니다");
+  return L.join("\n");
+};
+
+/* ── .robot 가져오기 파서 ─────────────────────────────────────
+   RF 파일 형식: *** Section *** / 들여쓰지 않은 줄 = 테스트·키워드 이름 / 들여쓴 줄 = 본문(2칸 이상 공백으로 구분)
+   판정: 아는 키워드만 있으면 Low-Code(스텝), 반복·조건·변수 대입·모르는 키워드가 있으면 Full-Code */
+const REV = {
+  "click element": "탭", "tap": "탭", "input text": "입력", "input value": "입력",
+  "wait until page contains": "화면 확인", "page should contain text": "화면 확인",
+  "wait until element is visible": "요소 확인", "element should be visible": "요소 확인",
+  "swipe by percent": "스와이프", "go back": "뒤로", "sleep": "대기",
+};
+const IGNORE = ["open application", "close application", "close all applications", "log", "capture page screenshot"];
+const CONTROL = /^(FOR|END|IF|ELSE IF|ELSE|WHILE|TRY|EXCEPT|FINALLY|BREAK|CONTINUE|RETURN)$/;
+export const parseRobot = (text, fileName) => {
+  const out = { tests: [], keywords: [], notes: [] };
+  let sec = ""; let cur = null;
+  String(text || "").replace(/\r/g, "").split("\n").forEach((raw) => {
+    const sm = raw.match(/^\*{3}\s*(.+?)\s*\*{3}/);
+    if (sm) { sec = sm[1].toLowerCase(); cur = null; return; }
+    if (!raw.trim() || raw.trim().startsWith("#")) return;
+    const isTest = /test case|task/.test(sec); const isKw = /keyword/.test(sec);
+    if (!isTest && !isKw) { if (/^(test setup|suite setup)/i.test(raw) && /open application/i.test(raw)) out.notes.push("앱 실행 설정(Open Application)은 PROBA 실행 설정으로 대체됩니다"); return; }
+    if (!/^\s/.test(raw)) { cur = { name: raw.trim(), lines: [], tags: [], args: [], raw: [raw] }; (isTest ? out.tests : out.keywords).push({ ...cur, src: fileName }); cur = (isTest ? out.tests : out.keywords)[(isTest ? out.tests : out.keywords).length - 1]; return; }
+    if (!cur) return;
+    cur.raw.push(raw);
+    const tok = raw.trim().split(/\s{2,}|\t+/).map((x) => x.trim()).filter(Boolean);
+    if (!tok.length) return;
+    if (/^\[tags\]$/i.test(tok[0])) { cur.tags = tok.slice(1); return; }
+    if (/^\[arguments\]$/i.test(tok[0])) { cur.args = tok.slice(1); return; }
+    if (/^\[/.test(tok[0])) return;
+    cur.lines.push(tok);
+  });
+  return out;
+};
+/* 테스트 1건 → 스텝 변환 시도. 실패 사유가 있으면 Full-Code로 가져온다.
+   사용자 키워드(*** Keywords ***) 호출은 그 내용을 '펼쳐 넣는다' — 인자는 호출 값으로 치환.
+   (MQA 는 공통 키워드라는 별도 개념을 두지 않는다. 재사용은 FQA 와 같은 '전제조건 케이스' 로 한다) */
+const subst = (v, env) => String(v).replace(/\$\{([^}]+)\}/g, (m, k) => (k in env ? env[k] : m));
+const lineToStep = (tok, n) => {
+  const act = REV[tok[0].toLowerCase()];
+  if (act === "탭" || act === "요소 확인") return { act, loc: tok[1] || "" };
+  if (act === "입력") return { act, loc: tok[1] || "", val: tok[2] || "" };
+  if (act === "화면 확인") return { act, val: tok[1] || "" };
+  if (act === "스와이프") return { act, val: Number(tok[2]) > Number(tok[4]) ? "위로" : "아래로" };
+  if (act === "뒤로") return { act };
+  if (act === "대기") return { act, val: String(tok[1] || "1").replace(/[^\d.]/g, "") };
+  return null;
+};
+export const robotTestToSteps = (t, kwMap) => {
+  const steps = []; const reasons = []; const expanded = [];
+  const walk = (lines, env, depth, from) => {
+    lines.forEach((raw) => {
+      const tok = raw.map((x) => subst(x, env));
+      const k = tok[0]; const lk = k.toLowerCase();
+      if (CONTROL.test(k) || /^\$\{.+\}\s*=?$/.test(k)) { reasons.push(from ? "키워드 '" + from + "'에 반복·조건 포함" : "반복·조건·변수 대입 포함"); return; }
+      if (IGNORE.includes(lk)) return;
+      const st = lineToStep(tok);
+      if (st) { steps.push({ id: sid(), n: steps.length + 1, ...st }); return; }
+      const kw = (kwMap || {})[k];
+      if (kw && depth < 3) {
+        const env2 = {}; (kw.args || []).forEach((a, i) => { env2[a.replace(/^\$\{|\}$/g, "")] = tok[i + 1] != null ? tok[i + 1] : ""; });
+        expanded.push(k); walk(kw.lines, env2, depth + 1, k); return;
+      }
+      reasons.push("알 수 없는 키워드: " + k);
+    });
+  };
+  walk(t.lines, {}, 0, "");
+  return { steps, reasons: [...new Set(reasons)], expanded: [...new Set(expanded)] };
+};
+
+/* ── 엑셀 가져오기 ── 열 매핑 후 행 → 케이스. 절차 셀은 여러 줄 가능, 기대 결과는 줄 수가 같으면 짝지음 */
+export const rowToCase = (row, map) => {
+  const get = (k) => (map[k] != null && map[k] !== "" ? String(row[map[k]] || "") : "");
+  const lines = get("proc").split(/\r?\n/).map((l) => stripNo(l)).filter(Boolean);
+  const exps = get("exp").split(/\r?\n/).map((l) => stripNo(l)).filter(Boolean);
+  const proc = lines.map((t) => ({ t, e: "" }));
+  if (exps.length && exps.length === proc.length) proc.forEach((p, i) => { p.e = exps[i]; });
+  else if (exps.length && proc.length) proc[proc.length - 1].e = exps.join(" / ");
+  return { name: get("name").trim(), pre: get("pre").trim(), suite: get("suite").trim(), proc };
+};
+export const parseCsv = (text) => {
+  const rows = []; let row = []; let cell = ""; let q = false;
+  const s = String(text || "").replace(/^﻿/, "");
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (q) { if (ch === '"' && s[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n") { row.push(cell.replace(/\r$/, "")); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim()));
+};
+
+/* ── 가져오기 체험용 샘플 파일 ── (특정 고객사·서비스명 없음) */
+export const SAMPLE_EXCEL = [
+  ["번호", "시나리오명", "사전조건", "테스트 절차", "기대결과", "분류"],
+  ["1", "마이 탭에서 주문 내역 열기", "일반 계정으로 로그인 상태", "1. 하단 마이 탭을 누른다\n2. 주문 내역을 누른다", "주문 내역 화면이 표시된다", "주문"],
+  ["2", "검색 결과 없음 안내", "", "1. 검색창을 누른다\n2. \"zzzz\"를 입력한다", "\"검색 결과가 없습니다\"가 보인다", "상품 탐색"],
+  ["3", "상품 목록 스크롤", "", "1. 검색창을 누른다\n2. \"립밤\"을 입력한다\n3. 화면을 내린다", "", "상품 탐색"],
+];
+export const SAMPLE_ROBOT = {
+  name: "sample_tests.robot",
+  text: `*** Settings ***
+Library     AppiumLibrary
+Test Setup    Open Application    \${REMOTE_URL}    platformName=Android    appPackage=com.example.shop
+
+*** Test Cases ***
+검색어 입력 후 결과 확인
+    [Tags]    smoke
+    Click Element    id=com.example.shop:id/search_bar
+    Input Text    id=com.example.shop:id/search_bar    립밤
+    Wait Until Page Contains    수분 립밤
+
+로그인 후 마이 탭 확인
+    공통 로그인    qa_user01    \${PW}
+    Click Element    accessibility_id=마이 탭
+    Wait Until Page Contains    주문 내역
+
+상품 3개 연속 담기
+    FOR    \${i}    IN RANGE    3
+        Click Element    xpath=//android.view.ViewGroup[\${i}+1]
+        Click Element    id=com.example.shop:id/btn_add_cart
+        Go Back
+    END
+
+*** Keywords ***
+공통 로그인
+    [Arguments]    \${id}    \${pw}
+    Click Element    accessibility_id=마이 탭
+    Input Text    id=com.example.shop:id/input_id    \${id}
+    Input Text    id=com.example.shop:id/input_pw    \${pw}
+    Click Element    id=com.example.shop:id/btn_login
+`,
+};
+
+/* ── AI 생성 '확인 필요' 후보 — 스텝 원문과 겹치는 단어가 많은 요소 순 (목업)
+   실 구현: LLM 이 확신도와 함께 후보 요소를 돌려준다 (qa.rpc.ai.decide 응답) */
+export const candidatesFor = (src, forText) => {
+  const words = String(src || "").replace(/["“”'‘’]/g, " ").split(/\s+/).map((w) => w.replace(/(을|를|이|가|은|는|에|의|으로|로|한다|된다|뜬다|보인다|누른다|연다)$/, "")).filter((w) => w.length >= 2);
+  const pool = L_ELEMS().filter((e) => !forText || e.text);
+  const score = (e) => words.filter((w) => (e.label + " " + (e.text || "")).includes(w)).length;
+  return pool.map((e) => ({ e, s: score(e) })).sort((a, b) => b.s - a.s).slice(0, 3).map((x) => x.e);
+};
+const L_ELEMS = () => SCREEN_ELEMENTS;
+
+/* ── Full-Code 문법 검사 (목업) — 실행하지 않고 구조만 본다
+   실 구현: 러너/서버에서 Robot Framework 의 dry-run 으로 키워드 존재 · 인자 수까지 확인한다
+   오류(error)는 검토중 저장 · 디버그 실행을 막고, 주의(warn)는 알리기만 한다 */
+const KNOWN_KW = ["click element", "tap", "input text", "input value", "wait until page contains", "page should contain text", "wait until element is visible", "element should be visible",
+  "swipe by percent", "go back", "sleep", "log", "capture page screenshot", "open application", "close application", "close all applications", "앱 실행", "전제조건 케이스"];
+const CTRL = /^(FOR|END|IF|ELSE IF|ELSE|WHILE|TRY|EXCEPT|FINALLY|BREAK|CONTINUE|RETURN)$/;
+export const checkRobot = (code) => {
+  const lines = String(code || "").replace(/\r/g, "").split("\n");
+  const errors = []; const warns = [];
+  const userKw = new Set(); let sec = ""; let hasTests = false; let testCount = 0; let open = 0;
+  lines.forEach((l) => { const m = l.match(/^\*{3}\s*(.+?)\s*\*{3}/); if (m) sec = m[1].toLowerCase(); else if (/keyword/.test(sec) && l.trim() && !/^\s/.test(l)) userKw.add(l.trim().toLowerCase()); });
+  sec = "";
+  lines.forEach((l, i) => {
+    const n = i + 1; const m = l.match(/^\*{3}\s*(.+?)\s*\*{3}/);
+    if (m) { sec = m[1].toLowerCase(); if (/test case/.test(sec)) hasTests = true; return; }
+    if (!l.trim() || l.trim().startsWith("#")) return;
+    if (!/test case|keyword/.test(sec)) return;
+    if (!/^\s/.test(l)) { if (/test case/.test(sec)) testCount++; return; }
+    if (/^ \S/.test(l)) { errors.push({ line: n, msg: "들여쓰기는 공백 2칸 이상이어야 합니다" }); return; }
+    const tok = l.trim().split(/\s{2,}|\t+/);
+    const k = tok[0];
+    if (/^\[/.test(k) || /^\$\{.+\}\s*=?$/.test(k)) return;
+    if (CTRL.test(k)) { if (k === "FOR" || k === "IF" || k === "WHILE" || k === "TRY") open++; if (k === "END") open--; return; }
+    if (/\s\S/.test(k) && tok.length === 1 && /\s/.test(l.trim()) && l.trim().split(/\s{2,}/).length === 1 && /^(Click Element|Input Text|Wait Until)\s\S/.test(l.trim())) { errors.push({ line: n, msg: "키워드와 인자 사이는 공백 2칸 이상으로 띄워야 합니다" }); return; }
+    if (!KNOWN_KW.includes(k.toLowerCase()) && !userKw.has(k.toLowerCase())) warns.push({ line: n, msg: "알 수 없는 키워드 \"" + k + "\" — 실행할 때 실패할 수 있습니다" });
+  });
+  if (!hasTests) errors.unshift({ line: 0, msg: "테스트 섹션(*** Test Cases ***)이 없습니다" });
+  else if (!testCount) errors.unshift({ line: 0, msg: "테스트 이름이 없습니다 — 들여쓰지 않은 줄로 테스트 이름을 쓰세요" });
+  if (open > 0) errors.push({ line: 0, msg: "FOR · IF 블록이 END 로 닫히지 않았습니다" });
+  return { errors, warns };
+};
+
+/* ── 절차 ↔ 스텝 연결 ───────────────────────────────────────
+   스텝 s.n = 그 스텝이 수행하는 절차 번호(1부터). 스텝은 항상 절차 순서로 정렬해 둔다 — 화면의 묶음 순서 = 실행 순서
+   절차 행의 b = 그 절차의 스텝을 마지막으로 맞춘 시점의 절차 문장. 지금 문장과 다르면 '확인 필요'
+     · b 가 정해지는 때: AI 생성 반영 · 그 절차의 스텝을 고칠 때 · '확인함' · 처음 절차를 고치기 직전(이전 문장을 기억)
+   → 아무 스텝이나 고쳤다고 경고하지 않고, '문장이 바뀌었는데 스텝은 그대로인 절차'만 짚는다 */
+export const procKey = (p) => String((p || {}).t || "").trim() + "→" + String((p || {}).e || "").trim();
+export const procChanged = (p, hasSteps) => !!hasSteps && p.b !== undefined && procKey(p) !== p.b;
+export const changedProcs = (c) => (c.proc || []).map((p, k) => (procChanged(p, (c.steps || []).some((s) => s.n === k + 1)) ? k + 1 : 0)).filter(Boolean);
+export const sortByProc = (steps, len) => steps.map((s, i) => ({ s, i, k: s.n >= 1 && s.n <= len ? s.n : len + 1 })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
+export const remapSteps = (steps, map, len) => sortByProc(steps.map((s) => (map[s.n] !== undefined ? { ...s, n: map[s.n] } : s)), len);
+/* 빈 절차 행을 걷어낸다 — 그 행에 붙은 스텝은 앞 절차(없으면 다음 절차)로 */
+export const compactProc = (proc, steps) => {
+  const keep = []; (proc || []).forEach((p, j) => { if (String(p.t || "").trim()) keep.push(j); });
+  const map = {};
+  (proc || []).forEach((_, j) => { const ni = keep.indexOf(j); map[j + 1] = ni >= 0 ? ni + 1 : Math.max(1, keep.filter((x) => x < j).length); });
+  const np = keep.map((j) => { const p = proc[j]; const o = { t: String(p.t).trim(), e: String(p.e || "").trim() }; if (p.b !== undefined) o.b = p.b; return o; });
+  return { proc: np, steps: np.length ? remapSteps(steps || [], map, np.length) : (steps || []) };
+};
+
+/* ── AI 전송 전 가림 (서버에서 수행 · 목업은 같은 규칙을 화면에 보여주기만) ──
+   전화번호 · 이메일 · 카드번호 형태를 [가림] 으로 바꾼다. 결과를 받으면 원래 값으로 되돌린다 */
+const MASK_RE = [/01[016789][-\s]?\d{3,4}[-\s]?\d{4}/g, /[\w.+-]+@[\w-]+\.[\w.]+/g, /\b\d{4}[-\s]\d{4}[-\s]\d{4}[-\s]\d{4}\b/g];
+export const maskText = (text) => { let n = 0; let t = String(text || ""); MASK_RE.forEach((re) => { t = t.replace(re, () => { n++; return "[가림]"; }); }); return { text: t, count: n }; };

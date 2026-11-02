@@ -2494,8 +2494,11 @@ export function FqaDashboardScreen({ nav }) {
 }
 /* ═══════════ 9. 테스트케이스 (통합 저장소) ═══════════ */
 export function FqaCasesScreen() {
-  const { fqaCases, fqaSuites, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo } = useApp();
+  const { fqaCases, fqaSuites, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick } = useApp();
   const editorDirty = useRef(false);
+  /* 좌측 메뉴 '테스트케이스' 재클릭 → 목록으로 (미저장 확인은 goTo 가 이미 했다). 처음 마운트 때는 무시 */
+  const tick0 = useRef(navTick);
+  useEffect(() => { if (navTick === tick0.current) return; editorDirty.current = false; setMode("목록"); setOpen(null); setBlank(null); setAddOpen(false); }, [navTick]);
   useEffect(() => { if (fqaEditTc) { const c = fqaCases.find((x) => x.id === fqaEditTc); if (c) { setSel(c); setMode("edit"); } setFqaEditTc(null); } }, [fqaEditTc]);
   const [msg, flash] = useToast();
   const [mode, setMode] = useState(() => (fqaEditTc && fqaCases.some((x) => x.id === fqaEditTc)) ? "edit" : "목록");
