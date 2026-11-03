@@ -9,45 +9,54 @@
 //   목업: 스텝 결과는 caseLogic.simulateStep(앱 버전별 화면) 으로 정한다 — TC-007 은 v3.2.0 에서 실패한다
 // ============================================================
 import { useState, useEffect } from "react";
-import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor } from "lucide-react";
+import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap } from "lucide-react";
 import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, nowStamp } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
-import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerRole, runnerOfDev } from "./devices.js";
-import { envText } from "./workPickers.jsx";
+import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
+import { envText, DeviceSelect, MockBtn, ReadonlyField } from "./workPickers.jsx";
+import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
 
 /* ── 공통 판단 (계획 화면 · 실행 화면 · 예약 점검이 같은 함수를 쓴다) ── */
 const tagList = (t) => String(t || "").split(/[,\s]+/).filter(Boolean);
 export const envOfPlan = (systems, p) => { const sy = (systems || []).find((s) => s.id === p.systemId) || null; const e = sy ? (sy.envs || []).find((x) => x.env === p.env) || null : null; return { sy, e }; };
 export const buildOf = (e, buildId) => { const app = (e && e.app) || {}; return (app.builds || []).find((b) => b.id === (buildId || app.defBuild)) || null; };
-export const casesOfPlan = (p, cases) => (cases || []).filter((c) => c.systemId === p.systemId && c.status === "승인" && (p.suites || []).includes(c.suite) && (!tagList(p.tags).length || tagList(p.tags).some((t) => tagList(c.tags).includes(t))));
+export const casesOfPlan = (p, cases) => (cases || []).filter((c) => c.systemId === p.systemId && c.status === "승인" && (p.suiteIds || []).includes(c.suiteId) && (!tagList(p.tags).length || tagList(p.tags).some((t) => tagList(c.tags).includes(t))));
 const devOf = (runners, id) => flatDevices(runners).find((d) => d.id === id) || null;
-/* 실행을 막는 사유 — 빈 문자열이면 실행 가능. scheduled=true 면 예약 조건(러너 용도)까지 본다.
+/* 실행을 막는 사유 — 빈 문자열이면 실행 가능. scheduled=true 면 예약 시각 기준(편집 세션은 끊고 시작)으로 본다.
    editPreempt=true 면 편집 세션이 점유한 단말은 '사용 가능' 으로 본다 (예약 실행이 우선) */
-export const planBlock = (p, ctx, scheduled, editPreempt) => {
+export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride) => {
   const { e } = envOfPlan(ctx.systems, p);
   if (p.status !== "활성") return "계획이 초안입니다 — 활성으로 바꾼 뒤 실행할 수 있습니다";
   if (!e) return "대상·환경을 찾을 수 없습니다";
-  const b = buildOf(e, p.buildId);
+  const b = buildOverride || buildOf(e);
   if (!b) return e.env + " 환경에 앱 설치 파일이 없습니다";
   if (!casesOfPlan(p, ctx.cases).length) return "조건에 맞는 승인 케이스가 없습니다";
   const d = devOf(ctx.runners, p.devId);
   if (!d) return "실행 단말이 지정되지 않았습니다";
-  const r = runnerOfDev(ctx.runners, d.id);
-  if (scheduled && runnerRole(r) === "저작용") return d.model + " — 저작용 PC의 단말이라 예약 실행에 쓸 수 없습니다 (테스트 기기에서 용도 변경)";
   const dd = editPreempt && d.state === "사용 중" && /^편집 세션/.test(d.busy || "") ? { ...d, state: "사용 가능" } : d;
   return deviceBlock(dd, b);
 };
-/* 예약 — 목업은 매일 · 평일 + 시각만. 다음 실행 시각을 사람이 읽는 문장으로 */
-const SCHED_MODES = ["없음", "매일", "평일"];
-const schedText = (s) => (!s || s.mode === "없음" ? "예약 없음" : s.mode + " " + s.time);
-const nextRun = (s) => {
-  if (!s || s.mode === "없음") return "";
+/* 예약 — 공통 스케줄 설정(FQA 와 같은 컴포넌트)을 쓴다
+   schedule = { mode: manual | schedule | event, freq: hourly|daily|weekdays|weekly|monthly|cron, time, dow, dom, cron, tz, active, ev: { newBuild }, summary }
+   이벤트는 하나 — '새 기본 테스트 버전 지정 시'. 업로드가 PROBA 안에서 일어나므로 고객사 빌드 시스템 연동이 필요 없다 */
+export const SCHED0 = { mode: "manual", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "예약 없음" };
+export const MQA_EVENTS = [{ key: "newBuild", label: "새 기본 테스트 버전 지정 시", desc: "대상·환경에서 새 앱 버전을 기본 테스트 버전으로 지정하면 바로 실행합니다", short: "새 버전" }];
+export const isTimed = (s) => !!(s && s.mode === "schedule" && s.active !== false);
+export const isOnNewBuild = (s) => !!(s && s.mode === "event" && s.ev && s.ev.newBuild);
+export const schedText = (s) => (!s || s.mode === "manual" ? "예약 없음" : s.summary || "예약");
+/* 다음 실행 시각 — 정기 스케줄만. Cron 은 식 그대로 보여준다 */
+export const nextRun = (s) => {
+  if (!isTimed(s)) return "";
+  if (s.freq === "cron") return "Cron " + s.cron;
   const now = new Date(); const [h, m] = String(s.time || "02:00").split(":").map(Number);
-  const d = new Date(now); d.setHours(h, m, 0, 0); if (d <= now) d.setDate(d.getDate() + 1);
-  while (s.mode === "평일" && (d.getDay() === 0 || d.getDay() === 6)) d.setDate(d.getDate() + 1);
   const z = (n) => String(n).padStart(2, "0");
-  return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(h) + ":" + z(m);
+  const fmt = (d) => d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(d.getHours()) + ":" + z(d.getMinutes());
+  if (s.freq === "hourly") { const d = new Date(now); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return fmt(d); }
+  const d = new Date(now); d.setHours(h, m, 0, 0);
+  const ok = (x) => (s.freq === "weekdays" ? x.getDay() >= 1 && x.getDay() <= 5 : s.freq === "weekly" ? x.getDay() === +s.dow : s.freq === "monthly" ? x.getDate() === +s.dom : true);
+  for (let i = 0; i < 400 && (d <= now || !ok(d)); i++) d.setDate(d.getDate() + 1);
+  return fmt(d);
 };
 const RUN_K = { "대기 중": "info", "실행 중": "warn", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
 const CASE_K = { "대기": "draft", "실행 중": "warn", "통과": "pass", "실패": "fail", "건너뜀": "draft" };
@@ -60,7 +69,9 @@ const gateOk = (r) => { const pr = passRate(r); return pr != null && pr >= (r.ga
 const RUN_TIMERS = {};
 const actName = (s) => ((L.ACT[s.act] || { needs: [] }).needs.includes("loc") ? L.elName(s) : s.act === "화면 확인" ? "\"" + (s.val || "") + "\"" : s.act === "입력" ? "" : s.val || "");
 const robotRows = (code) => String(code || "").split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "ok", msg: "" } }));
-const nextRunId = (runs) => "MRUN-" + String(Math.max(0, ...(runs || []).map((r) => parseInt(String(r.id).replace(/\D/g, ""), 10) || 0)) + 1).padStart(3, "0");
+/* 같은 순간에 여러 실행을 만들 수 있어(새 버전 이벤트) 마지막으로 낸 번호도 함께 본다 */
+let LAST_RUN_NO = 0;
+const nextRunId = (runs) => { const n = Math.max(LAST_RUN_NO, ...(runs || []).map((r) => parseInt(String(r.id).replace(/\D/g, ""), 10) || 0)) + 1; LAST_RUN_NO = n; return "MRUN-" + String(n).padStart(3, "0"); };
 export function startRun({ plan, cases, allCases, sys, env, build, dev, trigger, note, api, runs }) {
   const id = nextRunId(runs);
   const plans = cases.map((c) => {
@@ -114,24 +125,41 @@ export function stopRun(run, api) {
 const useRunner = () => {
   const app = useApp();
   const ctx = { systems: app.mqaSystems || [], cases: app.mqaCases || [], runners: app.mqaRunners || [] };
-  const launch = (plan, { trigger = "수동", only, note } = {}) => {
+  const launch = (plan, { trigger = "수동", only, note, build } = {}) => {
     const { sy, e } = envOfPlan(ctx.systems, plan);
-    const b = buildOf(e, plan.buildId); const dev = devOf(ctx.runners, plan.devId);
+    const b = build || buildOf(e); const dev = devOf(ctx.runners, plan.devId);
     let cases = casesOfPlan(plan, ctx.cases); if (only) cases = cases.filter((c) => only.includes(c.id));
-    if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger === "예약") app.releaseMqaDevice(dev.id);
+    if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger !== "수동") app.releaseMqaDevice(dev.id);
     return startRun({ plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, api: app, runs: app.mqaRuns });
   };
-  return { app, ctx, launch };
+  /* 자동 실행(예약 · 새 버전) — 그 순간의 상태로 판단한다. 편집 세션은 끊고 시작, 그 밖의 문제는 건너뛰지 않고 '실행 불가' 로 기록 */
+  const autoRun = (p, trigger, build) => {
+    const blk = planBlock(p, ctx, true, true, build);
+    if (blk) {
+      const { sy, e } = envOfPlan(ctx.systems, p); const bd = build || buildOf(e); const dv = devOf(ctx.runners, p.devId);
+      app.addMqaRun({ id: nextRunId(app.mqaRuns), planId: p.id, planName: p.name, systemId: p.systemId, sysName: sy ? sy.name : "", env: p.env, build: bd ? bd.ver : "", devId: p.devId, device: dv ? devLabel(dv) : "—", trigger, status: "실행 불가", startedAt: nowStamp(), endedAt: nowStamp(), gate: p.gate, note: blk, cases: [], log: [{ lv: "FAIL", t: "실행 불가 — " + blk }] });
+      return { blocked: blk };
+    }
+    const dv = devOf(ctx.runners, p.devId);
+    const pre = dv && /^편집 세션/.test(dv.busy || "") ? dv.busy + " 을(를) 종료하고 시작" : "";
+    return { id: launch(p, { trigger, note: pre, build }), pre };
+  };
+  return { app, ctx, launch, autoRun };
 };
+export { useRunner };
 
 const Empty = ({ icon: Icon, title, hint, children }) => (
   <Card className="flex flex-col items-center justify-center py-14 text-center"><Icon size={26} className="text-slate-400" /><div className="mt-3 text-sm font-medium text-slate-700">{title}</div>{hint && <div className="mt-1.5 max-w-md text-xs text-slate-500">{hint}</div>}{children}</Card>
 );
 
 /* ═══════════ 실행 계획 ═══════════ */
-const P0 = (sys) => ({ name: "", systemId: sys ? sys.id : 0, env: sys && sys.envs[0] ? sys.envs[0].env : "", buildId: "", suites: [], tags: "", devId: "", retry: 1, onfail: "계속 진행", gate: 90, status: "초안", schedule: { mode: "없음", time: "02:00" } });
-const PLAN_KEYS = ["name", "systemId", "env", "buildId", "suites", "tags", "devId", "retry", "onfail", "gate", "status", "schedule"];
+const P0 = (sys) => ({ name: "", systemId: sys ? sys.id : 0, env: sys && sys.envs[0] ? sys.envs[0].env : "", suiteIds: [], tags: "", devId: "", retry: 1, onfail: "계속 진행", gate: 90, status: "초안", schedule: SCHED0 });
+const PLAN_KEYS = ["name", "systemId", "env", "suiteIds", "tags", "devId", "retry", "onfail", "gate", "status", "schedule"];
+/* 스케줄은 의미 있는 값만 비교한다 — 공통 스케줄 컴포넌트는 처음 그릴 때(개발 모드의 StrictMode 재실행 포함)
+   ev 를 { newBuild: false } 처럼 채워 내보내므로, 원본 {} 와 글자 그대로 비교하면 바꾸지 않아도 '미저장 변경' 이 뜬다 */
+const normSched = (s) => { const x = { ...SCHED0, ...(s || {}) }; return { mode: x.mode, freq: x.freq, time: x.time, dow: +x.dow, dom: +x.dom, cron: x.cron, tz: x.tz, active: x.active !== false, newBuild: !!(x.ev && x.ev.newBuild) }; };
 const pickPlan = (p) => Object.fromEntries(PLAN_KEYS.map((k) => [k, p[k]]));
+const cmpPlan = (p) => JSON.stringify(Object.fromEntries(PLAN_KEYS.map((k) => [k, k === "schedule" ? normSched(p[k]) : p[k]])));
 export function MqaPlanScreen() {
   const { mqaPlans = [], addMqaPlan, updateMqaPlan, removeMqaPlan, mqaSystems = [], mqaSuites = [], mqaCases = [], mqaRunners = [], setNavGuard, goTo } = useApp();
   const [msg, flash] = useToast();
@@ -142,33 +170,36 @@ export function MqaPlanScreen() {
   const d = sel ? (dRaw && dRaw.__id === sel.id ? dRaw : { ...pickPlan(sel), __id: sel.id }) : null;
   const [addOpen, setAddOpen] = useState(false);
   const [nf, setNf] = useState(P0(mqaSystems[0]));
-  const dirty = !!(sel && d && JSON.stringify(pickPlan(d)) !== JSON.stringify(pickPlan(sel)));
+  const dirty = !!(sel && d && cmpPlan(d) !== cmpPlan(sel));
   useEffect(() => { setNavGuard(dirty ? "저장하지 않은 변경이 있습니다. 이동하면 사라집니다.\n\n이동할까요?" : null); return () => setNavGuard(null); }, [dirty]);
   const set = (patch) => setD({ ...d, ...patch });
   const choose = (p) => { if (dirty && !window.confirm("저장하지 않은 변경이 있습니다. 이동할까요?")) return; setSelId(p.id); setD(null); };
+  /* 대상 앱 · 환경은 만들 때 정하고 바꾸지 않는다 — 다른 환경은 새 계획으로 (이력 · 회귀 비교가 섞이지 않게) */
   const create = () => {
     if (!nf.name.trim()) { flash("계획 이름을 입력하세요"); return; }
-    if (!nf.suites.length) { flash("스위트를 1개 이상 고르세요"); return; }
+    if (mqaPlans.some((x) => x.name === nf.name.trim())) { flash("같은 이름의 계획이 이미 있습니다"); return; }
+    if (!nf.suiteIds.length) { flash("스위트를 1개 이상 고르세요"); return; }
     const id = Math.max(0, ...mqaPlans.map((x) => x.id)) + 1;
-    addMqaPlan({ ...P0(mqaSystems[0]), ...nf, name: nf.name.trim(), id }); setSelId(id); setD(null); setAddOpen(false); flash(nf.name.trim() + " 계획 생성 (초안) — 실행 단말을 지정하세요");
+    addMqaPlan({ ...P0(mqaSystems[0]), ...nf, name: nf.name.trim(), id }); setSelId(id); setD(null); setAddOpen(false);
+    flash(nf.name.trim() + " 계획 생성 (초안) — 실행 단말을 지정하세요");
   };
   const del = (p) => { if (!window.confirm(p.name + " 계획을 삭제할까요?")) return; removeMqaPlan(p.id); setSelId(null); setD(null); flash(p.name + " 삭제됨"); };
   const save = () => { updateMqaPlan(sel.id, { ...pickPlan(d), name: d.name.trim() || sel.name }); setD(null); flash("계획 저장됨"); };
 
-  const Head = <PageToolbar desc="무엇을(앱 · 환경 · 버전 · 케이스) 어디서(단말) 언제(예약) 돌릴지 정합니다" />;
+  const Head = <PageToolbar desc="무엇을(앱 · 환경 · 케이스) 어디서(단말) 언제(예약) 돌릴지 정합니다" />;
   const addModal = addOpen && (
     <Portal><div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setAddOpen(false)}>
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5"><h3 className="font-semibold text-slate-900">새 실행 계획</h3><button onClick={() => setAddOpen(false)} className="text-slate-500 hover:text-slate-800"><X size={18} /></button></div>
         <div className="space-y-3.5 p-5">
           <Field label="계획 이름"><Input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="예: 주문 회귀 (스테이징)" /></Field>
-          <Field label="대상 앱 · 환경">
-            <Select value={nf.systemId + "|" + nf.env} onChange={(e) => { const [s, en] = e.target.value.split("|"); setNf({ ...nf, systemId: +s, env: en }); }}>
-              {mqaSystems.flatMap((sy) => sy.envs.map((en) => <option key={sy.id + en.env} value={sy.id + "|" + en.env}>{sy.name} · {en.env}</option>))}
-            </Select>
-          </Field>
-          <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites} value={nf.suites} onChange={(v) => setNf({ ...nf, suites: v })} /></Field>
-          <div className="text-xs text-slate-500">초안으로 만들어집니다 — 실행 단말 · 예약은 상세에서 정합니다.</div>
+            <Field label="대상 앱 · 환경" hint="만든 뒤에는 바꿀 수 없습니다 — 다른 환경은 새 계획으로 만드세요">
+              <Select value={nf.systemId + "|" + nf.env} onChange={(e) => { const [s, en] = e.target.value.split("|"); setNf({ ...nf, systemId: +s, env: en }); }}>
+                {mqaSystems.flatMap((sy) => sy.envs.map((en) => <option key={sy.id + en.env} value={sy.id + "|" + en.env}>{sy.name} · {en.env}</option>))}
+              </Select>
+            </Field>
+            <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites} value={nf.suiteIds} onChange={(v) => setNf({ ...nf, suiteIds: v })} /></Field>
+            <div className="text-xs text-slate-500">초안으로 만들어집니다 — 실행 단말 · 예약은 상세에서 정합니다.</div>
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3.5"><Btn onClick={() => setAddOpen(false)}>취소</Btn><Btn kind="primary" icon={Plus} onClick={create}>계획 생성</Btn></div>
       </div>
@@ -183,18 +214,17 @@ export function MqaPlanScreen() {
   );
 
   const { sy, e } = envOfPlan(mqaSystems, d);
-  const builds = ((e && e.app) || {}).builds || [];
-  const b = buildOf(e, d.buildId);
+  const b = buildOf(e);
   const cs = casesOfPlan(d, mqaCases);
   const allDevs = flatDevices(mqaRunners);
-  const sched = d.schedule || { mode: "없음", time: "02:00" };
-  const scheduled = sched.mode !== "없음";
+  const sched = d.schedule || SCHED0;
+  const scheduled = isTimed(sched) || isOnNewBuild(sched);
   const blk = planBlock({ ...d, status: "활성" }, { systems: mqaSystems, cases: mqaCases, runners: mqaRunners }, scheduled, true);
   /* 실행 전에 알 수 있는 위험 — 막지 않고 알린다 */
   const verOff = b ? cs.filter((c) => c.baseBuild && c.baseBuild !== b.ver && !(c.lastDry && c.lastDry.build === b.ver && c.lastDry.result === "통과")) : [];
   const caution = e && e.prod ? cs.filter((c) => c.prodCaution) : [];
   const allTags = [...new Set(mqaCases.filter((c) => c.systemId === d.systemId).flatMap((c) => tagList(c.tags)))];
-  const excluded = mqaCases.filter((c) => c.systemId === d.systemId && (d.suites || []).includes(c.suite) && c.status !== "승인").length;
+  const excluded = mqaCases.filter((c) => c.systemId === d.systemId && (d.suiteIds || []).includes(c.suiteId) && c.status !== "승인").length;
   return (
     <div className="space-y-4">{Head}
       <div className="grid grid-cols-12 gap-4">
@@ -223,18 +253,9 @@ export function MqaPlanScreen() {
             {/* 무엇을 */}
             <div className="space-y-3.5">
               <div className="text-xs font-semibold text-slate-500">무엇을</div>
-              <Field label="대상 앱 · 환경">
-                <Select value={d.systemId + "|" + d.env} onChange={(ev) => { const [s, en] = ev.target.value.split("|"); set({ systemId: +s, env: en, buildId: "" }); }}>
-                  {mqaSystems.flatMap((x) => x.envs.map((en) => <option key={x.id + en.env} value={x.id + "|" + en.env}>{x.name} · {en.env}{en.prod ? " (운영)" : ""}</option>))}
-                </Select>
-              </Field>
-              <Field label="앱 버전" hint="기본 테스트 버전을 고르면 대상·환경에서 기본을 바꿀 때 따라갑니다">
-                <Select value={d.buildId} onChange={(ev) => set({ buildId: ev.target.value })}>
-                  <option value="">기본 테스트 버전{buildOf(e, "") ? " (지금 v" + buildOf(e, "").ver + ")" : " — 없음"}</option>
-                  {builds.map((x) => <option key={x.id} value={x.id}>v{x.ver} ({x.code}) 고정</option>)}
-                </Select>
-              </Field>
-              <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites} value={d.suites} onChange={(v) => set({ suites: v })} /></Field>
+              <Field label="대상 앱 · 환경"><ReadonlyField value={(sy ? sy.name : "—") + " · " + d.env + (e && e.prod ? " (운영)" : "")} title="만든 뒤에는 바꿀 수 없습니다 — 다른 환경은 새 계획으로 만드세요" /></Field>
+              <Field label="앱 버전"><ReadonlyField value={b ? "v" + b.ver + " · 대상·환경의 기본 테스트 버전" : "앱 설치 파일 없음 — 대상·환경에서 올리세요"} title="실행할 때마다 그 환경의 기본 테스트 버전을 씁니다. 버전은 대상·환경에서 정합니다" /></Field>
+              <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites} value={d.suiteIds} onChange={(v) => set({ suiteIds: v })} /></Field>
               <Field label="태그 필터" hint="비우면 스위트 전체 · 하나라도 일치하면 대상">
                 <div className="flex flex-wrap gap-1.5">{allTags.map((t) => { const on = tagList(d.tags).includes(t); return <button key={t} onClick={() => set({ tags: (on ? tagList(d.tags).filter((x) => x !== t) : [...tagList(d.tags), t]).join(",") })} className={"rounded-full border px-2.5 py-0.5 text-xs " + (on ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 text-slate-600 hover:bg-slate-100")}>{t}</button>; })}{!allTags.length && <span className="text-xs text-slate-500">태그 없음</span>}</div>
               </Field>
@@ -249,26 +270,24 @@ export function MqaPlanScreen() {
             <div className="space-y-3.5">
               <div className="text-xs font-semibold text-slate-500">어디서 · 어떻게</div>
               <Field label="실행 단말" hint="계획마다 단말 1대 — 그 단말에서 케이스를 순서대로 돌립니다">
-                <Select value={d.devId} onChange={(ev) => set({ devId: ev.target.value })}>
-                  <option value="">단말 선택</option>
-                  {mqaRunners.map((r) => <optgroup key={r.id} label={r.name + " · " + runnerRole(r)}>{(r.devices || []).map((x) => { const fd = allDevs.find((y) => y.id === x.id); const no = scheduled && runnerRole(r) === "저작용"; return <option key={x.id} value={x.id} disabled={no}>{x.model} ({osName(x.sdk)}){fd && fd.state !== "사용 가능" ? " · " + fd.state : ""}{no ? " · 예약 불가 (저작용 PC)" : ""}</option>; })}</optgroup>)}
-                </Select>
+                <DeviceSelect devs={allDevs} value={d.devId} onChange={(v) => set({ devId: v })} build={b} soft />
               </Field>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="재시도"><Select value={d.retry} onChange={(ev) => set({ retry: +ev.target.value })}><option value={0}>안 함</option><option value={1}>1회</option><option value={2}>2회</option></Select></Field>
                 <Field label="실패 시"><Select value={d.onfail} onChange={(ev) => set({ onfail: ev.target.value })}><option>계속 진행</option><option>첫 실패 시 중단</option></Select></Field>
                 <Field label="품질 게이트 (%)"><Input type="number" value={d.gate} onChange={(ev) => set({ gate: +ev.target.value || 0 })} /></Field>
               </div>
-              <div className="pt-1 text-xs font-semibold text-slate-500">언제</div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="예약"><Select value={sched.mode} onChange={(ev) => set({ schedule: { ...sched, mode: ev.target.value } })}>{SCHED_MODES.map((m) => <option key={m}>{m}</option>)}</Select></Field>
-                {scheduled && <Field label="시각"><Input type="time" value={sched.time} onChange={(ev) => set({ schedule: { ...sched, time: ev.target.value } })} /></Field>}
-              </div>
-              {scheduled && <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">다음 실행 <b className="font-medium text-slate-800">{nextRun(sched)}</b> · 30분 전에 러너 · 단말을 점검하고, 문제가 있으면 알립니다. 그 시각에 쓸 수 없으면 건너뛰지 않고 '실행 불가'로 남깁니다.{d.status !== "활성" && <span className="block text-amber-700">초안이라 예약이 돌지 않습니다 — 활성으로 바꾸세요.</span>}</div>}
               <div className={"rounded-lg border px-3 py-2 text-xs " + (blk ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800")}>
-                {blk ? <><AlertTriangle size={12} className="mr-1 inline" />지금 실행할 수 없음 — {blk}{/단말|러너|USB|보조 앱/.test(blk) && <button onClick={() => goTo("mqa-devices")} className="ml-2 text-sky-700">테스트 기기로</button>}</> : <><CheckCircle2 size={12} className="mr-1 inline" />실행 준비됨 — {sy ? sy.name : ""} {e ? envText({ ...e, build: b ? b.ver : "" }) : ""} · {(devOf(mqaRunners, d.devId) || {}).model}</>}
+                {blk ? <><AlertTriangle size={12} className="mr-1 inline" />지금 실행할 수 없음 — {blk}{/단말|러너|USB|자동화 준비/.test(blk) && <button onClick={() => goTo("mqa-devices")} className="ml-2 text-sky-700">테스트 기기로</button>}</> : <><CheckCircle2 size={12} className="mr-1 inline" />실행 준비됨 — {sy ? sy.name : ""} {e ? envText({ ...e, build: b ? b.ver : "" }) : ""} · {(devOf(mqaRunners, d.devId) || {}).model}</>}
               </div>
             </div>
+          </div>
+          {/* 언제 — 공통 스케줄 설정 (FQA 와 같은 컴포넌트) + 앱 전용 이벤트 '새 기본 테스트 버전 지정 시' */}
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <ScheduleConfig key={sel.id} value={sched} onChange={(v) => set({ schedule: v })} events={MQA_EVENTS} singleSelect manualHint="자동 실행 없음 — 실행 화면에서 수동으로만 돌립니다." toast={flash} />
+            {isTimed(sched) && <div className="mt-3 text-xs text-slate-500">실행 30분 전에 러너 · 단말을 점검하고, 그 시각에 쓸 수 없으면 건너뛰지 않고 '실행 불가'로 남깁니다.</div>}
+            {isOnNewBuild(sched) && <div className="mt-3 text-xs text-slate-500">대상·환경에서 새 버전을 기본 테스트 버전으로 지정하는 즉시 실행합니다.</div>}
+            {scheduled && d.status !== "활성" && <div className="mt-1 text-xs text-amber-700">초안이라 자동 실행되지 않습니다 — 활성으로 바꾸세요.</div>}
           </div>
         </Card>
       </div>
@@ -277,13 +296,13 @@ export function MqaPlanScreen() {
   );
 }
 const SuitePick = ({ suites, value, onChange }) => (
-  <div className="grid grid-cols-2 gap-2">{suites.map((x) => { const on = (value || []).includes(x.name); return <button key={x.id} onClick={() => onChange(on ? value.filter((s) => s !== x.name) : [...(value || []), x.name])} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (on ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name}</button>; })}</div>
+  <div className="grid grid-cols-2 gap-2">{suites.map((x) => { const on = (value || []).includes(x.id); return <button key={x.id} onClick={() => onChange(on ? value.filter((s) => s !== x.id) : [...(value || []), x.id])} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (on ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name}</button>; })}</div>
 );
 
 /* ═══════════ 실행 ═══════════ */
 export function MqaRunScreen({ nav }) {
-  const { app, ctx, launch } = useRunner();
-  const { mqaPlans = [], mqaRuns = [], addMqaRun } = app;
+  const { app, ctx, launch, autoRun } = useRunner();
+  const { mqaPlans = [], mqaRuns = [] } = app;
   const [msg, flash] = useToast();
   const active = mqaPlans.filter((p) => p.status === "활성");
   const [pid, setPid] = useState(active[0] ? active[0].id : null);
@@ -292,15 +311,9 @@ export function MqaRunScreen({ nav }) {
   const done = mqaRuns.filter((r) => r.status !== "실행 중").slice(0, 5);
   const blk = plan ? planBlock(plan, ctx, false) : "활성 계획이 없습니다";
   const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); flash(id + " 시작"); };
-  const scheduledPlans = active.filter((p) => p.schedule && p.schedule.mode !== "없음");
-  /* (목업) 예약 시각 도래 — 그 시각의 상태로 판단한다. 편집 세션은 끊고 시작, 그 밖의 문제는 '실행 불가' 로 기록 */
-  const fire = (p) => {
-    const b = planBlock(p, ctx, true, true);
-    if (b) { const { sy, e } = envOfPlan(ctx.systems, p); const bd = buildOf(e, p.buildId); const dv = devOf(ctx.runners, p.devId); addMqaRun({ id: nextRunId(mqaRuns), planId: p.id, planName: p.name, systemId: p.systemId, sysName: sy ? sy.name : "", env: p.env, build: bd ? bd.ver : "", devId: p.devId, device: dv ? devLabel(dv) : "—", trigger: "예약", status: "실행 불가", startedAt: nowStamp(), endedAt: nowStamp(), gate: p.gate, note: b, cases: [], log: [{ lv: "FAIL", t: "실행 불가 — " + b }] }); flash("예약 실행 불가 — " + b); return; }
-    const dv = devOf(ctx.runners, p.devId);
-    const pre = dv && /^편집 세션/.test(dv.busy || "") ? dv.busy + " 을(를) 종료하고 시작" : "";
-    const id = launch(p, { trigger: "예약", note: pre }); flash(id + " 예약 실행 시작" + (pre ? " · 편집 세션 종료" : ""));
-  };
+  const scheduledPlans = active.filter((p) => isTimed(p.schedule) || isOnNewBuild(p.schedule));
+  /* (목업) 예약 시각 도래 */
+  const fire = (p) => { const r = autoRun(p, "예약"); flash(r.blocked ? "예약 실행 불가 — " + r.blocked : r.id + " 예약 실행 시작" + (r.pre ? " · 편집 세션 종료" : "")); };
   return (
     <div className="space-y-4">
       <PageToolbar desc="계획을 골라 지금 실행 · 진행 중인 실행 · 예약 실행" />
@@ -309,7 +322,7 @@ export function MqaRunScreen({ nav }) {
         {!mqaPlans.length ? <div className="text-xs text-slate-500">실행 계획이 없습니다 — <button onClick={() => app.goTo("mqa-plan")} className="text-sky-600">실행 계획</button>에서 만드세요.</div> : (
           <div className="flex flex-wrap items-center gap-3">
             <div className="w-72"><Select value={plan ? plan.id : ""} onChange={(e) => setPid(+e.target.value)}>{mqaPlans.map((p) => <option key={p.id} value={p.id} disabled={p.status !== "활성"}>{p.name}{p.status !== "활성" ? " (초안)" : ""}</option>)}</Select></div>
-            {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e, plan.buildId); const dv = devOf(ctx.runners, plan.devId); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{dv ? devLabel(dv) : "단말 미지정"}</span><span>· 케이스 {casesOfPlan(plan, ctx.cases).length}건</span></div>; })()}
+            {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e); const dv = devOf(ctx.runners, plan.devId); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{dv ? devLabel(dv) : "단말 미지정"}</span><span>· 케이스 {casesOfPlan(plan, ctx.cases).length}건</span></div>; })()}
             <div className="ml-auto flex items-center gap-2">{blk && <span className="text-xs text-amber-700">⚠ {blk}</span>}<Btn kind="primary" icon={Play} disabled={!!blk} onClick={go}>실행</Btn></div>
           </div>
         )}
@@ -323,10 +336,10 @@ export function MqaRunScreen({ nav }) {
         <div className="space-y-1.5">{scheduledPlans.map((p) => { const b = planBlock(p, ctx, true, true); const dv = devOf(ctx.runners, p.devId); const r = runnerOfDev(ctx.runners, p.devId); return (
           <div key={p.id} className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">
             <span className="w-40 shrink-0 font-medium text-slate-800">{p.name}</span>
-            <span className="w-36 shrink-0 text-slate-600"><Clock size={11} className="mr-1 inline" />{nextRun(p.schedule)}</span>
+            <span className="w-36 shrink-0 text-slate-600">{isTimed(p.schedule) ? <><Clock size={11} className="mr-1 inline" />{nextRun(p.schedule)}</> : <><Zap size={11} className="mr-1 inline" />새 버전 지정 시</>}</span>
             <span className="flex-1 truncate text-slate-500"><Monitor size={11} className="mr-1 inline" />{r ? r.name : "—"} · {dv ? dv.model : "—"}</span>
             {b ? <span className="text-amber-700">사전 점검: {b}</span> : <span className="text-emerald-700">사전 점검 정상</span>}
-            <button onClick={() => fire(p)} className="shrink-0 text-sky-600" title="목업 — 예약 시각이 된 것처럼 발동">(목업) 지금 발동</button>
+            {isTimed(p.schedule) ? <MockBtn onClick={() => fire(p)} title="목업 전용 — 예약 시각이 된 것처럼 실행합니다">지금 예약 시각으로</MockBtn> : <span className="w-[118px] shrink-0" />}
           </div>
         ); })}</div>
       </Card>
@@ -543,7 +556,7 @@ export function MqaDashboardScreen({ nav }) {
   const lastRun = completed(mqaRuns)[0];
   const approved = mqaCases.filter((c) => c.status === "승인").length;
   const unstable = caseHistory(mqaRuns).filter((h) => h.kind === "불안정" || h.kind === "지속 실패");
-  const next = mqaPlans.filter((p) => p.status === "활성" && p.schedule && p.schedule.mode !== "없음").map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
+  const next = mqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
   const KPI = [
     ["승인 TC", approved + "/" + mqaCases.length, "text-sky-600", "승인/전체"],
     ["최근 실행 PASS율", lastRun && passRate(lastRun) != null ? passRate(lastRun) + "%" : "—", "text-emerald-600", lastRun ? lastRun.id + " · v" + lastRun.build : "실행 없음"],

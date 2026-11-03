@@ -23,7 +23,8 @@ import { DOMAINS, COMMON_SECTIONS, MEMBERS_ITEM, INIT_TENANTS, INIT_USERS, INIT_
 import { VariablesScreen } from "./common/variables.jsx";
 import { DatasetsScreen } from "./common/datasets.jsx";
 import { FQA_SECTIONS, INIT_FQA_CASES, INIT_FQA_SUITES, INIT_FQA_SYSTEMS, INIT_FQA_RUNS, INIT_FQA_PLANS, FQA_HIDDEN } from "./fqa/data.js";
-import { MqaTargetScreen, MqaSuiteScreen } from "./mqa/screens.jsx";
+import { MqaTargetScreen } from "./mqa/targetScreen.jsx";
+import { MqaSuiteScreen } from "./mqa/suiteScreen.jsx";
 import { MqaDashboardScreen, MqaPlanScreen, MqaRunScreen, MqaHistoryScreen, MqaResultScreen } from "./mqa/flow.jsx";
 import { MqaCasesScreen } from "./mqa/cases.jsx";
 import { MqaDevicesScreen } from "./mqa/devicesScreen.jsx";
@@ -41,7 +42,7 @@ const stampSeeds = (arr) => (arr || []).map((o, i) => { if (o.createdAt) return 
 /* 케이스 시드에 리비전을 채운다 — 현재본도 이력에 들어 있어야 한다(최초 작성 = rev 1).
    TC-055처럼 versions를 직접 정의한 시드는 그 뒤에 현재 rev를 얹는다. */
 /* MQA 케이스의 리비전 보존 필드 — FQA 케이스에는 없어서 undefined 로 남는다 */
-const mqaX = (c) => (c.proc ? { proc: c.proc || [], preCase: c.preCase || "", prodCaution: !!c.prodCaution, pre: c.pre || "" } : undefined);
+const mqaX = (c) => (c.proc ? { proc: c.proc || [], preCase: c.preCase || "", prodCaution: !!c.prodCaution, pre: c.pre || "", suiteId: c.suiteId != null ? c.suiteId : null } : undefined);
 const seedCases = (arr) => stampSeeds(arr).map((c) => {
   const rev = c.rev || 1;
   const head = { rev, at: c.updatedAt, by: c.updatedBy, note: "", level: c.level, steps: c.steps || [], code: c.code || "", name: c.name, suite: c.suite, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "", x: mqaX(c) };

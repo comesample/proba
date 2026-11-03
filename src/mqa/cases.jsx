@@ -24,7 +24,7 @@ const LV_K = { "Low-Code": "active", "Full-Code": "warn" };   // FQA 와 같은 
 const TAGS = ["smoke", "regression", "critical"];
 const TAG_DESC = { smoke: "배포 직후 핵심 경로", regression: "전체 회귀", critical: "실패 시 배포 중단" };
 const tagList = (t) => String(t || "").split(/[,\s]+/).filter(Boolean);
-const EDIT_FIELDS = ["name", "suite", "tags", "pre", "proc", "steps", "level", "code", "mismatch", "baseBuild", "preCase", "acctRole", "prodCaution"];
+const EDIT_FIELDS = ["name", "suiteId", "tags", "pre", "proc", "steps", "level", "code", "mismatch", "baseBuild", "preCase", "acctRole", "prodCaution"];
 const DEF = { proc: [], steps: [], level: "Low-Code", mismatch: false, prodCaution: false };
 const pickFields = (c) => Object.fromEntries(EDIT_FIELDS.map((k) => [k, c[k] === undefined || c[k] === null ? (k in DEF ? DEF[k] : "") : c[k]]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -52,6 +52,7 @@ const TagPicker = ({ value, onChange }) => {
 /* ═══════════ 목록 ═══════════ */
 export function MqaCasesScreen() {
   const { mqaCases = [], mqaSuites = [], mqaSystems = [], addMqaCase, setMqaCaseStatus, removeMqaCase, commitMqaCase, mqaEditTc, setMqaEditTc, goTo, navTick } = useApp();
+  const sn = (id) => ((mqaSuites.find((x) => x.id === id) || {}).name || "");   // 스위트는 ID 로 가리키고 이름은 표시할 때만 찾는다
   const editorDirty = useRef(false);
   const [msg, flash] = useToast();
   const [mode, setMode] = useState("목록");          // 목록 | edit | tc | script
@@ -73,7 +74,7 @@ export function MqaCasesScreen() {
   useEffect(() => { if (mqaEditTc) { const id = typeof mqaEditTc === "string" ? mqaEditTc : mqaEditTc.id; const c = mqaCases.find((x) => x.id === id); if (c) { setSel(c); setMode("edit"); } setMqaEditTc(null); } }, [mqaEditTc]);
 
   const sysName = (id) => (mqaSystems.find((s) => s.id === id) || {}).name || "—";
-  const list = mqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || c.suite === suiteF) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (sysF === "전체" || String(c.systemId) === sysF) && (c.id + c.name + c.suite + c.tags).toLowerCase().includes(q.toLowerCase()))
+  const list = mqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || String(c.suiteId) === suiteF) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (sysF === "전체" || String(c.systemId) === sysF) && (c.id + c.name + sn(c.suiteId) + c.tags).toLowerCase().includes(q.toLowerCase()))
     .slice().sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
   const delCase = (c, after) => { if (!window.confirm(c.id + " 삭제할까요? 되돌릴 수 없습니다.")) return; removeMqaCase(c.id); if (after) after(); flash(c.id + " 삭제됨"); };
   const togglePick = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -90,11 +91,11 @@ export function MqaCasesScreen() {
   };
   const bulkDel = () => { if (!window.confirm(picked.size + "건을 삭제할까요? 되돌릴 수 없습니다.")) return; picked.forEach((id) => removeMqaCase(id)); flash(picked.size + "건 삭제됨"); setPicked(new Set()); };
   const applySuite = () => {
-    const to = suiteModal, tgt = pickedCases().filter((c) => c.suite !== to);
+    const to = +suiteModal, tgt = pickedCases().filter((c) => c.suiteId !== to);
     if (!to) { flash("이동할 스위트를 고르세요"); return; }
-    if (!tgt.length) { flash("이미 모두 " + to + " 입니다"); setSuiteModal(null); return; }
-    tgt.forEach((c) => commitMqaCase(c.id, { suite: to }, { note: "일괄 스위트 변경" }));
-    flash(tgt.length + "건 → " + to); setSuiteModal(null); setPicked(new Set());
+    if (!tgt.length) { flash("이미 모두 " + sn(to) + " 입니다"); setSuiteModal(null); return; }
+    tgt.forEach((c) => commitMqaCase(c.id, { suiteId: to }, { note: "일괄 스위트 변경" }));
+    flash(tgt.length + "건 → " + sn(to)); setSuiteModal(null); setPicked(new Set());
   };
   const openTagModal = () => { const d = {}; pickedCases().forEach((c) => { d[c.id] = c.tags || ""; }); setTagModal(d); };
   const tagOn = (id, t) => tagList(tagModal[id]).includes(t);
@@ -113,27 +114,27 @@ export function MqaCasesScreen() {
     const name = (blank.name || "").trim();
     if (!name) { flash("TC 이름을 입력하세요"); return; }
     const sys = mqaSystems.find((s) => String(s.id) === String(blank.systemId));
-    const c = { id: nextTcId(mqaCases), origin: "직접 작성", name, systemId: sys ? sys.id : blank.systemId, suite: blank.suite, tags: "", status: "초안", level: "Low-Code", pre: "", preCase: "", acctRole: "", proc: [], steps: [], code: "", mismatch: false, baseBuild: "", isNew: true };
+    const c = { id: nextTcId(mqaCases), origin: "직접 작성", name, systemId: sys ? sys.id : blank.systemId, suiteId: blank.suiteId, tags: "", status: "초안", level: "Low-Code", pre: "", preCase: "", acctRole: "", proc: [], steps: [], code: "", mismatch: false, baseBuild: "", isNew: true };
     setBlank(null); setSel(c); setMode("edit");
   };
   /* 가져오기 공통 — 모두 '초안' 으로 들어온다.
      AI 스텝 생성은 단말에서 앱을 조작해야 하므로 가져오기 단계에서는 하지 않는다 — 케이스마다 에디터에서 'AI로 스텝 만들기' */
   const doImport = (items, opt) => {
     const sys = mqaSystems.find((s) => String(s.id) === String(opt.systemId));
-    const suiteNames = mqaSuites.map((s) => s.name);
+    const byName = Object.fromEntries(mqaSuites.map((s) => [s.name, s.id]));   // 파일의 분류 이름 → 스위트 ID
     const build = envBuild(((sys && sys.envs) || []).find((e) => e.env === "스테이징") || ((sys && sys.envs) || [])[0]);
     items.forEach((it, i) => {
       const steps = it.steps && it.steps.length ? it.steps : [];
-      addMqaCase({ id: nextTcId(mqaCases, i + 1), systemId: sys ? sys.id : opt.systemId, tags: "", status: "초안", pre: "", preCase: "", acctRole: "", proc: [], level: "Low-Code", code: "", mismatch: false, ...it, suite: it.suite && suiteNames.includes(it.suite) ? it.suite : (opt.suite || ""), steps, baseBuild: steps.length ? build : "" });
+      addMqaCase({ id: nextTcId(mqaCases, i + 1), systemId: sys ? sys.id : opt.systemId, tags: "", status: "초안", pre: "", preCase: "", acctRole: "", proc: [], level: "Low-Code", code: "", mismatch: false, ...it, suite: undefined, suiteId: it.suite && byName[it.suite] ? byName[it.suite] : (opt.suiteId || null), steps, baseBuild: steps.length ? build : "" });
     });
     setMode("목록");
     flash(items.length + "건 가져옴 (초안)" + (items.some((it) => !(it.steps || []).length && it.level !== "Full-Code") ? " · 스텝은 각 케이스에서 AI로 만드세요" : ""));
   };
-  const firstSuite = (mqaSuites[0] || {}).name || "";
+  const firstSuite = (mqaSuites[0] || {}).id || null;
   const startAdd = (m) => {
     setAddOpen(false);
     if (!mqaSystems.length) { flash("대상·환경에서 테스트할 앱을 먼저 등록하세요"); return; }
-    if (m === "blank") { setBlank({ name: "", systemId: (mqaSystems[0] || {}).id, suite: firstSuite }); return; }
+    if (m === "blank") { setBlank({ name: "", systemId: (mqaSystems[0] || {}).id, suiteId: firstSuite }); return; }
     setMode(m);
   };
 
@@ -149,7 +150,7 @@ export function MqaCasesScreen() {
       <PageToolbar desc="앱 기능 TC 저장소 · 자연어 절차 → 실행 스텝 · 생성·편집·관리" />
       <div className="flex items-center gap-2">
         <div className="flex flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"><Search size={15} className="text-slate-500" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="TC·스위트·태그 검색" className="flex-1 bg-transparent text-sm text-slate-800 outline-none" /></div>
-        <div style={{ width: 150 }}><Select value={suiteF} onChange={(e) => setSuiteF(e.target.value)}><option>전체</option>{mqaSuites.map((x) => <option key={x.id}>{x.name}</option>)}</Select></div>
+        <div style={{ width: 150 }}><Select value={suiteF} onChange={(e) => setSuiteF(e.target.value)}><option value="전체">전체</option>{mqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></div>
         <div style={{ width: 120 }}><Select value={tagF} onChange={(e) => setTagF(e.target.value)}><option>전체</option>{TAGS.map((t) => <option key={t}>{t}</option>)}</Select></div>
         {/* FQA 의 '접점' 필터 자리 — MQA 케이스는 대상(앱)에 속한다 */}
         <div style={{ width: 150 }}><Select value={sysF} onChange={(e) => setSysF(e.target.value)}><option value="전체">전체 앱</option>{mqaSystems.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}</Select></div>
@@ -181,9 +182,9 @@ export function MqaCasesScreen() {
           <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="mb-1.5 text-xs font-semibold text-slate-600">현재 스위트</div>
-              <div className="flex flex-wrap gap-1.5">{Object.entries(pickedCases().reduce((a, c) => { a[c.suite || "—"] = (a[c.suite || "—"] || 0) + 1; return a; }, {})).map(([k, v]) => <span key={k} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600">{k} <span className="text-slate-500">{v}</span></span>)}</div>
+              <div className="flex flex-wrap gap-1.5">{Object.entries(pickedCases().reduce((a, c) => { a[sn(c.suiteId) || "—"] = (a[sn(c.suiteId) || "—"] || 0) + 1; return a; }, {})).map(([k, v]) => <span key={k} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600">{k} <span className="text-slate-500">{v}</span></span>)}</div>
             </div>
-            <Field label="이동할 스위트" hint="선택한 케이스 전부가 이 스위트로 옮겨집니다. 변경 이력에 리비전으로 남습니다."><Select value={suiteModal} onChange={(e) => setSuiteModal(e.target.value)}>{mqaSuites.map((su) => <option key={su.id} value={su.name}>{su.name}</option>)}</Select></Field>
+            <Field label="이동할 스위트" hint="선택한 케이스 전부가 이 스위트로 옮겨집니다. 변경 이력에 리비전으로 남습니다."><Select value={String(suiteModal)} onChange={(e) => setSuiteModal(+e.target.value)}>{mqaSuites.map((su) => <option key={su.id} value={String(su.id)}>{su.name}</option>)}</Select></Field>
             <div className="flex justify-end gap-2 pt-1"><Btn onClick={() => setSuiteModal(null)}>취소</Btn><Btn kind="primary" onClick={applySuite}>적용</Btn></div>
           </div>
         </Modal>
@@ -196,7 +197,7 @@ export function MqaCasesScreen() {
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500"><th className="py-2 pl-3 pr-2 font-medium">케이스</th>{TAGS.map((t) => <th key={t} className="w-24 px-2 py-1.5 text-center"><button onClick={() => togCol(t)} title={TAG_DESC[t] + " · 전체 토글"} className={"w-full rounded-full border px-2 py-0.5 text-xs " + (colAll(t) ? "border-sky-600 bg-sky-100 font-semibold text-sky-700" : "border-slate-300 bg-white text-slate-500 hover:bg-slate-100")}>{t}</button></th>)}</tr></thead>
                 <tbody>{pickedCases().map((c) => (
-                  <tr key={c.id} className="border-b border-slate-200"><td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {c.suite}</span></td>{TAGS.map((t) => <td key={t} className="px-2 py-1.5 text-center"><button onClick={() => togTag(c.id, t)} className={"rounded-full border px-2.5 py-0.5 text-xs " + (tagOn(c.id, t) ? "border-sky-600 bg-sky-100 text-sky-700" : "border-slate-200 bg-white text-slate-300 hover:bg-slate-100")}>{tagOn(c.id, t) ? t : "—"}</button></td>)}</tr>
+                  <tr key={c.id} className="border-b border-slate-200"><td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {sn(c.suiteId)}</span></td>{TAGS.map((t) => <td key={t} className="px-2 py-1.5 text-center"><button onClick={() => togTag(c.id, t)} className={"rounded-full border px-2.5 py-0.5 text-xs " + (tagOn(c.id, t) ? "border-sky-600 bg-sky-100 text-sky-700" : "border-slate-200 bg-white text-slate-300 hover:bg-slate-100")}>{tagOn(c.id, t) ? t : "—"}</button></td>)}</tr>
                 ))}</tbody>
               </table>
             </div>
@@ -228,7 +229,7 @@ export function MqaCasesScreen() {
                   <td className="pl-4" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.has(c.id)} onChange={() => togglePick(c.id)} className="accent-sky-600" /></td>
                   <td className="py-3 pr-4 font-mono text-sky-600">{c.id}</td>
                   <td className="text-slate-800">{c.name}{L.changedProcs(c).length > 0 && <span title={"절차 " + L.changedProcs(c).join(", ") + "번 문장이 바뀌어 스텝 확인이 필요합니다"} className="ml-1.5 text-amber-600">●</span>}</td>
-                  <td className="text-slate-500">{c.suite || "—"}</td>
+                  <td className="text-slate-500">{sn(c.suiteId) || "—"}</td>
                   <td>{tagList(c.tags).length ? <div className="flex gap-1">{tagList(c.tags).map((t) => <span key={t} className="rounded-full border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{t}</span>)}</div> : <span className="text-xs text-slate-500">-</span>}</td>
                   {/* 구성 — 어느 앱 · 전제조건 · 미확정 */}
                   <td className="whitespace-nowrap">
@@ -255,7 +256,7 @@ export function MqaCasesScreen() {
             <div className="h-full w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-5" onClick={(e) => e.stopPropagation()}>
               <div className="mb-4 flex items-center justify-between"><span className="font-mono text-sky-600">{oc.id}</span><button onClick={() => setOpen(null)} className="text-slate-500 hover:text-slate-700"><X size={20} /></button></div>
               <div className="space-y-4 text-sm">
-                <div><div className="text-slate-900">{oc.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5"><Badge kind="info">{sysName(oc.systemId)}</Badge><Badge kind="info">{oc.suite || "스위트 없음"}</Badge><Badge kind={LV_K[oc.level] || "active"}>{oc.level || "Low-Code"}</Badge><Badge kind={ST_K[oc.status]}>{oc.status}</Badge></div></div>
+                <div><div className="text-slate-900">{oc.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5"><Badge kind="info">{sysName(oc.systemId)}</Badge><Badge kind="info">{sn(oc.suiteId) || "스위트 없음"}</Badge><Badge kind={LV_K[oc.level] || "active"}>{oc.level || "Low-Code"}</Badge><Badge kind={ST_K[oc.status]}>{oc.status}</Badge></div></div>
                 <div className="space-y-0.5 rounded-lg bg-slate-100 p-3 text-xs text-slate-500"><div>생성 <span className="text-slate-700">{oc.createdBy || "—"}</span> · {oc.createdAt || "—"}</div><div>수정 <span className="text-slate-700">{oc.updatedBy || "—"}</span> · {oc.updatedAt || "—"}</div></div>
                 <div><div className="mb-1 text-xs text-slate-500">자연어 절차</div>{(oc.proc || []).length ? <ol className="space-y-0.5 text-xs text-slate-700">{oc.proc.map((p, i) => <li key={i}>{i + 1}. {p.t}{p.e && <span className="text-slate-500"> → {p.e}</span>}</li>)}</ol> : <div className="text-xs text-slate-500">없음</div>}</div>
                 <div><div className="mb-1 text-xs text-slate-500">실행 스텝</div><div className="text-xs text-slate-700">{oc.level === "Full-Code" ? "Full-Code(.robot 원문)로 관리" : (oc.steps || []).length + "개"}{u > 0 && <span className="ml-1.5 text-amber-700">· 미확정 {u}개</span>}{oc.baseBuild && <span className="ml-1.5 text-slate-500">· v{oc.baseBuild} 기준</span>}</div></div>
@@ -285,7 +286,7 @@ export function MqaCasesScreen() {
               <Field label="TC 이름"><Input value={blank.name} onChange={(e) => setBlank({ ...blank, name: e.target.value })} placeholder="예: 장바구니에 상품 담기" /></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="대상 (앱)"><Select value={blank.systemId} onChange={(e) => setBlank({ ...blank, systemId: e.target.value })}>{mqaSystems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
-                <Field label="스위트"><Select value={blank.suite} onChange={(e) => setBlank({ ...blank, suite: e.target.value })}>{mqaSuites.map((x) => <option key={x.id}>{x.name}</option>)}</Select></Field>
+                <Field label="스위트"><Select value={String(blank.suiteId)} onChange={(e) => setBlank({ ...blank, suiteId: +e.target.value })}>{mqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field>
               </div>
               <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">자연어 절차로 시작합니다. 기존 Robot Framework 원문은 <span className="text-slate-800">스크립트 임포트</span>로 들여오세요.</div>
             </div>
@@ -540,7 +541,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
   };
   const restore = (v) => {
     const x = v.x || {};
-    set({ name: v.name, suite: v.suite, tags: v.tags || "", acctRole: v.acctRole || "", steps: clone(v.steps || []), proc: clone(x.proc || []), level: v.level || "Low-Code", code: v.code || "", preCase: x.preCase || "", prodCaution: !!x.prodCaution, pre: x.pre || "" });
+    set({ name: v.name, suiteId: x.suiteId != null ? x.suiteId : d.suiteId, tags: v.tags || "", acctRole: v.acctRole || "", steps: clone(v.steps || []), proc: clone(x.proc || []), level: v.level || "Low-Code", code: v.code || "", preCase: x.preCase || "", prodCaution: !!x.prodCaution, pre: x.pre || "" });
     setShowProc((x.proc || []).length > 0);
     setQa(null); flash("rev " + v.rev + " 내용으로 되돌림 — 저장하면 rev " + (curRev + 1) + "이 됩니다");
   };
@@ -624,7 +625,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-slate-200 pt-3">
             <FieldRow label="대상 앱"><ReadonlyField value={(sys ? sys.name : "—") + " · Android"} title="대상 앱은 케이스를 만들 때 정해지며 바꿀 수 없습니다 — 로케이터가 앱마다 다르기 때문입니다" /></FieldRow>
-            <FieldRow label="스위트"><Select value={d.suite} onChange={(e) => set({ suite: e.target.value })}>{mqaSuites.map((sx) => <option key={sx.id} value={sx.name}>{sx.name}</option>)}</Select></FieldRow>
+            <FieldRow label="스위트"><Select value={String(d.suiteId)} onChange={(e) => set({ suiteId: +e.target.value })}>{mqaSuites.map((sx) => <option key={sx.id} value={String(sx.id)}>{sx.name}</option>)}</Select></FieldRow>
             <FieldRow label="작업 환경"><EnvSelect envs={envs} value={dbgEnv} onChange={setDbgEnv} /></FieldRow>
             <FieldRow label="작업 단말"><DeviceSelect devs={devs} value={devId} onChange={setDevId} build={buildObj} /></FieldRow>
           </div>
@@ -797,7 +798,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                     {(() => { const v = versions.find((x) => x.rev === verSel); if (!v) return <div className="py-12 text-center text-slate-500">리비전을 선택하세요.</div>; const x = v.x || {}; return (
                       <div className="space-y-1.5">
                         <div className="flex justify-between"><span className="text-slate-500">이름</span><span className="text-slate-800">{v.name}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">스위트 · 태그</span><span className="text-slate-800">{v.suite || "—"} · {v.tags || "—"}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">스위트 · 태그</span><span className="text-slate-800">{((mqaSuites.find((x) => x.id === (v.x || {}).suiteId) || {}).name) || v.suite || "—"} · {v.tags || "—"}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">관리</span><span className="text-slate-800">{v.level || "Low-Code"}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">자연어 절차</span><span className="text-slate-800">{(x.proc || []).length}줄</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">실행 스텝</span><span className="text-slate-800">{(v.steps || []).length}개 · 미확정 {L.unresolvedOf(v.steps)}</span></div>
@@ -1075,12 +1076,12 @@ function ImportTarget({ opt, setOpt }) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
       <div className="w-44"><Field label="대상 (앱)"><Select value={opt.systemId} onChange={(e) => setOpt({ ...opt, systemId: e.target.value })}>{mqaSystems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field></div>
-      <div className="w-44"><Field label="스위트 (파일에 없을 때)"><Select value={opt.suite} onChange={(e) => setOpt({ ...opt, suite: e.target.value })}><option value="">미지정</option>{mqaSuites.map((s) => <option key={s.id || s.name}>{s.name}</option>)}</Select></Field></div>
+      <div className="w-44"><Field label="스위트 (파일에 없을 때)"><Select value={opt.suiteId ? String(opt.suiteId) : ""} onChange={(e) => setOpt({ ...opt, suiteId: e.target.value ? +e.target.value : null })}><option value="">미지정</option>{mqaSuites.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}</Select></Field></div>
       <div className="mb-2 text-xs text-slate-500">스텝은 가져온 뒤 각 케이스에서 <span className="text-slate-700">AI로 스텝 만들기</span>로 만듭니다 (단말 필요)</div>
     </div>
   );
 }
-const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", suite: "", aiAfter: ai }); };
+const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", suiteId: null, aiAfter: ai }); };
 function FilePick({ accept, multiple, onFiles, onSample, hint }) {
   const ref = useRef(null);
   return (
