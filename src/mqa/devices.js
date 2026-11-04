@@ -40,7 +40,7 @@ export const deviceBlock = (d, build) => {
 /* 기본 선택 — 쓸 수 있는 단말 중 첫 번째, 없으면 첫 번째 */
 export const pickDefault = (devs, build) => (devs.find((d) => !deviceBlock(d, build)) || devs[0] || null);
 
-/* 자동 점검 — 러너가 기동할 때와 '다시 점검' 때 수행. 실패하면 사용자가 할 일을 함께 보여준다 */
+/* 자동 점검 — 러너가 기동할 때와 '러너 점검' 때 수행. 실패하면 사용자가 할 일을 함께 보여준다 */
 export const RUNNER_CHECKS = [
   { k: "server", label: "PROBA 서버 연결", fix: "PC의 외부 연결(방화벽 · 프록시)을 확인하세요" },
   { k: "appium", label: "Appium 서버 기동", fix: "러너를 다시 시작하세요" },

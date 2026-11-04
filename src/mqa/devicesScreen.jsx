@@ -75,7 +75,8 @@ export function MqaDevicesScreen() {
     if (!window.confirm(r.name + " 러너를 삭제할까요?\n\n이 PC의 단말을 더 이상 쓸 수 없고, PC에 설치된 러너는 연결이 거부됩니다.")) return;
     removeMqaRunner(r.id); setSel(0); flash(r.name + " 삭제됨");
   };
-  /* 다시 점검 — 러너에게 점검을 요청하고 결과를 받는다 (목업: 러너 항목은 통과) */
+  /* 러너 점검 — 러너에게 점검을 요청하고 결과를 받는다: 서버 연결 · Appium · 단말 목록 (목업: 러너 항목은 통과)
+     단말 하나만 조치한 뒤에는 단말 행의 '다시 확인' 을 쓴다 — 대상이 다르다 */
   const recheck = () => {
     if (rs !== "연결됨") { flash("러너가 연결되어 있지 않아 점검할 수 없습니다"); return; }
     setChecking(true);
@@ -185,7 +186,7 @@ export function MqaDevicesScreen() {
                 : <><span className="text-base font-semibold text-slate-900">{r.name}</span><button onClick={() => setRename(r.name)} className="text-slate-400 hover:text-sky-600" title="이름 변경"><Pencil size={13} /></button></>}<Badge kind={RS_K[rs]}>{rs}</Badge>{rs === "연결됨" && <span className="text-xs text-slate-500">마지막 신호 {r.lastSeen}</span>}</div>
               <div className="flex items-center gap-2">
                 {rs === "설치 대기" && <MockBtn onClick={simulateConnect} title="목업 전용 — 실제로는 PC에서 설치하고 토큰을 입력하면 자동으로 연결됩니다">연결된 것으로 처리</MockBtn>}
-                <Btn icon={RefreshCw} onClick={recheck} disabled={checking}>{checking ? "점검 중…" : "다시 점검"}</Btn>
+                <Btn icon={RefreshCw} onClick={recheck} disabled={checking} title="서버 연결 · Appium · 단말 목록을 다시 확인합니다">{checking ? "점검 중…" : "러너 점검"}</Btn>
                 <Btn icon={KeyRound} onClick={reissue}>토큰 재발급</Btn>
                 <button onClick={del} className="text-slate-400 hover:text-red-600" title="러너 삭제"><Trash2 size={15} /></button>
               </div>
@@ -232,7 +233,7 @@ export function MqaDevicesScreen() {
             {/* 자동 점검 */}
             <Card className="col-span-4 space-y-2 p-4">
               <div className="text-sm font-semibold text-slate-800">자동 점검</div>
-              <div className="text-xs text-slate-500">러너가 시작할 때와 다시 점검할 때 수행합니다.</div>
+              <div className="text-xs text-slate-500">러너가 시작할 때와 [러너 점검]을 누를 때 수행합니다.</div>
               {RUNNER_CHECKS.map((c) => { const v = rs === "연결됨" ? r.checks[c.k] : null; return (
                 <div key={c.k} className="flex items-start gap-2 text-xs"><span className="mt-0.5"><CheckIcon v={v} /></span><span className="flex-1"><span className="text-slate-700">{c.label}</span>{v === false && <span className="block text-red-600">{c.fix}</span>}</span></div>
               ); })}
