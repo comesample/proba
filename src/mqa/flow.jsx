@@ -8,7 +8,7 @@
 //   예약 = 실행용 · 공용 러너의 단말만. 30분 전 사전 점검, 시각에 쓸 수 없으면 '실행 불가' 로 남긴다(조용히 건너뛰지 않음)
 //   목업: 스텝 결과는 caseLogic.simulateStep(앱 버전별 화면) 으로 정한다 — TC-007 은 v3.2.0 에서 실패한다
 // ============================================================
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap } from "lucide-react";
 import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
@@ -21,7 +21,8 @@ import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
 const tagList = (t) => String(t || "").split(/[,\s]+/).filter(Boolean);
 export const envOfPlan = (systems, p) => { const sy = (systems || []).find((s) => s.id === p.systemId) || null; const e = sy ? (sy.envs || []).find((x) => x.env === p.env) || null : null; return { sy, e }; };
 export const buildOf = (e, buildId) => { const app = (e && e.app) || {}; return (app.builds || []).find((b) => b.id === (buildId || app.defBuild)) || null; };
-export const casesOfPlan = (p, cases) => (cases || []).filter((c) => c.systemId === p.systemId && c.status === "승인" && (p.suiteIds || []).includes(c.suiteId) && (!tagList(p.tags).length || tagList(p.tags).some((t) => tagList(c.tags).includes(t))));
+/* 격리(quarantined)된 케이스는 빠진다 — 불안정 화면에서 격리 (FQA 와 같음) */
+export const casesOfPlan = (p, cases) => (cases || []).filter((c) => c.systemId === p.systemId && c.status === "승인" && !c.quarantined && (p.suiteIds || []).includes(c.suiteId) && (!tagList(p.tags).length || tagList(p.tags).some((t) => tagList(c.tags).includes(t))));
 const devOf = (runners, id) => flatDevices(runners).find((d) => d.id === id) || null;
 /* 실행을 막는 사유 — 빈 문자열이면 실행 가능. scheduled=true 면 예약 시각 기준(편집 세션은 끊고 시작)으로 본다.
    editPreempt=true 면 편집 세션이 점유한 단말은 '사용 가능' 으로 본다 (예약 실행이 우선) */
@@ -89,11 +90,11 @@ const planOf = ({ cases, allCases, build }) => cases.map((c) => {
   const all = [...pre, ...body];
   return { c, all, pl: pre.length, fi: all.findIndex((x) => x.res.st === "fail") };
 });
-const runShell = (id, { plan, sys, env, build, dev, trigger, note }, plans, status) => ({
+const runShell = (id, { plan, sys, env, build, dev, trigger, note, partial }, plans, status) => ({
   id, planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver, devId: dev.id, device: devLabel(dev), trigger, note: note || "",
-  status, startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry, elapsed: 0, queuedAt: status === "대기 중" ? nowStamp() : "",
+  status, startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry, elapsed: 0, partial: !!partial, queuedAt: status === "대기 중" ? nowStamp() : "",
   log: status === "대기 중" ? [{ lv: "INFO", t: "단말 대기 — " + dev.model + " 이(가) 다른 실행에 사용 중" }] : [],
-  cases: plans.map(({ c, all, pl }) => ({ id: c.id, name: c.name, st: "대기", preCase: c.preCase || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", el: x.el || "", st: "대기", msg: x.res.msg || "" })) })),
+  cases: plans.map(({ c, all, pl }) => ({ id: c.id, name: c.name, rev: c.rev || 1, st: "대기", preCase: c.preCase || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", el: x.el || "", st: "대기", msg: x.res.msg || "" })) })),
 });
 /* 큐에 넣기 — 단말이 다른 '실행' 에 쓰이는 중일 때 */
 export function enqueueRun(args) {
@@ -182,7 +183,7 @@ const useRunner = () => {
     const b = build || buildOf(e); const dev = devOf(ctx.runners, plan.devId);
     let cases = casesOfPlan(plan, ctx.cases); if (only) cases = cases.filter((c) => only.includes(c.id));
     if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger !== "수동") app.releaseMqaDevice(dev.id);
-    const args = { plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, api: app, runs: app.mqaRuns };
+    const args = { plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, partial: !!only, api: app, runs: app.mqaRuns };
     if (dev && dev.state === "사용 중" && /^실행 /.test(dev.busy || "")) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 대기열
     return startRun(args);
   };
@@ -279,6 +280,7 @@ export function MqaPlanScreen() {
   const caution = e && e.prod ? cs.filter((c) => c.prodCaution) : [];
   const allTags = [...new Set(mqaCases.filter((c) => c.systemId === d.systemId).flatMap((c) => tagList(c.tags)))];
   const excluded = mqaCases.filter((c) => c.systemId === d.systemId && (d.suiteIds || []).includes(c.suiteId) && c.status !== "승인").length;
+  const quarantinedN = mqaCases.filter((c) => c.systemId === d.systemId && (d.suiteIds || []).includes(c.suiteId) && c.status === "승인" && c.quarantined).length;
   return (
     <div className="space-y-4">{Head}
       <div className="grid grid-cols-12 gap-4">
@@ -316,6 +318,7 @@ export function MqaPlanScreen() {
               <div className={"rounded-lg border px-3 py-2 text-xs " + (cs.length ? "border-slate-200 bg-slate-50 text-slate-600" : "border-amber-200 bg-amber-50 text-amber-700")}>
                 {cs.length ? <>대상 케이스 <b className="font-semibold text-sky-700">{cs.length}건</b> <span className="font-mono text-slate-500">{cs.map((c) => c.id).join(", ")}</span></> : "조건에 맞는 승인 케이스가 없습니다 — 실행해도 0건입니다"}
                 {excluded > 0 && <div className="mt-0.5 text-slate-500">승인되지 않은 {excluded}건은 빠집니다</div>}
+                {quarantinedN > 0 && <div className="mt-0.5 text-amber-700">격리된 {quarantinedN}건은 빠집니다 — 불안정 화면에서 해제할 수 있습니다</div>}
               </div>
               {verOff.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle size={12} className="mr-1 inline" />{verOff.length}건은 다른 앱 버전 기준으로 만들어져 v{b.ver}에서 확인되지 않았습니다 — 요소를 못 찾을 수 있습니다 <span className="font-mono">{verOff.map((c) => c.id).join(", ")}</span></div>}
               {caution.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">⚠ 운영 환경에 운영주의 {caution.length}건이 포함됩니다 — 실데이터를 바꿀 수 있습니다</div>}
@@ -707,64 +710,145 @@ function ResultDetail({ runId, back, backLabel, nav }) {
   );
 }
 const completed = (runs) => (runs || []).filter((r) => r.status === "완료");
+/* 회귀 비교 — 같은 계획의 두 실행을 케이스별로 맞대어 본다 (FQA 와 같은 구성)
+   정합 규칙
+     · 기본 비교는 '전체 실행' 끼리: 최신 전체 실행(B) ↔ 그 직전 전체 실행(A). '실패만 다시' 같은 부분 실행은 (부분) 표시
+     · 부분 실행이 끼면 두 실행에 모두 있는 케이스만 비교 (나머지는 비교 제외로 센다)
+     · 비교 조건 차이를 알린다: 앱 버전 변화는 정보, 단말 차이는 주의(단말 때문일 수 있음)
+     · 케이스 rev 가 다르면 '케이스 변경' — 결과 변화를 앱 탓으로 단정하지 않는다
+     · 퇴행 행에는 결과 화면과 같은 원인 판정(담당자 확정 우선) */
+const pctOf = (r) => { const p = passRate(r); return p == null ? "—" : p + "%"; };
 function Regression({ nav }) {
-  const { mqaRuns = [], mqaPlans = [] } = useApp();
+  const { mqaRuns = [], mqaPlans = [], mqaCases = [] } = useApp();
   const plansWith = mqaPlans.filter((p) => completed(mqaRuns).filter((r) => r.planId === p.id).length >= 2);
-  const [pid, setPid] = useState(plansWith[0] ? plansWith[0].id : null);
+  const [pid, setPid] = useState(plansWith[0] ? plansWith[0].id : (mqaPlans[0] || {}).id);
   const rs = completed(mqaRuns).filter((r) => r.planId === pid);
-  const [a, setA] = useState(null); const [b, setB] = useState(null);
-  const cmp = rs.find((r) => r.id === b) || rs[0]; const base = rs.find((r) => r.id === a) || rs[1];
-  if (!plansWith.length) return <div className="space-y-4"><PageToolbar desc="같은 계획의 두 실행을 케이스별로 비교" /><Empty icon={GitCompare} title="비교할 실행이 없습니다" hint="같은 계획으로 완료된 실행이 2건 이상 있어야 합니다." /></div>;
-  const ids = [...new Set([...(base ? base.cases : []), ...(cmp ? cmp.cases : [])].map((c) => c.id))];
-  const stOf = (r, id) => ((r && r.cases.find((c) => c.id === id)) || {}).st || "—";
-  const chg = (x, y) => (x === "통과" && y === "실패" ? ["새 실패", "fail"] : x === "실패" && y === "통과" ? ["해결", "pass"] : x === "실패" && y === "실패" ? ["계속 실패", "warn"] : x === "—" ? ["새 케이스", "info"] : y === "—" ? ["빠짐", "draft"] : ["변화 없음", "draft"]);
+  const full = rs.filter((r) => !r.partial);
+  const defB = full[0] || rs[0]; const defA = full.filter((r) => r !== defB)[0] || rs.filter((r) => r !== defB)[0];
+  const [aId, setA] = useState(null); const [bId, setB] = useState(null);
+  const A = rs.find((r) => r.id === aId) || defA; const B = rs.find((r) => r.id === bId) || defB;
+  const Head = <PageToolbar desc="회귀 비교 · 같은 계획의 두 실행을 케이스별로" />;
+  const planSel = <Card className="p-3"><Field label="실행 계획 (비교 맥락)"><Select value={pid || ""} onChange={(e) => { setPid(+e.target.value); setA(null); setB(null); }}>{mqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field></Card>;
+  if (rs.length < 2 || !A || !B) return <div className="space-y-4">{Head}{planSel}<Card className="p-8 text-center text-sm text-slate-500">이 계획에는 비교할 완료된 실행이 2건 이상 필요합니다 (현재 {rs.length}건).</Card></div>;
+  const opt = (r) => r.id + " · v" + r.build + " · " + String(r.startedAt).slice(5) + " · " + pctOf(r) + (r.partial ? " (부분)" : "");
+  const part = A.partial || B.partial;
+  const ids = part ? A.cases.map((c) => c.id).filter((id) => B.cases.some((c) => c.id === id)) : [...new Set([...A.cases, ...B.cases].map((c) => c.id))];
+  const excludedN = part ? new Set([...A.cases, ...B.cases].map((c) => c.id)).size - ids.length : 0;
+  const cOf = (r, id) => r.cases.find((c) => c.id === id);
+  const stOf = (r, id) => { const c = cOf(r, id); return c && (c.st === "통과" || c.st === "실패") ? c.st : c ? c.st : null; };
+  const cls = (a, b) => (!a ? { k: "새 케이스", c: "text-sky-700" } : !b ? { k: "빠짐", c: "text-slate-500" } : a === "통과" && b === "실패" ? { k: "퇴행", c: "text-red-700" } : a === "실패" && b === "통과" ? { k: "개선", c: "text-emerald-700" } : { k: "유지", c: "text-slate-600" });
+  const rows = ids.map((id) => { const ca = cOf(A, id), cb = cOf(B, id); return { id, name: (cb || ca).name, a: stOf(A, id), b: stOf(B, id), ra: ca && ca.rev, rb: cb && cb.rev, cb }; });
+  const summ = rows.reduce((m, r) => { const k = cls(r.a, r.b).k; m[k] = (m[k] || 0) + 1; return m; }, {});
+  const devDiff = String(A.device).split(" — ")[0] !== String(B.device).split(" — ")[0];
+  const vK = { "통과": "pass", "실패": "fail", "건너뜀": "draft" };
+  const caseNow = (id) => mqaCases.find((c) => c.id === id);
   return (
-    <div className="space-y-4">
-      <PageToolbar desc="같은 계획의 두 실행을 케이스별로 비교 — 앱 버전이 바뀐 뒤 무엇이 깨졌나">
-        <div className="w-48"><Select value={pid || ""} onChange={(e) => { setPid(+e.target.value); setA(null); setB(null); }}>{plansWith.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></div>
-      </PageToolbar>
-      <Card className="p-4">
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-500">기준</span><div className="w-64"><Select value={base ? base.id : ""} onChange={(e) => setA(e.target.value)}>{rs.map((r) => <option key={r.id} value={r.id}>{r.id} · v{r.build} · {r.startedAt}</option>)}</Select></div>
-          <span className="text-slate-500">→ 비교</span><div className="w-64"><Select value={cmp ? cmp.id : ""} onChange={(e) => setB(e.target.value)}>{rs.map((r) => <option key={r.id} value={r.id}>{r.id} · v{r.build} · {r.startedAt}</option>)}</Select></div>
-          {base && cmp && base.build !== cmp.build && <Badge kind="warn">앱 v{base.build} → v{cmp.build}</Badge>}
-        </div>
-        <table className="w-full text-sm"><thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="py-2 font-medium">케이스</th><th className="font-medium">기준</th><th className="font-medium">비교</th><th className="font-medium">변화</th></tr></thead>
-          <tbody>{ids.map((id) => { const x = stOf(base, id), y = stOf(cmp, id); const [t, k] = chg(x, y); const nm = ((cmp && cmp.cases.find((c) => c.id === id)) || (base && base.cases.find((c) => c.id === id)) || {}).name; return (
-            <tr key={id} className="border-b border-slate-100"><td className="py-2 text-xs"><span className="font-mono text-sky-600">{id}</span> <span className="text-slate-800">{nm}</span></td><td className="text-xs">{x}</td><td className="text-xs">{y}</td><td><Badge kind={k}>{t}</Badge></td></tr>
-          ); })}</tbody></table>
+    <div className="space-y-4">{Head}{planSel}
+      <div className="grid grid-cols-2 gap-4">
+        {[["A — 기준(baseline)", A, setA, ""], ["B — 비교(target)", B, setB, "border-sky-300"]].map(([t, r, set, cl]) => (
+          <Card key={t} className={"p-4 " + cl}><div className="mb-1 text-xs text-slate-500">{t}</div>
+            <Select value={r.id} onChange={(e) => set(e.target.value)}>{rs.map((x) => <option key={x.id} value={x.id}>{opt(x)}</option>)}</Select>
+            <div className="mt-3 text-4xl font-bold text-slate-900">{pctOf(r)}</div>
+            <div className="mt-1 text-xs text-slate-500">앱 v{r.build} · {String(r.device).split(" — ")[0]} · {r.startedAt}{r.partial && <span className="ml-1 text-amber-700">· 부분 실행</span>}</div>
+          </Card>
+        ))}
+      </div>
+      {(A.build !== B.build || devDiff || part) && <div className="space-y-1 text-xs">
+        {A.build !== B.build && <div className="text-slate-600">ⓘ 앱 v{A.build} → v{B.build} — 버전 변화에 따른 회귀를 봅니다</div>}
+        {devDiff && <div className="text-amber-700">⚠ 단말이 다릅니다 ({String(A.device).split(" — ")[0]} → {String(B.device).split(" — ")[0]}) — 결과 차이가 단말 때문일 수 있습니다</div>}
+        {part && <div className="text-amber-700">⚠ 부분 실행이 포함되어 두 실행에 모두 있는 케이스만 비교합니다 (비교 제외 {excludedN}건)</div>}
+      </div>}
+      <div className="grid grid-cols-3 gap-4">
+        <Card className="p-4 text-center"><div className="text-2xl font-bold text-emerald-600">{summ["개선"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">개선</div></Card>
+        <Card className="p-4 text-center"><div className="text-2xl font-bold text-red-600">{summ["퇴행"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">퇴행 (회귀)</div></Card>
+        <Card className="p-4 text-center"><div className="text-2xl font-bold text-slate-700">{summ["유지"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">유지</div></Card>
+      </div>
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {A.id} → {B.id}</span></div>
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">ID</th><th className="font-medium">TC</th><th className="font-medium">A</th><th></th><th className="font-medium">B</th><th className="font-medium">변화</th><th className="pr-4 font-medium">원인 판정</th></tr></thead>
+          <tbody>
+            {rows.map((r) => { const v = cls(r.a, r.b); const revd = r.ra != null && r.rb != null && r.ra !== r.rb; const j = v.k === "퇴행" && r.cb ? judgeOf(B, r.cb, mqaRuns, caseNow(r.id)) : null; const jk = (B.judged || {})[r.id]; return (
+              <tr key={r.id} onClick={() => nav && nav("mqa-result-detail", B.id)} title={B.id + " 결과 상세로 이동"} className={"cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100 " + (v.k === "퇴행" ? "bg-red-50" : "")}>
+                <td className="px-4 py-2.5 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-700">{r.name}</td>
+                <td className="whitespace-nowrap">{r.a ? <Badge kind={vK[r.a] || "draft"}>{r.a}</Badge> : <span className="text-xs text-slate-500">없음</span>}{r.ra != null && <span className="ml-1.5 font-mono text-[10px] text-slate-500">rev {r.ra}</span>}</td>
+                <td className="text-slate-400">→</td>
+                <td className="whitespace-nowrap">{r.b ? <Badge kind={vK[r.b] || "draft"}>{r.b}</Badge> : <span className="text-xs text-slate-500">없음</span>}{r.rb != null && <span className="ml-1.5 font-mono text-[10px] text-slate-500">rev {r.rb}</span>}</td>
+                <td className={"whitespace-nowrap font-semibold " + v.c}>{v.k}{revd && <span className="ml-1.5 text-[11px] font-normal text-amber-600">· 케이스 변경</span>}</td>
+                <td className="pr-4">{j ? <span className="text-xs"><Badge kind={JUDGE_K[jk || j.kind]}>{jk || j.kind}</Badge><span className="ml-1 text-slate-500">{j.cause}{jk ? " · 확정" : " · " + j.by + " 제안"}</span></span> : <span className="text-xs text-slate-400">—</span>}</td>
+              </tr>
+            ); })}
+          </tbody>
+        </table>
       </Card>
     </div>
   );
 }
-/* 불안정 — 같은 케이스가 실행마다 통과 · 실패를 오가면 불안정, 최근 3회 연속 실패면 지속 실패 */
+/* 불안정 · 지속 실패 판정 — 대시보드와 같은 함수 하나만 쓴다 (두 화면이 같은 케이스를 다르게 분류하면 안 된다)
+   · 최근 FLAKY_WINDOW 회의 완료 실행만 본다
+   · 같은 앱 버전 안에서 통과/실패가 섞이면 '불안정' — 버전이 바뀐 뒤 계속 실패하면 불안정이 아니라 '지속 실패(회귀)'
+   · 연속 2회 이상 실패도 '지속 실패'
+   · 담당자가 결과 화면에서 '앱 결함 의심' 으로 확정한 실패가 있으면 '결함' 으로 (불안정에서 뺀다) */
+export const FLAKY_WINDOW = 5;
 export const caseHistory = (runs) => {
   const m = {};
-  completed(runs).slice().reverse().forEach((r) => r.cases.forEach((c) => { if (c.st !== "통과" && c.st !== "실패") return; (m[c.id] = m[c.id] || { id: c.id, name: c.name, seq: [] }).seq.push({ st: c.st, run: r.id, build: r.build }); }));
-  return Object.values(m).map((h) => { const f = h.seq.filter((x) => x.st === "실패").length; const last3 = h.seq.slice(-3); const solid = last3.length === 3 && last3.every((x) => x.st === "실패"); return { ...h, runs: h.seq.length, fails: f, kind: solid ? "지속 실패" : f > 0 && f < h.seq.length ? "불안정" : f ? "실패" : "안정" }; });
+  completed(runs).slice().reverse().forEach((r) => r.cases.forEach((c) => {
+    if (c.st !== "통과" && c.st !== "실패") return;
+    (m[c.id] = m[c.id] || { id: c.id, name: c.name, seq: [] }).seq.push({ st: c.st, run: r.id, build: r.build, judged: (r.judged || {})[c.id], defect: (r.defects || {})[c.id] });
+  }));
+  return Object.values(m).map((h) => {
+    const w = h.seq.slice(-FLAKY_WINDOW);
+    const f = w.filter((x) => x.st === "실패").length;
+    const lastBuild = w.length ? w[w.length - 1].build : "";
+    const cur = w.filter((x) => x.build === lastBuild);
+    const mixed = [...new Set(w.map((x) => x.build))].some((b) => { const xs = w.filter((x) => x.build === b); return xs.some((x) => x.st === "통과") && xs.some((x) => x.st === "실패"); });
+    let trail = 0; for (let i = w.length - 1; i >= 0; i--) { if (w[i].st === "실패") trail++; else break; }
+    const regressed = cur.length > 0 && cur.every((x) => x.st === "실패") && w.some((x) => x.build !== lastBuild && x.st === "통과");
+    const defect = w.some((x) => x.st === "실패" && x.judged === "앱 결함 의심");
+    const kind = defect ? "결함" : trail >= 2 || regressed ? "지속 실패" : mixed ? "불안정" : f ? "실패" : "안정";
+    const lastFail = [...w].reverse().find((x) => x.st === "실패");
+    return { ...h, w, runs: w.length, fails: f, trail, regressed, kind, lastFail, hasDefect: w.some((x) => x.defect) };
+  });
 };
+const KIND_K = { "불안정": "warn", "지속 실패": "fail", "결함": "fail", "실패": "draft" };
 function Flaky({ nav }) {
-  const { mqaRuns = [], setMqaEditTc, goTo } = useApp();
-  const rows = caseHistory(mqaRuns).filter((h) => h.kind !== "안정").sort((a, b) => b.fails - a.fails);
+  const { mqaRuns = [], mqaCases = [], mqaSuites = [], updateMqaCase, updateMqaRun, setMqaEditTc, goTo } = useApp();
+  const [msg, flash] = useToast();
+  const caseNow = (id) => mqaCases.find((c) => c.id === id);
+  const rows = caseHistory(mqaRuns).filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
+  const flakyN = rows.filter((r) => r.kind === "불안정").length, persistN = rows.filter((r) => r.kind !== "불안정").length;
+  const causeOf = (h) => { if (!h.lastFail) return null; const run = mqaRuns.find((r) => r.id === h.lastFail.run); const c = run && run.cases.find((x) => x.id === h.id); const j = run && c ? judgeOf(run, c, mqaRuns, caseNow(h.id)) : null; return j ? { ...j, kind: h.lastFail.judged || j.kind, fixed: !!h.lastFail.judged } : null; };
+  const toggleQuar = (h) => { const c = caseNow(h.id); if (!c) return; updateMqaCase(h.id, { quarantined: !c.quarantined }); flash(c.quarantined ? h.id + " 격리 해제 — 다음 실행부터 대상에 들어갑니다" : h.id + " 격리 — 실행 계획 대상에서 빠집니다"); };
+  const regDefect = (h) => { const run = mqaRuns.find((r) => r.id === h.lastFail.run); const no = "BUG-" + (1300 + Math.floor(Math.random() * 90)); updateMqaRun(run.id, { defects: { ...(run.defects || {}), [h.id]: no } }); flash(no + " 결함 초안 생성 — " + run.id + " 실패 화면 · 로그 첨부 (목업)"); };
+  const suiteOf = (id) => ((mqaSuites.find((x) => x.id === (caseNow(id) || {}).suiteId) || {}).name || "");
   return (
     <div className="space-y-4">
-      <PageToolbar desc="실행마다 결과가 바뀌는 케이스 · 계속 실패하는 케이스 (완료된 실행 기준)" />
+      <PageToolbar desc="불안정(Flaky) · 테스트케이스 기준" />
+      <div className="flex flex-wrap items-center gap-3 text-sm"><span className="text-slate-500">최근 실행 {FLAKY_WINDOW}회 기준 (TC별)</span><span className="text-slate-500">·</span><span className="text-amber-700">불안정 {flakyN}건</span><span className="text-red-700">지속 실패 · 결함 {persistN}건</span></div>
       <Card className="overflow-hidden">
-        <table className="w-full text-sm"><thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="px-4 py-2 font-medium">케이스</th><th className="font-medium">최근 결과 (오래된 → 최근)</th><th className="font-medium">실패</th><th className="font-medium">판정</th><th className="pr-4" /></tr></thead>
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">TC</th><th className="font-medium">문제 빈도</th><th className="font-medium">유형</th><th className="font-medium">최근 추세</th><th></th></tr></thead>
           <tbody>
-            {!rows.length && <tr><td colSpan={5} className="py-8 text-center text-xs text-slate-500">불안정하거나 계속 실패하는 케이스가 없습니다</td></tr>}
-            {rows.map((h) => (
-              <tr key={h.id} className="border-b border-slate-100">
-                <td className="px-4 py-2 text-xs"><span className="font-mono text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span></td>
-                <td><div className="flex gap-1">{h.seq.slice(-10).map((x, i) => <span key={i} title={x.run + " · v" + x.build + " · " + x.st} className={"inline-block h-3 w-3 rounded-sm " + (x.st === "통과" ? "bg-emerald-500" : "bg-red-500")} />)}</div></td>
-                <td className="text-xs text-slate-600">{h.fails}/{h.runs}</td>
-                <td><Badge kind={h.kind === "불안정" ? "warn" : "fail"}>{h.kind}</Badge></td>
-                <td className="pr-4 text-right"><button onClick={() => { setMqaEditTc(h.id); goTo("mqa-cases"); }} className="text-xs text-sky-600">케이스 열기</button></td>
+            {!rows.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">불안정 · 지속 실패로 분류된 TC가 없습니다.</td></tr>}
+            {rows.map((h) => { const c = caseNow(h.id) || {}; const j = causeOf(h); const pct = Math.round((h.fails / h.runs) * 100); return (
+              <tr key={h.id} className="border-b border-slate-200 text-slate-700 hover:bg-slate-100">
+                <td className="px-4 py-3"><div className="font-mono text-xs text-sky-600">{h.id}</div><div className="flex items-center gap-1.5 text-slate-800">{h.name}{c.quarantined && <Badge kind="draft">격리됨</Badge>}</div><div className="text-xs text-slate-500">{suiteOf(h.id)}</div></td>
+                <td className="pr-4" style={{ minWidth: 150 }}><div className="mb-0.5 text-xs text-slate-500">실패 {h.fails}/{h.runs}회 · {pct}%</div><div className="h-1.5 rounded bg-slate-100" style={{ width: 130 }}><div className={"h-1.5 rounded " + (h.kind === "불안정" ? "bg-amber-500" : "bg-red-500")} style={{ width: pct + "%" }} /></div></td>
+                <td><div className="flex flex-wrap items-center gap-1"><Badge kind={KIND_K[h.kind]}>{h.kind}</Badge>{h.regressed && <Badge kind="info">버전 변경 후</Badge>}{j && <span className="text-xs text-slate-500">{j.cause}{j.fixed ? " · 확정" : " · " + j.by + " 제안"}</span>}</div></td>
+                <td><div className="flex items-end gap-1">{h.w.map((x, i) => (<Fragment key={i}>{i > 0 && h.w[i - 1].build !== x.build && <span className="mx-0.5 h-4 w-px bg-slate-300" title={"앱 v" + h.w[i - 1].build + " → v" + x.build} />}<span title={x.run + " · v" + x.build + " · " + x.st} className={"inline-block h-3 w-3 rounded-sm " + (x.st === "통과" ? "bg-emerald-500" : "bg-red-500")} /></Fragment>))}</div><div className="mt-0.5 text-[10px] text-slate-400">{[...new Set(h.w.map((x) => "v" + x.build))].join(" → ")}</div></td>
+                <td className="pr-4 text-right whitespace-nowrap">
+                  {c.quarantined ? <button onClick={() => toggleQuar(h)} className="mr-3 text-xs text-sky-600 hover:text-sky-700">격리 해제</button>
+                    : h.kind === "불안정" ? <button onClick={() => toggleQuar(h)} className="mr-3 text-xs text-amber-700 hover:text-amber-800">격리</button>
+                    : h.hasDefect ? <span className="mr-3 text-xs text-slate-500">결함 등록됨</span> : <button onClick={() => regDefect(h)} className="mr-3 text-xs text-red-700 hover:text-red-800">결함 등록</button>}
+                  <button onClick={() => { setMqaEditTc(h.id); goTo("mqa-cases"); }} className="text-xs text-sky-600">케이스 열기</button>
+                </td>
               </tr>
-            ))}
-          </tbody></table>
-        <div className="border-t border-slate-200 px-4 py-2 text-xs text-slate-500">불안정 원인은 대개 대기 시간 · 팝업 · 테스트 데이터입니다. 실패 시점 자료로 원인을 확인하세요.</div>
+            ); })}
+          </tbody>
+        </table>
       </Card>
+      <div className="text-xs text-slate-500">판정 기준: 최근 실행 {FLAKY_WINDOW}회를 TC별로 봅니다 · <span className="text-amber-700">같은 앱 버전 안에서 통과/실패 혼재 = 불안정 → 격리</span> · <span className="text-red-700">연속 2회 실패 또는 버전 변경 후 계속 실패 = 지속 실패 → 결함</span> · 담당자가 앱 결함으로 확정한 실패는 결함으로 분류</div>
+      <Toast msg={msg} />
     </div>
   );
 }
@@ -775,7 +859,7 @@ export function MqaDashboardScreen({ nav }) {
   const devs = flatDevices(mqaRunners);
   const lastRun = completed(mqaRuns)[0];
   const approved = mqaCases.filter((c) => c.status === "승인").length;
-  const unstable = caseHistory(mqaRuns).filter((h) => h.kind === "불안정" || h.kind === "지속 실패");
+  const unstable = caseHistory(mqaRuns).filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind));   // 불안정 화면과 같은 함수 · 같은 분류
   const next = mqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
   const KPI = [
     ["승인 TC", approved + "/" + mqaCases.length, "text-sky-600", "승인/전체"],
