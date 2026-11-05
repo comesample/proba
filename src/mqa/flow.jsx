@@ -10,7 +10,7 @@
 // ============================================================
 import { useState, useEffect } from "react";
 import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap } from "lucide-react";
-import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp } from "../common/ui.jsx";
+import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
 import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
@@ -508,14 +508,14 @@ function RunDetail({ run, onStop, onOpen }) {
 }
 const RunTable = ({ runs, onOpen }) => (
   <table className="w-full text-sm">
-    <thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="px-4 py-2 font-medium">실행</th><th className="font-medium">계획</th><th className="font-medium">앱 · 환경</th><th className="font-medium">단말</th><th className="font-medium">트리거</th><th className="font-medium">시작</th><th className="font-medium">결과</th><th className="pr-4 text-right font-medium">상태</th></tr></thead>
+    <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">실행</th><th className="font-medium">계획</th><th className="font-medium">앱 · 환경</th><th className="font-medium">단말</th><th className="font-medium">트리거</th><th className="font-medium">시작</th><th className="font-medium">결과</th><th className="pr-4 text-right font-medium">상태</th></tr></thead>
     <tbody>
       {!runs.length && <tr><td colSpan={8} className="py-8 text-center text-xs text-slate-500">실행 이력이 없습니다</td></tr>}
       {runs.map((r) => { const pr = passRate(r); return (
-        <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-b border-slate-100 hover:bg-slate-50">
-          <td className="px-4 py-2 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{r.planName}</td>
+        <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
+          <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{r.planName}</td>
           <td className="text-xs text-slate-600">{r.sysName} · {r.env} · v{r.build}</td><td className="text-xs text-slate-600">{String(r.device || "").split(" — ")[0]}</td>
-          <td className="text-xs text-slate-600">{r.trigger}</td><td className="text-xs text-slate-500">{r.startedAt}</td>
+          <td><Badge kind={TRIG_K[r.trigger] || "info"}>{r.trigger}</Badge></td><td className="text-xs text-slate-500">{r.startedAt}</td>
           <td className="text-xs">{r.status === "실행 불가" ? <span className="text-red-700">{r.note}</span> : <>{resultText(r)}{pr != null && <span className={"ml-1.5 font-semibold " + (gateOk(r) ? "text-emerald-700" : "text-red-700")}>{pr}%</span>}</>}</td>
           <td className="pr-4 text-right"><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td>
         </tr>
@@ -525,17 +525,46 @@ const RunTable = ({ runs, onOpen }) => (
 );
 
 /* ═══════════ 실행 이력 ═══════════ */
+/* 실행 이력 — FQA 와 같은 구성: 필터(상태 · 계획) / 표(실행 · 계획 · 앱 버전 · 대상·환경 · 단말 · 트리거 · 시각 · 상태 · 판정 · 결과)
+   끝난 실행만(완료 · 중단 · 실행 불가). 진행 중 · 대기 중은 실행 화면에서 본다 */
+const TRIG_K = { "수동": "info", "예약": "pass", "새 버전": "warn" };
+const verdictOf = (r) => (r.status !== "완료" ? "-" : (r.cases || []).some((c) => c.st === "실패") ? "실패" : "통과");
 export function MqaHistoryScreen({ nav }) {
   const { mqaRuns = [], mqaPlans = [] } = useApp();
-  const [pf, setPf] = useState("전체"); const [sf, setSf] = useState("전체");
-  const list = mqaRuns.filter((r) => (pf === "전체" || String(r.planId) === pf) && (sf === "전체" || r.status === sf));
+  const [fSt, setFSt] = useState("전체 상태");
+  const [fPlan, setFPlan] = useState("전체 계획");
+  const planNow = (r) => (mqaPlans.find((p) => p.id === r.planId) || {}).name;   // 계획의 현재 이름
+  const hist = mqaRuns.filter((r) => ["완료", "중단", "실행 불가"].includes(r.status))
+    .filter((r) => (fSt === "전체 상태" || r.status === fSt) && (fPlan === "전체 계획" || String(r.planId) === fPlan));
   return (
     <div className="space-y-4">
-      <PageToolbar desc="모든 실행 (수동 · 예약 · 실패만 다시)">
-        <div className="w-48"><Select value={pf} onChange={(e) => setPf(e.target.value)}><option value="전체">전체 계획</option>{mqaPlans.map((p) => <option key={p.id} value={String(p.id)}>{p.name}</option>)}</Select></div>
-        <div className="w-36"><Select value={sf} onChange={(e) => setSf(e.target.value)}>{["전체", "완료", "실행 중", "중단", "실행 불가"].map((x) => <option key={x}>{x}</option>)}</Select></div>
-      </PageToolbar>
-      <Card className="overflow-hidden"><RunTable runs={list} onOpen={(id) => nav && nav("mqa-result-detail", id)} /></Card>
+      <PageToolbar desc="끝난 실행 이력 · 행 클릭 시 결과 상세" />
+      <div className="flex items-center gap-2">
+        <div style={{ width: 120 }}><Select value={fSt} onChange={(e) => setFSt(e.target.value)}>{["전체 상태", "완료", "중단", "실행 불가"].map((x) => <option key={x}>{x}</option>)}</Select></div>
+        <div style={{ width: 200 }}><Select value={fPlan} onChange={(e) => setFPlan(e.target.value)}><option value="전체 계획">전체 계획</option>{mqaPlans.map((p) => <option key={p.id} value={String(p.id)}>{p.name}</option>)}</Select></div>
+      </div>
+      <Card className="overflow-hidden">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">실행</th><th className="font-medium">계획</th><th className="font-medium">앱 버전</th><th className="font-medium">대상·환경</th><th className="font-medium">단말</th><th className="font-medium">트리거</th><th className="font-medium">시각</th><th className="font-medium">상태</th><th className="font-medium">판정</th><th className="pr-4 font-medium">결과</th></tr></thead>
+          <tbody>
+            {hist.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-sm text-slate-500">조건에 맞는 이력이 없습니다</td></tr>}
+            {hist.map((r) => { const v = verdictOf(r); const n = (r.cases || []).length; const p = (r.cases || []).filter((c) => c.st === "통과").length; const pr = passRate(r); return (
+              <tr key={r.id} onClick={() => nav && nav("mqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
+                <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td>
+                <td className="text-slate-800">{planNow(r) || r.planName}{planNow(r) && r.planName && planNow(r) !== r.planName && <span className="ml-1.5 text-xs text-slate-500">· 당시 “{r.planName}”</span>}</td>
+                <td className="font-mono text-xs text-slate-500">{r.build ? "v" + r.build : "-"}</td>
+                <td className="text-xs text-slate-500">{r.sysName} · {r.env}</td>
+                <td className="text-xs text-slate-500">{String(r.device || "-").split(" — ")[0]}</td>
+                <td><Badge kind={TRIG_K[r.trigger] || "info"}>{r.trigger}</Badge></td>
+                <td><RunTime start={r.startedAt} end={r.endedAt} /></td>
+                <td><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td>
+                <td>{v === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={v === "통과" ? "pass" : "fail"}>{v}</Badge>}</td>
+                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : r.status === "완료" ? <>{p}/{n}{pr != null && <span className={"ml-1.5 font-medium " + (gateOk(r) ? "text-emerald-700" : "text-red-700")}>{pr}%</span>}</> : p + "/" + n}</td>
+              </tr>
+            ); })}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }
