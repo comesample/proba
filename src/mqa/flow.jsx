@@ -9,13 +9,15 @@
 //   목업: 스텝 결과는 caseLogic.simulateStep(앱 버전별 화면) 으로 정한다 — TC-007 은 v3.2.0 에서 실패한다
 // ============================================================
 import { useState, useEffect, Fragment } from "react";
-import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap } from "lucide-react";
+import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp } from "lucide-react";
 import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
 import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
 import { envText, DeviceSelect, MockBtn, ReadonlyField } from "./workPickers.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from "recharts";
+import { C, TOOLTIP } from "../common/theme.js";
 
 /* ── 공통 판단 (계획 화면 · 실행 화면 · 예약 점검이 같은 함수를 쓴다) ── */
 const tagList = (t) => String(t || "").split(/[,\s]+/).filter(Boolean);
@@ -509,23 +511,6 @@ function RunDetail({ run, onStop, onOpen }) {
     </Card>
   );
 }
-const RunTable = ({ runs, onOpen }) => (
-  <table className="w-full text-sm">
-    <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">실행</th><th className="font-medium">계획</th><th className="font-medium">앱 · 환경</th><th className="font-medium">단말</th><th className="font-medium">트리거</th><th className="font-medium">시작</th><th className="font-medium">결과</th><th className="pr-4 text-right font-medium">상태</th></tr></thead>
-    <tbody>
-      {!runs.length && <tr><td colSpan={8} className="py-8 text-center text-xs text-slate-500">실행 이력이 없습니다</td></tr>}
-      {runs.map((r) => { const pr = passRate(r); return (
-        <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
-          <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{r.planName}</td>
-          <td className="text-xs text-slate-600">{r.sysName} · {r.env} · v{r.build}</td><td className="text-xs text-slate-600">{String(r.device || "").split(" — ")[0]}</td>
-          <td><Badge kind={TRIG_K[r.trigger] || "info"}>{r.trigger}</Badge></td><td className="text-xs text-slate-500">{r.startedAt}</td>
-          <td className="text-xs">{r.status === "실행 불가" ? <span className="text-red-700">{r.note}</span> : <>{resultText(r)}{pr != null && <span className={"ml-1.5 font-semibold " + (gateOk(r) ? "text-emerald-700" : "text-red-700")}>{pr}%</span>}</>}</td>
-          <td className="pr-4 text-right"><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td>
-        </tr>
-      ); })}
-    </tbody>
-  </table>
-);
 
 /* ═══════════ 실행 이력 ═══════════ */
 /* 실행 이력 — FQA 와 같은 구성: 필터(상태 · 계획) / 표(실행 · 계획 · 앱 버전 · 대상·환경 · 단말 · 트리거 · 시각 · 상태 · 판정 · 결과)
@@ -853,46 +838,129 @@ function Flaky({ nav }) {
   );
 }
 
-/* ═══════════ 대시보드 ═══════════ */
+/* ═══════════ 대시보드 ═══════════
+   FQA 와 같은 구성: 필터(계획 · 기간) → KPI 6 → 실패 원인 분포 → 실행 · PASS율 추이 → 스위트 건강도 + 단말별 PASS율 → 빈발 실패 + 최근 실행
+   정합 규칙
+     · PASS율 · 추이 · 단말별 · 스위트 · 원인 분포는 '전체 실행' 만 (실패만 다시 같은 부분 실행은 빼야 실패가 과대 집계되지 않는다)
+     · 불안정 · 지속 실패는 불안정 화면과 같은 함수(caseHistory)
+     · 원인은 결과 화면과 같은 판정(judgeOf) — 담당자 확정이 우선
+     · 필터(계획 · 기간)는 모든 카드에 똑같이 적용 */
+const CAUSE_COLOR = { "요소 변경": "bg-sky-500", "대기 부족 (불안정)": "bg-amber-500", "앱 결함 의심": "bg-red-500", "환경 문제": "bg-slate-500", "확인 필요": "bg-slate-300", "기대값 불일치": "bg-red-400", "테스트 문제": "bg-amber-400", "앱 크래시": "bg-red-600", "서버 · 연결 오류": "bg-slate-400", "판정 불가": "bg-slate-300" };
+const hbar = (p) => (p >= 90 ? "#10b981" : p >= 70 ? "#f59e0b" : "#ef4444");
 export function MqaDashboardScreen({ nav }) {
-  const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [] } = useApp();
+  const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [], mqaSuites = [] } = useApp();
+  const [msg, flash] = useToast();
+  const iso = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
+  const [today] = useState(() => iso(new Date()));
+  const [defFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return iso(d); });
+  const [planF, setPlanF] = useState("전체");
+  const [from, setFrom] = useState(defFrom); const [to, setTo] = useState(today);
+  const setRange = (nf, nt) => { if (nf > nt) nf = nt; const d = new Date(nt); d.setMonth(d.getMonth() - 6); const mf = iso(d); if (nf < mf) { nf = mf; flash("기간은 최대 6개월까지 지정할 수 있습니다"); } setFrom(nf); setTo(nt); };
+  const dOf = (r) => String(r.startedAt || "").slice(0, 10);
+  const scoped = mqaRuns.filter((r) => (planF === "전체" || r.planId === planF) && dOf(r) >= from && dOf(r) <= to);
+  const filtered = planF !== "전체" || from !== defFrom || to !== today;
+  const done = completed(scoped); const full = done.filter((r) => !r.partial);
+  const lastFull = full[0];
   const devs = flatDevices(mqaRunners);
-  const lastRun = completed(mqaRuns)[0];
-  const approved = mqaCases.filter((c) => c.status === "승인").length;
-  const unstable = caseHistory(mqaRuns).filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind));   // 불안정 화면과 같은 함수 · 같은 분류
+  const approved = mqaCases.filter((c) => c.status === "승인").length, quar = mqaCases.filter((c) => c.quarantined).length;
+  const hist = caseHistory(scoped);
+  const unstable = hist.filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
+  const defectN = new Set(scoped.flatMap((r) => Object.keys(r.defects || {}).map((k) => k + "@" + r.defects[k]))).size;
   const next = mqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
+  const evPlans = mqaPlans.filter((p) => p.status === "활성" && isOnNewBuild(p.schedule)).length;
   const KPI = [
-    ["승인 TC", approved + "/" + mqaCases.length, "text-sky-600", "승인/전체"],
-    ["최근 실행 PASS율", lastRun && passRate(lastRun) != null ? passRate(lastRun) + "%" : "—", "text-emerald-600", lastRun ? lastRun.id + " · v" + lastRun.build : "실행 없음"],
+    ["자동화 TC", mqaCases.length, "text-slate-900", "승인 " + approved + (quar ? " · 격리 " + quar : "")],
+    ["PASS율 (최근 실행)", lastFull && passRate(lastFull) != null ? passRate(lastFull) + "%" : "—", "text-emerald-600", lastFull ? lastFull.id + " · v" + lastFull.build : "실행 없음"],
     ["사용 가능 단말", devs.filter((d) => d.state === "사용 가능").length + "/" + devs.length, "text-slate-900", "러너 " + mqaRunners.filter((r) => runnerState(r) === "연결됨").length + "/" + mqaRunners.length + " 연결"],
-    ["불안정 · 지속 실패", unstable.length, "text-amber-600", "완료된 실행 기준"],
-    ["다음 예약", next ? next.at.slice(5) : "—", "text-slate-900", next ? next.p.name : "예약 없음"],
+    ["불안정 · 지속 실패", unstable.length, "text-amber-600", "최근 " + FLAKY_WINDOW + "회 기준"],
+    ["미해결 결함", defectN, defectN ? "text-red-600" : "text-slate-400", "결과 · 불안정에서 등록"],
+    ["다음 예약", next ? next.at.slice(5) : evPlans ? "새 버전 시" : "—", "text-sky-600", next ? next.p.name : evPlans ? "이벤트 계획 " + evPlans + "건" : "예약 없음"],
   ];
-  /* 단말별 PASS율 — FQA 의 '브라우저별' 자리. 같은 케이스가 단말에 따라 다르게 나오는지 본다 */
-  const byDev = devs.map((d) => { const rs = completed(mqaRuns).filter((r) => r.devId === d.id); const cs = rs.flatMap((r) => r.cases).filter((c) => c.st === "통과" || c.st === "실패"); return { d, runs: rs.length, p: cs.length ? Math.round((cs.filter((c) => c.st === "통과").length / cs.length) * 100) : null }; });
+  /* 실패 원인 분포 — 전체 실행의 실패 케이스 */
+  const causes = {};
+  full.forEach((r) => r.cases.filter((c) => c.st === "실패").forEach((c) => { const j = judgeOf(r, c, mqaRuns, mqaCases.find((x) => x.id === c.id)); const k = (r.judged || {})[c.id] || (j ? j.cause : "판정 불가"); causes[k] = (causes[k] || 0) + 1; }));
+  const causeTot = Object.values(causes).reduce((a, b) => a + b, 0);
+  const causeRows = Object.entries(causes).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ k, n, p: Math.round((n / causeTot) * 100) }));
+  /* 추이 — 일자별 실행 수 · PASS율, 앱 버전이 바뀐 날 표시 */
+  const byDay = {};
+  full.slice().reverse().forEach((r) => { const d = dOf(r); const b = (byDay[d] = byDay[d] || { d: d.slice(5), runs: 0, p: 0, n: 0, ver: r.build }); b.runs++; r.cases.forEach((c) => { if (c.st === "통과" || c.st === "실패") { b.n++; if (c.st === "통과") b.p++; } }); b.ver = r.build; });
+  const trend = Object.values(byDay).map((x) => ({ ...x, pass: x.n ? Math.round((x.p / x.n) * 100) : null }));
+  const verMarks = trend.filter((x, i) => i > 0 && x.ver !== trend[i - 1].ver);
+  /* 스위트 건강도 — 케이스의 최근 전체 실행 결과 */
+  const lastSt = (id) => { const r = full.find((x) => x.cases.some((c) => c.id === id && (c.st === "통과" || c.st === "실패"))); return r ? r.cases.find((c) => c.id === id).st : null; };
+  const suiteHealth = mqaSuites.map((su) => { const cs = mqaCases.filter((c) => c.suiteId === su.id); const rated = cs.map((c) => lastSt(c.id)).filter(Boolean); return { name: su.name, tc: cs.length, pass: rated.length ? Math.round((rated.filter((x) => x === "통과").length / rated.length) * 100) : null }; });
+  /* 단말별 PASS율 — FQA 의 '브라우저별' 자리 */
+  const byDev = devs.map((d) => { const rs = full.filter((r) => r.devId === d.id); const cs = rs.flatMap((r) => r.cases).filter((c) => c.st === "통과" || c.st === "실패"); return { d, runs: rs.length, p: cs.length ? Math.round((cs.filter((c) => c.st === "통과").length / cs.length) * 100) : null }; });
+  const recent = scoped.slice(0, 5);
   return (
     <div className="space-y-4">
-      <PageToolbar desc="자동화 현황 · 단말 · 최근 실행 (실행 · 케이스 · 테스트 기기에서 파생)" />
-      <div className="grid grid-cols-5 gap-3">{KPI.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      <PageToolbar desc="자동화 현황 · 스위트 · 단말 건강도 (실행 · 케이스 · 테스트 기기에서 파생)">
+        <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{mqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></div>
+        <input type="date" value={from} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+        <span className="text-slate-500">~</span>
+        <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+      </PageToolbar>
+      {filtered && <div className="text-xs text-slate-500">필터: {planF === "전체" ? "전체 계획" : (mqaPlans.find((p) => p.id === planF) || {}).name} · {from} ~ {to} · 실행 {scoped.length}건</div>}
+      <div className="grid grid-cols-6 gap-3">{KPI.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      <Card className="p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">실패 원인 분포 <span className="text-xs font-normal text-slate-500">전체 실행 기준</span></span><span className="text-xs text-slate-500">규칙 · AI 판정 — 담당자 확정 우선</span></div>
+        {causeTot === 0 ? <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">기간 내 실패가 없습니다</div> : (<>
+          <div className="flex h-2 overflow-hidden rounded bg-slate-100">{causeRows.map((c) => <div key={c.k} style={{ width: c.p + "%" }} className={CAUSE_COLOR[c.k] || "bg-slate-400"} title={c.k + " " + c.n + "건"} />)}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">{causeRows.map((c) => <span key={c.k} className="flex items-center gap-1.5"><span className={"inline-block h-2 w-2 rounded-sm " + (CAUSE_COLOR[c.k] || "bg-slate-400")} /><span className="text-slate-700">{c.k}</span><span className="text-slate-500">{c.n}건 · {c.p}%</span></span>)}</div>
+        </>)}
+      </Card>
+      <Card className="p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><TrendingUp size={15} className="text-sky-600" />실행 · PASS율 추이 <span className="font-normal text-slate-500">· 전체 실행 일자별 · 점선 = 앱 버전 변경</span></div>
+        {!trend.length ? <div className="py-14 text-center text-xs text-slate-500">기간 내 완료된 실행이 없습니다.</div> : (
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={trend}>
+              <CartesianGrid stroke={C.grid} vertical={false} />
+              <XAxis dataKey="d" stroke={C.axis} fontSize={11} />
+              <YAxis yAxisId="l" stroke={C.axis} fontSize={11} allowDecimals={false} />
+              <YAxis yAxisId="r" orientation="right" domain={[0, 100]} stroke={C.axis} fontSize={11} />
+              <Tooltip contentStyle={TOOLTIP} formatter={(v, n) => [v, n]} labelFormatter={(l) => { const x = trend.find((t) => t.d === l); return l + (x ? " · 앱 v" + x.ver : ""); }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              {verMarks.map((m) => <ReferenceLine key={m.d} x={m.d} yAxisId="l" stroke={C.axis} strokeDasharray="4 3" label={{ value: "v" + m.ver, position: "top", fontSize: 10, fill: C.axis }} />)}
+              <Bar yAxisId="l" dataKey="runs" name="실행 수" fill={C.skyFill} radius={[3, 3, 0, 0]} barSize={22} />
+              <Line yAxisId="r" type="monotone" dataKey="pass" name="PASS율(%)" stroke={C.sky} strokeWidth={2} dot={{ r: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
       <div className="grid grid-cols-3 gap-4">
-        <Card className="col-span-2 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5"><span className="text-sm font-semibold text-slate-800">최근 실행</span><Btn icon={History} onClick={() => nav && nav("mqa-history")}>실행 이력</Btn></div>
-          <RunTable runs={mqaRuns.slice(0, 6)} onOpen={(id) => nav && nav("mqa-result-detail", id)} />
-        </Card>
-        <Card className="p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-800">단말별 PASS율</div>
-          <div className="space-y-3">{byDev.map(({ d, runs, p }) => (
-            <div key={d.id}>
-              <div className="mb-1 flex justify-between text-xs"><span className="text-slate-700">{d.model} <span className="text-slate-500">· {d.runnerName} · {runs}회</span></span>{p == null ? <span className="text-slate-500">{d.state === "사용 가능" ? "실행 없음" : d.state}</span> : <span className="font-semibold text-slate-800">{p}%</span>}</div>
-              <div className="h-2 rounded bg-slate-100">{p != null && <div className={"h-2 rounded " + (p >= 90 ? "bg-emerald-500" : p >= 70 ? "bg-amber-500" : "bg-red-500")} style={{ width: p + "%" }} />}</div>
-            </div>
+        <Card className="col-span-2 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-sky-600" />스위트 건강도 (케이스 최근 결과 기준)</div>
+          <div className="space-y-2.5">{suiteHealth.map((su) => (
+            <div key={su.name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-700">{su.name} <span className="text-slate-500">· {su.tc} TC</span></span>{su.pass == null ? <span className="text-slate-500">미실행</span> : <span className="font-semibold" style={{ color: hbar(su.pass) }}>{su.pass}%</span>}</div>
+              <div className="h-2 rounded bg-slate-100">{su.pass != null && <div className="h-2 rounded" style={{ width: su.pass + "%", background: hbar(su.pass) }} />}</div></div>
           ))}</div>
         </Card>
+        <Card className="p-4">
+          <div className="mb-3 text-sm font-semibold text-slate-800">단말별 PASS율 <span className="font-normal text-slate-500">· 실행 단말 기준</span></div>
+          <div className="space-y-3">{byDev.map(({ d, runs, p }) => (
+            <div key={d.id}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-700">{d.model} <span className="text-slate-500">· {runs}회</span></span>{p == null ? <span className="text-slate-500">{d.state === "사용 가능" ? "실행 없음" : d.state}</span> : <span className="font-semibold" style={{ color: hbar(p) }}>{p}%</span>}</div>
+              <div className="h-2 rounded bg-slate-100">{p != null && <div className="h-2 rounded" style={{ width: p + "%", background: hbar(p) }} />}</div></div>
+          ))}</div>
+          <div className="mt-4 border-t border-slate-200 pt-3 text-xs text-slate-500">전체 실행만 집계 · 실패만 다시 같은 부분 실행은 제외합니다.</div>
+        </Card>
       </div>
-      <Card className="p-4">
-        <div className="mb-2 flex items-center justify-between"><span className="flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-amber-600" />불안정 · 지속 실패</span><button onClick={() => nav && nav("mqa-flaky")} className="text-xs text-sky-600">전체 보기</button></div>
-        {!unstable.length ? <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">해당 케이스가 없습니다</div> : <div className="grid grid-cols-2 gap-2">{unstable.slice(0, 4).map((h) => <div key={h.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-xs"><span><span className="font-mono text-sky-600">{h.id}</span> {h.name} <span className="text-slate-500">· {h.fails}/{h.runs} 실패</span></span><Badge kind={h.kind === "불안정" ? "warn" : "fail"}>{h.kind}</Badge></div>)}</div>}
-      </Card>
+      <div className="grid grid-cols-2 gap-4">
+        <Card className="p-4">
+          <div className="mb-3 flex items-center justify-between"><span className="flex items-center gap-2 text-sm font-semibold text-slate-800"><AlertTriangle size={15} className="text-amber-600" />빈발 실패 Top</span><button onClick={() => nav && nav("mqa-flaky")} className="text-xs text-sky-600">전체 보기</button></div>
+          <div className="space-y-2">
+            {!unstable.length && <div className="rounded-lg bg-slate-100 px-3 py-6 text-center text-xs text-slate-500">불안정 · 지속 실패 TC가 없습니다</div>}
+            {unstable.slice(0, 4).map((h) => <div key={h.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"><div><span className="font-mono text-xs text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span><div className="text-xs text-slate-500">최근 {h.runs}회 중 {h.fails}회 실패 · {Math.round((h.fails / h.runs) * 100)}%</div></div><Badge kind={KIND_K[h.kind]}>{h.kind}</Badge></div>)}
+          </div>
+        </Card>
+        <Card className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3"><span className="text-sm font-semibold text-slate-800">최근 실행</span><Btn icon={History} onClick={() => nav && nav("mqa-history")}>실행 이력으로</Btn></div>
+          <table className="w-full text-sm"><tbody className="text-slate-700">
+            {!recent.length && <tr><td className="px-4 py-6 text-center text-xs text-slate-500">실행 이력이 없습니다</td></tr>}
+            {recent.map((r) => <tr key={r.id} onClick={() => nav && nav("mqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 hover:bg-slate-100"><td className="px-4 py-2.5 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{r.planName}{r.partial && <span className="ml-1 text-xs text-slate-500">(부분)</span>}</td><td className="text-xs text-slate-500">v{r.build} · {String(r.device || "").split(" — ")[0]}</td><td className="text-xs text-slate-500">{r.status === "완료" ? resultText(r) : r.status === "실행 불가" ? "실행하지 못함" : ""}</td><td className="pr-4 text-right"><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td></tr>)}
+          </tbody></table>
+        </Card>
+      </div>
+      <Toast msg={msg} />
     </div>
   );
 }
