@@ -126,7 +126,8 @@ export function startRun(args) {
       const jj = j, x = all[j];
       at(t, () => { if (stop) return; rc.steps[jj].st = "실행 중"; cur.phase = c.id + " · 스텝 " + (jj < pl ? "전" : jj + 1 - pl); cur.log.push({ lv: "STEP", t: x.act + (x.name ? " · " + x.name : "") + (x.val ? " \"" + x.val + "\"" : "") }); });
       t += T.step;
-      at(t, () => { if (stop) return; rc.steps[jj].st = x.res.st === "fail" ? "실패" : "통과"; });
+      const dur = x.res.st === "fail" ? 10000 : 700 + ((jj * 337 + i * 191) % 900);   // 목업 소요: 실패는 대기 초과(10초)
+      at(t, () => { if (stop) return; rc.steps[jj].st = x.res.st === "fail" ? "실패" : "통과"; rc.steps[jj].dur = dur; rc.dur = (rc.dur || 0) + dur; });
     }
     if (fi >= 0 && plan.retry > 0) {
       at(t, () => { if (stop) return; cur.log.push({ lv: "RETRY", t: c.id + " 실패 → 재시도 (" + plan.retry + "회)" }); });
@@ -370,10 +371,10 @@ export function MqaRunScreen({ nav }) {
   const isToday = (r) => String(r.startedAt || "").slice(0, 10) === today;
   const running = mqaRuns.filter((r) => r.status === "실행 중");
   const waiting = mqaRuns.filter((r) => r.status === "대기 중");
-  const doneToday = mqaRuns.filter((r) => ["완료", "중단", "실행 불가"].includes(r.status) && isToday(r));
-  const rows = [...running, ...waiting, ...doneToday];
+  /* 끝난 실행은 큐와 상세에서 비운다 (FQA 와 같음) — 결과는 완료 알림 · 실행 이력에서 */
+  const rows = [...running, ...waiting];
   const [selId, setSelId] = useState(null);
-  const sel = rows.find((r) => r.id === selId) || running[0] || waiting[0] || doneToday[0] || null;
+  const sel = rows.find((r) => r.id === selId) || running[0] || waiting[0] || null;
   const blk = plan ? planBlock(plan, ctx, false) : "활성 계획이 없습니다";
   const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); setSelId(id); const dv = devOf(ctx.runners, plan.devId); flash(dv && dv.state === "사용 중" ? id + " 단말 대기열에 추가 — 앞선 실행이 끝나면 시작" : id + " 시작"); };
   const scheduledPlans = active.filter((p) => isTimed(p.schedule) || isOnNewBuild(p.schedule));
@@ -424,7 +425,7 @@ export function MqaRunScreen({ nav }) {
                 ); })}
               </tbody>
             </table>
-            {doneToday.length > 0 && <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">오늘 끝난 실행은 여기에 남습니다 · 지난 실행은 <button onClick={() => nav && nav("mqa-history")} className="text-sky-600">실행 이력</button></div>}
+            <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">끝난 실행은 완료 알림과 <button onClick={() => nav && nav("mqa-history")} className="text-sky-600">실행 이력</button>에서 결과를 봅니다</div>
           </Card>
           <Card className="p-4">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><Calendar size={15} className="text-sky-600" />예약 실행</div>
@@ -453,7 +454,7 @@ export function MqaRunScreen({ nav }) {
 /* 선택한 실행의 진행 상세 — 단말 화면 · 현재 케이스 스텝 · 로그(레벨 필터) */
 function RunDetail({ run, onStop, onOpen }) {
   const [lvl, setLvl] = useState("ALL");
-  if (!run) return <Card className="flex items-center justify-center p-8 text-xs text-slate-500" style={{ minHeight: 320 }}>왼쪽에서 실행을 선택하세요.</Card>;
+  if (!run) return <Card className="flex items-center justify-center p-8 text-xs text-slate-500" style={{ minHeight: 320 }}>진행 중인 실행이 없습니다 — 계획을 골라 [실행]을 누르세요.</Card>;
   const cur = run.cases.find((c) => c.st === "실행 중") || null;
   const [d, n] = [run.cases.filter((c) => ["통과", "실패", "건너뜀"].includes(c.st)).length, run.cases.length];
   const live = run.status === "실행 중";
@@ -545,77 +546,133 @@ export function MqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   if (mode === "불안정") return <Flaky nav={nav} />;
   return <ResultDetail runId={runId} back={back} backLabel={backLabel} nav={nav} />;
 }
+/* 실패 원인 판정 — 규칙으로 갈리는 것은 규칙으로, 나머지는 AI 가 근거와 함께 제안한다 (담당자가 확정)
+   목업: 실패 메시지 · 같은 계획의 다른 실행 · 케이스 기준 앱 버전으로 흉내 낸다 */
+const JUDGE_K = { "테스트 문제": "warn", "앱 결함 의심": "fail", "환경 문제": "info", "확인 필요": "draft" };
+const judgeOf = (run, c, runs, caseNow) => {
+  if (c.st !== "실패") return null;
+  const m = c.failMsg || "";
+  if (/크래시|ANR/.test(m)) return { kind: "앱 결함 의심", cause: "앱 크래시", by: "규칙", basis: "앱 로그에 크래시 · ANR 기록" };
+  if (/서버|연결/.test(m)) return { kind: "환경 문제", cause: "서버 · 연결 오류", by: "규칙", basis: "서버 응답 오류 · 연결 끊김 기록" };
+  const others = completed(runs).filter((r) => r.id !== run.id && r.planId === run.planId);
+  const stOf = (r) => ((r.cases || []).find((x) => x.id === c.id) || {}).st;
+  if (/요소를 찾지 못했습니다/.test(m)) {
+    if (others.some((r) => r.build === run.build && stOf(r) === "통과")) return { kind: "테스트 문제", cause: "대기 부족 (불안정)", by: "AI", conf: "중간", basis: "같은 앱 v" + run.build + "에서 통과한 실행이 있음 — 화면이 늦게 떠 요소를 못 찾은 것으로 보임" };
+    const base = caseNow && caseNow.baseBuild;
+    return { kind: "테스트 문제", cause: "요소 변경", by: "AI", conf: "높음", basis: (base && base !== run.build ? "케이스는 앱 v" + base + " 기준 — v" + run.build + " 화면 구조에 찾던 요소가 없고, " : "화면 구조에 찾던 요소가 없고, ") + "비슷한 버튼이 다른 ID로 있음" };
+  }
+  if (/문구를 찾지 못했습니다/.test(m)) return { kind: "앱 결함 의심", cause: "기대값 불일치", by: "AI", conf: "중간", basis: "화면은 정상으로 떴고 기대한 문구만 다름" };
+  return { kind: "확인 필요", cause: "판정 불가", by: "AI", conf: "낮음", basis: "근거가 부족합니다 — 실패 시점 자료를 확인하세요" };
+};
+const sec = (ms) => (ms == null ? "—" : (ms / 1000).toFixed(1) + "초");
+const durOfRun = (r) => { if (r.elapsed) return mmss(r.elapsed); const a = String(r.startedAt || ""), b = String(r.endedAt || ""); const m = (x) => { const t = x.slice(11, 16).split(":"); return +t[0] * 60 + +t[1]; }; return a && b ? (m(b) - m(a)) + "분" : "—"; };
+const EV_TABS = ["화면 캡처", "화면 구조", "앱 로그", "실행 로그", "화면 녹화"];
 function ResultDetail({ runId, back, backLabel, nav }) {
   const { app, launch } = useRunner();
   const { mqaRuns = [], mqaPlans = [], mqaCases = [] } = app;
   const [msg, flash] = useToast();
   const run = mqaRuns.find((r) => r.id === runId) || mqaRuns[0] || null;
   const [open, setOpen] = useState(null);
+  const [etab, setEtab] = useState("화면 캡처");
   if (!run) return <Empty icon={FileText} title="실행 결과가 없습니다" hint="실행 화면에서 계획을 실행하면 여기에서 결과를 봅니다." />;
   const pr = passRate(run);
   const fails = run.cases.filter((c) => c.st === "실패");
   const plan = mqaPlans.find((p) => p.id === run.planId);
-  const oc = run.cases.find((c) => c.id === (open || (fails[0] || {}).id)) || null;
-  const rerun = () => {
+  const oc = run.cases.find((c) => c.id === (open || (fails[0] || {}).id)) || run.cases[0] || null;
+  const tcNow = (id) => mqaCases.find((c) => c.id === id);
+  const rerun = (only) => {
     if (!plan) { flash("계획이 삭제되어 다시 실행할 수 없습니다"); return; }
     const b = planBlock(plan, { systems: app.mqaSystems, cases: mqaCases, runners: app.mqaRunners }, false);
     if (b) { flash(b); return; }
-    const cur = casesOfPlan(plan, mqaCases).map((c) => c.id); const ids = fails.map((c) => c.id).filter((id) => cur.includes(id));
+    const cur = casesOfPlan(plan, mqaCases).map((c) => c.id); const ids = (only || fails.map((c) => c.id)).filter((id) => cur.includes(id));
     if (!ids.length) { flash("실패 케이스가 지금 계획 대상에 없습니다 — 승인 상태인지 확인하세요"); return; }
     const id = launch(plan, { only: ids, note: run.id + " 의 실패만 다시" }); flash(id + " 시작 — 실패 " + ids.length + "건"); nav && nav("mqa-run");
   };
   const openCase = (c) => { app.setMqaEditTc(c.id); app.goTo("mqa-cases"); };
-  const tcNow = (id) => mqaCases.find((c) => c.id === id);
+  const judged = run.judged || {};
+  const confirm = (c, kind) => { app.updateMqaRun(run.id, { judged: { ...judged, [c.id]: kind } }); flash(c.id + " 원인 확정 — " + kind); };
+  const addDefect = (c) => { const no = "BUG-" + (1200 + Object.keys(run.defects || {}).length + 1); app.updateMqaRun(run.id, { defects: { ...(run.defects || {}), [c.id]: no } }); flash(no + " 결함 초안 생성 — 실패 화면 · 로그 첨부 (목업)"); };
+  const SUM = [["통과", run.cases.filter((c) => c.st === "통과").length, "text-emerald-600"], ["실패", fails.length, fails.length ? "text-red-600" : "text-slate-400"], ["건너뜀", run.cases.filter((c) => c.st === "건너뜀").length, "text-slate-500"], ["소요", durOfRun(run), "text-slate-900"]];
+  const j = oc ? judgeOf(run, oc, mqaRuns, tcNow(oc.id)) : null;
+  const jk = oc && judged[oc.id];
+  const caseLog = (() => { if (!oc) return []; const lg = run.log || []; const i0 = lg.findIndex((l) => l.lv === "TC" && String(l.t).startsWith(oc.id + " ")); if (i0 < 0) return lg; const i1 = lg.findIndex((l, i) => i > i0 && l.lv === "TC"); return lg.slice(i0, i1 < 0 ? lg.length : i1); })();
+  const fs = oc && oc.st === "실패" ? oc.steps[oc.failStep - 1 + (oc.preLen || 0)] : null;
   return (
     <div className="space-y-4">
-      {back && <button onClick={back} className="inline-flex items-center gap-1 text-xs text-sky-600"><ChevronLeft size={14} />{backLabel || "뒤로"}</button>}
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sky-700">{run.id}</span><span className="text-base font-semibold text-slate-900">{run.planName}</span><Badge kind={RUN_K[run.status]}>{run.status}</Badge>
-          {pr != null && <Badge kind={gateOk(run) ? "pass" : "fail"}>PASS {pr}% · 게이트 {run.gate}% {gateOk(run) ? "통과" : "미달"}</Badge>}
-          <div className="ml-auto flex gap-2">{fails.length > 0 && run.status === "완료" && <Btn kind="primary" icon={RefreshCw} onClick={rerun}>실패만 다시 실행 ({fails.length})</Btn>}</div></div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500"><span>{run.sysName} · {run.env} · 앱 v{run.build}</span><span><Smartphone size={11} className="mr-0.5 inline" />{run.device}</span><span>{run.trigger}</span><span>{run.startedAt} ~ {run.endedAt || "진행 중"}</span>{run.retry > 0 && <span>재시도 {run.retry}회</span>}</div>
-        {run.note && <div className="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">{run.note}</div>}
+      <PageToolbar desc={<span>{back ? <button onClick={back} className="text-sky-600 hover:underline">{backLabel || "실행 이력"}</button> : "실행 결과"} <span className="text-slate-400">›</span> <span className="font-mono">{run.id}</span></span>}>
+        {fails.length > 0 && run.status === "완료" && <Btn kind="primary" icon={RefreshCw} onClick={() => rerun()}>실패만 다시 실행 ({fails.length})</Btn>}
+      </PageToolbar>
+      <Card className="flex flex-wrap items-center gap-x-4 gap-y-1 p-3 text-sm">
+        <span className="font-semibold text-slate-900">{run.planName}</span><Badge kind={RUN_K[run.status]}>{run.status}</Badge>
+        <span className="text-xs text-slate-500">{run.sysName} · {run.env} · 앱 v{run.build}</span>
+        <span className="text-xs text-slate-500"><Smartphone size={11} className="mr-0.5 inline" />{run.device}</span>
+        <span className="text-xs text-slate-500">{run.trigger} · {run.startedAt}{run.retry > 0 ? " · 재시도 " + run.retry + "회" : ""}</span>
+        {run.note && <span className="text-xs text-amber-700">{run.note}</span>}
       </Card>
-      {run.status === "실행 불가" ? <Card className="p-4 text-sm text-red-700">{run.note}<div className="mt-1 text-xs text-slate-500">예약 시각에 실행 조건을 만족하지 못해 실행하지 않았습니다. 테스트 기기에서 러너 · 단말 상태를 확인하세요.</div></Card> : (
+      {run.status === "실행 불가" ? <Card className="p-4 text-sm text-red-700">{run.note}<div className="mt-1 text-xs text-slate-500">예약 시각에 실행 조건을 만족하지 못해 실행하지 않았습니다. 테스트 기기에서 러너 · 단말 상태를 확인하세요.</div></Card> : (<>
+      <div className="grid grid-cols-4 gap-3">{SUM.map((k) => <Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>)}</div>
+      {pr != null && <Card className="flex items-center gap-3 p-3 text-sm"><span className={"font-semibold " + (gateOk(run) ? "text-emerald-700" : "text-red-700")}>품질 게이트 {gateOk(run) ? "통과" : "미달"}</span><span className="text-xs text-slate-500">PASS {pr}% · 기준 {run.gate}%</span><div className="h-2 flex-1 rounded bg-slate-100"><div className={"h-2 rounded " + (gateOk(run) ? "bg-emerald-500" : "bg-red-500")} style={{ width: pr + "%" }} /></div></Card>}
       <div className="grid grid-cols-12 gap-4">
-        <Card className="col-span-5 overflow-hidden">
-          <div className="border-b border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">케이스 <span className="text-xs font-normal text-slate-500">{resultText(run)}</span></div>
-          {run.cases.map((c) => (
-            <button key={c.id} onClick={() => setOpen(c.id)} className={"flex w-full items-center gap-2 border-b border-slate-100 px-4 py-2 text-left text-xs " + (oc && oc.id === c.id ? "bg-sky-50" : "hover:bg-slate-50")}>
-              <span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-800">{c.name}</span>{c.st === "실패" && <span className="text-red-700">{c.failStep > 0 ? "스텝 " + c.failStep : "전제조건"}</span>}<Badge kind={CASE_K[c.st]}>{c.st}</Badge>
+        <Card className="col-span-4 overflow-hidden">
+          <div className="border-b border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">케이스 <span className="text-xs font-normal text-slate-500">{run.cases.length}건</span></div>
+          {run.cases.map((c) => { const jc = judgeOf(run, c, mqaRuns, tcNow(c.id)); return (
+            <button key={c.id} onClick={() => setOpen(c.id)} className={"w-full border-b border-slate-100 px-4 py-2 text-left text-xs " + (oc && oc.id === c.id ? "bg-sky-50" : "hover:bg-slate-50")}>
+              <div className="flex items-center gap-2"><span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-800">{c.name}</span><Badge kind={CASE_K[c.st]}>{c.st}</Badge></div>
+              {jc && <div className="mt-1 pl-16"><Badge kind={JUDGE_K[judged[c.id] || jc.kind]}>{judged[c.id] || jc.kind}</Badge>{!judged[c.id] && <span className="ml-1 text-slate-400">{jc.by} 제안</span>}{(run.defects || {})[c.id] && <span className="ml-1 font-mono text-red-700">{run.defects[c.id]}</span>}</div>}
             </button>
-          ))}
+          ); })}
         </Card>
-        <div className="col-span-7 space-y-3">
-          {oc ? (<>
+        <div className="col-span-8 space-y-3">
+          {oc && (<>
             <Card className="p-4">
-              <div className="mb-2 flex items-center gap-2"><span className="font-mono text-sm text-sky-700">{oc.id}</span><span className="text-sm font-semibold text-slate-800">{oc.name}</span><Badge kind={CASE_K[oc.st]}>{oc.st}</Badge>
+              <div className="mb-2 flex items-center gap-2"><span className="font-mono text-sm text-sky-700">{oc.id}</span><span className="text-sm font-semibold text-slate-800">{oc.name}</span><Badge kind={CASE_K[oc.st]}>{oc.st}</Badge>{oc.dur != null && <span className="text-xs text-slate-500">{sec(oc.dur)}</span>}
                 <div className="ml-auto"><Btn icon={Code2} onClick={() => openCase(oc)}>케이스 열기</Btn></div></div>
-              {oc.st === "실패" && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"><b className="font-medium">{oc.failStep > 0 ? "스텝 " + oc.failStep : "전제조건"} · {oc.steps[oc.failStep - 1 + (oc.preLen || 0)].act} {oc.steps[oc.failStep - 1 + (oc.preLen || 0)].name}</b> — {oc.failMsg}{oc.retried ? " · 재시도 " + oc.retried + "회 모두 실패" : ""}
+              {fs && <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"><b className="font-medium">{oc.failStep > 0 ? "스텝 " + oc.failStep : "전제조건"} · {fs.act} {fs.name}</b> — {oc.failMsg}{oc.retried ? " · 재시도 " + oc.retried + "회 모두 실패" : ""}
                 {tcNow(oc.id) && tcNow(oc.id).status !== "승인" && <div className="mt-1 text-amber-800">이 케이스는 지금 {tcNow(oc.id).status} 상태입니다 — 수정 후 다시 승인해야 실행 대상에 들어갑니다.</div>}</div>}
-              <div className="space-y-0.5">{oc.steps.map((s, i) => (
-                <div key={i} className={"flex items-center gap-2 rounded px-2 py-1 text-xs " + (s.st === "실패" ? "bg-red-50" : "")}>
-                  <span className="w-5 text-right font-mono text-slate-400">{i < (oc.preLen || 0) ? "전" : i + 1 - (oc.preLen || 0)}</span><span className="w-16 shrink-0 text-slate-600">{s.act}</span><span className="flex-1 truncate text-slate-800">{s.name}{s.val ? " \"" + s.val + "\"" : ""}</span>
-                  <span className={s.st === "실패" ? "text-red-700" : s.st === "통과" ? "text-emerald-700" : "text-slate-400"}>{s.st}</span>
+              {/* 원인 판정 — 규칙 · AI 제안, 담당자 확정 */}
+              {j && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-800">원인 판정</span>
+                    <Badge kind={JUDGE_K[jk || j.kind]}>{jk || j.kind}</Badge><span className="text-slate-700">{j.cause}</span>
+                    <span className="text-slate-500">{jk ? "· 담당자 확정" : "· " + j.by + " 제안" + (j.conf ? " · 확신 " + j.conf : "")}</span>
+                    {!jk && <div className="ml-auto flex items-center gap-1.5"><button onClick={() => confirm(oc, j.kind)} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-slate-700 hover:bg-slate-50">확정</button>
+                      <select value="" onChange={(e) => e.target.value && confirm(oc, e.target.value)} className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-slate-700"><option value="">다른 원인</option>{Object.keys(JUDGE_K).filter((k) => k !== j.kind && k !== "확인 필요").map((k) => <option key={k}>{k}</option>)}</select></div>}
+                  </div>
+                  <div className="mt-1 text-slate-600">근거: {j.basis}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(jk || j.kind) === "테스트 문제" && <Btn icon={Code2} onClick={() => openCase(oc)}>요소 다시 집기 · 대기 보정</Btn>}
+                    {(jk || j.kind) === "앱 결함 의심" && ((run.defects || {})[oc.id] ? <span className="text-red-700">결함 {run.defects[oc.id]} 등록됨</span> : <Btn icon={FileText} onClick={() => addDefect(oc)}>결함 등록 (근거 첨부)</Btn>)}
+                    {(jk || j.kind) === "환경 문제" && <Btn icon={RefreshCw} onClick={() => rerun([oc.id])}>이 케이스 다시 실행</Btn>}
+                  </div>
+                </div>
+              )}
+              <div className="space-y-0.5">{oc.steps.map((x, i) => (
+                <div key={i} className={"flex items-center gap-2 rounded px-2 py-1 text-xs " + (x.st === "실패" ? "bg-red-50" : "")}>
+                  <span className="w-5 text-right font-mono text-slate-400">{i < (oc.preLen || 0) ? "전" : i + 1 - (oc.preLen || 0)}</span>
+                  {x.st === "통과" ? <CheckCircle2 size={12} className="shrink-0 text-emerald-600" /> : x.st === "실패" ? <XCircle size={12} className="shrink-0 text-red-600" /> : <span className="h-3 w-3 shrink-0 rounded-full border border-slate-300" />}
+                  <span className="w-16 shrink-0 text-slate-600">{x.act}</span><span className="flex-1 truncate text-slate-800">{x.name}{x.val ? " \"" + x.val + "\"" : ""}</span>
+                  <span className={"w-16 shrink-0 text-right " + (x.st === "실패" ? "text-red-700" : "text-slate-400")}>{x.dur != null ? sec(x.dur) + (x.st === "실패" ? " 초과" : "") : x.st === "실행 안 함" ? "실행 안 함" : ""}</span>
                 </div>
               ))}</div>
             </Card>
-            {oc.st === "실패" && (
-              <Card className="p-4">
-                <div className="mb-2 text-sm font-semibold text-slate-800">실패 시점 자료</div>
-                <div className="flex gap-4">
-                  <div className="w-40 shrink-0 rounded-2xl border-4 border-slate-800 bg-white p-1.5"><div className="space-y-1 rounded-xl bg-slate-50 p-1.5">{L.elementsFor(run.build).slice(0, 7).map((el) => <div key={el.key} className="truncate rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600">{el.text || el.label}</div>)}</div></div>
-                  <div className="flex-1 space-y-2 text-xs text-slate-600">
-                    <div>실패 순간의 화면 캡처 · 화면 구조 · 로그를 러너가 함께 올립니다. 화면 구조에서 찾던 요소가 없으면, 앱 화면이 바뀐 것인지(요소 다시 집기) 앱 결함인지 판단합니다.</div>
-                    <div className="flex flex-wrap gap-2"><Btn icon={Download} onClick={() => flash("목업 — 화면 구조(XML) 내려받기")}>화면 구조</Btn><Btn icon={FileText} onClick={() => flash("목업 — 실행 로그 내려받기")}>실행 로그</Btn></div>
-                    <div className="text-slate-400">목업 화면 — 실제로는 실패 순간 캡처가 표시됩니다</div>
-                  </div>
-                </div>
-              </Card>
-            )}
-          </>) : <Card className="p-6 text-center text-xs text-slate-500">왼쪽에서 케이스를 고르세요</Card>}
+            {/* 실행 증거 — 실패 시점(실패 케이스) · 마지막 화면(통과 케이스) */}
+            <Card className="overflow-hidden">
+              <div className="flex items-center justify-between border-b border-slate-200 px-3">
+                <div className="flex">{EV_TABS.map((t) => <button key={t} onClick={() => setEtab(t)} className={"px-2.5 py-2 text-xs " + (etab === t ? "border-b-2 border-sky-500 text-sky-600" : "text-slate-500 hover:text-slate-800")}>{t}</button>)}</div>
+                <button onClick={() => flash("목업 — " + oc.id + " " + etab + " 내려받기")} className="flex items-center gap-1 text-xs text-slate-500 hover:text-sky-600"><Download size={12} />내려받기</button>
+              </div>
+              <div className="p-4 text-xs">
+                {etab === "화면 캡처" && <div className="flex items-start gap-4"><div className="w-40 shrink-0 rounded-2xl border-4 border-slate-800 bg-white p-1.5"><div className="space-y-1 rounded-xl bg-slate-50 p-1.5">{L.elementsFor(run.build).slice(0, 8).map((el) => <div key={el.key} className="truncate rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-600">{el.text || el.label}</div>)}</div></div><div className="space-y-1 text-slate-600"><div className="font-medium text-slate-800">{oc.st === "실패" ? "실패 순간 화면" : "마지막 화면"}</div><div>{run.device} · 앱 v{run.build}</div><div className="text-slate-400">목업 화면 — 실제로는 러너가 올린 캡처가 표시됩니다</div></div></div>}
+                {etab === "화면 구조" && <pre className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100">{"<hierarchy rotation=\"0\">\n" + L.elementsFor(run.build).slice(0, 8).map((el) => "  <node class=\"android.widget." + el.cls + "\"" + (el.id ? " resource-id=\"com.example.shop:id/" + el.id + "\"" : "") + (el.acc ? " content-desc=\"" + el.acc + "\"" : "") + (el.text ? " text=\"" + el.text + "\"" : "") + " />").join("\n") + "\n</hierarchy>" + (fs ? "\n\n<!-- 찾던 요소: " + fs.name + " — 이 화면에 없음 -->" : "")}</pre>}
+                {etab === "앱 로그" && <pre className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-[11px] leading-relaxed text-slate-100">{["I ActivityManager: Displayed com.example.shop/.MainActivity", "I shop.Network: GET /api/products?q=… 200 (184ms)", "I shop.Cart: render cart badge", oc.st === "실패" ? "W shop.UI: view not found in current layout (requested by test)" : "I shop.UI: idle"].join("\n")}</pre>}
+                {etab === "실행 로그" && <div className="max-h-56 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-[11px] leading-relaxed">{caseLog.length ? caseLog.map((l, i) => <div key={i} className="flex gap-2"><span className={"w-10 shrink-0 font-semibold " + (LV_K[l.lv] || "text-slate-400")}>{l.lv || "INFO"}</span><span className="text-slate-200">{l.t}</span></div>) : <span className="text-slate-400">이 실행에는 저장된 로그가 없습니다 (샘플 이력)</span>}</div>}
+                {etab === "화면 녹화" && <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3"><Play size={16} className="text-slate-500" /><span className="font-mono text-slate-700">{run.id.toLowerCase()}_{oc.id.toLowerCase()}.mp4</span><span className="text-slate-500">단말 화면 녹화 · 케이스 전체</span></div>}
+              </div>
+            </Card>
+          </>)}
         </div>
-      </div>)}
+      </div></>)}
       <Toast msg={msg} />
     </div>
   );
