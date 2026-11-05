@@ -9,7 +9,7 @@
 //   목업: 스텝 결과는 caseLogic.simulateStep(앱 버전별 화면) 으로 정한다 — TC-007 은 v3.2.0 에서 실패한다
 // ============================================================
 import { useState, useEffect, Fragment } from "react";
-import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp } from "lucide-react";
+import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp, Sparkles, Bug, Share2 } from "lucide-react";
 import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
@@ -704,7 +704,9 @@ const completed = (runs) => (runs || []).filter((r) => r.status === "완료");
      · 퇴행 행에는 결과 화면과 같은 원인 판정(담당자 확정 우선) */
 const pctOf = (r) => { const p = passRate(r); return p == null ? "—" : p + "%"; };
 function Regression({ nav }) {
-  const { mqaRuns = [], mqaPlans = [], mqaCases = [] } = useApp();
+  const { mqaRuns = [], mqaPlans = [], mqaCases = [], mqaSystems = [], mqaSuites = [], updateMqaRun } = useApp();
+  const [msg, flash] = useToast();
+  const [aiOpen, setAiOpen] = useState(false);
   const plansWith = mqaPlans.filter((p) => completed(mqaRuns).filter((r) => r.planId === p.id).length >= 2);
   const [pid, setPid] = useState(plansWith[0] ? plansWith[0].id : (mqaPlans[0] || {}).id);
   const rs = completed(mqaRuns).filter((r) => r.planId === pid);
@@ -749,7 +751,8 @@ function Regression({ nav }) {
         <Card className="p-4 text-center"><div className="text-2xl font-bold text-slate-700">{summ["유지"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">유지</div></Card>
       </div>
       <Card className="overflow-hidden">
-        <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {A.id} → {B.id}</span></div>
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3"><span className="text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {A.id} → {B.id}</span></span>
+          <div className="flex gap-2"><Btn icon={Share2} onClick={() => flash("목업 — 회귀 리포트 PDF 생성 · 메일 공유")}>PDF · 메일 공유</Btn><Btn kind="primary" icon={Sparkles} onClick={() => setAiOpen(true)}>AI 분석</Btn></div></div>
         <table className="w-full text-sm">
           <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">ID</th><th className="font-medium">TC</th><th className="font-medium">A</th><th></th><th className="font-medium">B</th><th className="font-medium">변화</th><th className="pr-4 font-medium">원인 판정</th></tr></thead>
           <tbody>
@@ -766,7 +769,82 @@ function Regression({ nav }) {
           </tbody>
         </table>
       </Card>
+      {aiOpen && <RegAiPanel A={A} B={B} rows={rows} summ={summ} cls={cls} devDiff={devDiff} part={part} runs={mqaRuns} cases={mqaCases} systems={mqaSystems} suites={mqaSuites} onClose={() => setAiOpen(false)} onOpen={() => { setAiOpen(false); nav && nav("mqa-result-detail", B.id); }}
+        onDefects={(ids) => { const d = { ...(B.defects || {}) }; ids.forEach((id, i) => { if (!d[id]) d[id] = "BUG-" + (1400 + Object.keys(d).length + i + 1); }); updateMqaRun(B.id, { defects: d }); flash(ids.length + "건 결함 초안 생성 — 실패 화면 · 로그 첨부 (목업)"); }} />}
+      <Toast msg={msg} />
     </div>
+  );
+}
+/* AI 회귀 분석 패널 — LQA 회귀 비교와 같은 구성: 계산(결정적) → AI 추정(원인 · 권고)
+   숫자는 모두 시스템 계산. AI 는 판정 근거(judgeOf · 담당자 확정)를 묶어 문장으로 설명만 한다 */
+function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems, suites, onClose, onOpen, onDefects }) {
+  const caseNow = (id) => cases.find((c) => c.id === id);
+  const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행");
+  const judg = reg.map((r) => { const j = r.cb ? judgeOf(B, r.cb, runs, caseNow(r.id)) : null; const k = (B.judged || {})[r.id]; return { ...r, j, kind: k || (j ? j.kind : "확인 필요"), cause: k ? k : j ? j.cause : "판정 불가", fixed: !!k }; });
+  const groups = {}; judg.forEach((x) => { (groups[x.cause] = groups[x.cause] || { cause: x.cause, kind: x.kind, ids: [], basis: x.j ? x.j.basis : "" }).ids.push(x.id); });
+  const G = Object.values(groups);
+  const appDef = judg.filter((x) => x.kind === "앱 결함 의심" && !(B.defects || {})[x.id]);
+  const build = (r) => { const sy = systems.find((x) => x.id === r.systemId); const e = sy && (sy.envs || []).find((x) => x.env === r.env); return e && ((e.app || {}).builds || []).find((b) => b.ver === r.build); };
+  const noteB = (build(B) || {}).note || "";
+  const revN = rows.filter((r) => r.ra != null && r.rb != null && r.ra !== r.rb).length;
+  const suiteOf = (id) => ((suites.find((x) => x.id === (caseNow(id) || {}).suiteId) || {}).name || "미지정");
+  const bySuite = {}; rows.forEach((r) => { const k = cls(r.a, r.b).k; if (k !== "퇴행" && k !== "개선") return; const su = suiteOf(r.id); const o = (bySuite[su] = bySuite[su] || { 퇴행: 0, 개선: 0 }); o[k]++; });
+  const snap = [["앱 버전", "v" + A.build, "v" + B.build], ["단말", String(A.device).split(" — ")[0], String(B.device).split(" — ")[0]], ["실행 방식", A.partial ? "부분" : "전체", B.partial ? "부분" : "전체"]];
+  /* AI 한 줄 결론 — 원인 묶음에서 만든다 */
+  const conclusion = !reg.length
+    ? (summ["개선"] ? "퇴행 없음 — 개선 " + summ["개선"] + "건, " + B.id + "는 " + A.id + "보다 나아졌습니다" : "퇴행 없음 — 두 실행의 품질이 같습니다")
+    : G.map((g) => "퇴행 " + g.ids.length + "건은 " + g.cause + (g.kind === "테스트 문제" ? " 때문 — 앱 결함이 아닌 테스트 보정 대상" : g.kind === "앱 결함 의심" ? " — 앱 결함 의심, 결함 등록 권장" : g.kind === "환경 문제" ? " — 환경 문제로 보임" : " — 원인 확인 필요")).join(" · ") + (devDiff ? " (단말이 달라 단말 영향도 확인 필요)" : "");
+  const recs = [];
+  if (G.some((g) => g.cause === "요소 변경")) recs.push("요소 다시 집기 → 실패만 다시 실행 (" + G.filter((g) => g.cause === "요소 변경").flatMap((g) => g.ids).join(", ") + ")");
+  if (G.some((g) => /대기 부족/.test(g.cause))) recs.push("대기 시간 보정 후 반복 실행으로 재확인 (" + G.filter((g) => /대기 부족/.test(g.cause)).flatMap((g) => g.ids).join(", ") + ")");
+  if (judg.some((x) => x.kind === "앱 결함 의심")) recs.push("앱 결함 의심 건은 실패 화면 · 로그를 첨부해 결함 등록");
+  if (judg.some((x) => x.kind === "환경 문제")) recs.push("단말 · 서버 상태 확인 후 다시 실행");
+  if (devDiff) recs.push("같은 단말에서 다시 비교해 단말 영향 배제");
+  if (part) recs.push("전체 실행끼리 비교하면 빠진 케이스까지 확인할 수 있습니다");
+  if (!recs.length) recs.push(reg.length ? "실패 시점 자료로 원인을 확인하세요" : "조치 필요 없음 — 다음 정기 실행에서 추이 확인");
+  return (
+    <Portal><div className="fixed inset-0 z-40 flex justify-end bg-black/50" onClick={onClose}>
+      <div className="h-full w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><span className="flex items-center gap-2 font-semibold text-slate-900"><Sparkles size={16} className="text-sky-600" />AI 회귀 분석</span><button onClick={onClose} className="text-slate-500 hover:text-slate-700"><X size={20} /></button></div>
+        <div className="space-y-4 text-sm">
+          <div className="flex items-center gap-2"><Badge kind="info">계산</Badge><span className="text-xs text-slate-500">결정적 분석 — 저장된 실행 결과 산술</span></div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="text-xs text-slate-500">변화 요약 · {A.id} → {B.id}</div>
+            <div className="mt-1 text-slate-800">퇴행 <b className="text-red-700">{summ["퇴행"] || 0}</b> · 개선 <b className="text-emerald-700">{summ["개선"] || 0}</b> · 유지 {summ["유지"] || 0} · PASS {pctOf(A)} → {pctOf(B)}</div>
+            {passRate(B) != null && <div className="mt-1 text-xs">품질 게이트 <span className={gateOk(B) ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>{gateOk(B) ? "통과" : "미달"}</span> <span className="text-slate-500">· 기준 {B.gate}%</span></div>}
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">무엇이 바뀌었나</div>
+            <div className="space-y-1">{snap.map((r) => <div key={r[0]} className={"flex items-center justify-between rounded px-2 py-1 text-xs " + (r[1] !== r[2] ? "bg-slate-100" : "")}><span className="text-slate-500">{r[0]}</span><span className={r[1] !== r[2] ? "text-amber-700" : "text-slate-500"}>{r[1]} → {r[2]}</span></div>)}
+              <div className="flex items-center justify-between px-2 py-1 text-xs"><span className="text-slate-500">케이스 변경</span><span className={revN ? "text-amber-700" : "text-slate-500"}>{revN ? revN + "건 (rev 다름)" : "없음"}</span></div>
+              {noteB && <div className="px-2 py-1 text-xs text-slate-500">빌드 메모 (v{B.build}): <span className="text-slate-700">{noteB}</span></div>}
+            </div>
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">스위트별 변화</div>
+            {!Object.keys(bySuite).length ? <div className="text-xs text-slate-500">결과가 바뀐 케이스가 없습니다</div> : <div className="space-y-1">{Object.entries(bySuite).map(([k, v]) => <div key={k} className="flex items-center justify-between text-xs"><span className="text-slate-500">{k}</span><span className="text-slate-700">{v.퇴행 ? <span className="text-red-700">퇴행 {v.퇴행}</span> : null}{v.퇴행 && v.개선 ? " · " : ""}{v.개선 ? <span className="text-emerald-700">개선 {v.개선}</span> : null}</span></div>)}</div>}
+          </div>
+          <div className="flex items-center gap-2 border-t border-slate-200 pt-3"><Badge kind="active">AI 추정</Badge><span className="text-xs text-slate-500">서버 경유 · 개인정보 가림 · 검증 필요</span></div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">한 줄 결론</div>
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-slate-800">{conclusion}</div>
+          </div>
+          {G.length > 0 && <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">원인별 묶음</div>
+            <ul className="space-y-1.5">{G.map((g) => <li key={g.cause} className="text-xs text-slate-700"><div className="flex items-center gap-1.5"><Badge kind={JUDGE_K[g.kind] || "draft"}>{g.kind}</Badge><span className="font-medium">{g.cause} {g.ids.length}건</span><span className="font-mono text-slate-500">— {g.ids.join(", ")}</span></div>{g.basis && <div className="mt-0.5 pl-1 text-slate-500">근거: {g.basis}</div>}</li>)}</ul>
+          </div>}
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">권장 조치</div>
+            <ul className="space-y-1.5">{recs.map((c, i) => <li key={i} className="flex gap-2 text-xs text-slate-700"><CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-600" />{c}</li>)}</ul>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {appDef.length > 0 && <Btn kind="primary" icon={Bug} onClick={() => onDefects(appDef.map((x) => x.id))}>앱 결함 의심 {appDef.length}건 결함 등록</Btn>}
+            {reg.length > 0 && <Btn icon={FileText} onClick={onOpen}>{B.id} 결과 상세</Btn>}
+          </div>
+          <div className="text-xs text-slate-500">＊ 계산 항목은 저장된 결과의 산술이며, AI 추정 항목(결론 · 원인 · 권고)은 참고용입니다. 담당자가 결과 화면에서 확정한 원인이 있으면 그 판정을 따릅니다.</div>
+        </div>
+      </div>
+    </div></Portal>
   );
 }
 /* 불안정 · 지속 실패 판정 — 대시보드와 같은 함수 하나만 쓴다 (두 화면이 같은 케이스를 다르게 분류하면 안 된다)
