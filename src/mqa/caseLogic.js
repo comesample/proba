@@ -67,6 +67,26 @@ export const SCREEN_ELEMENTS = [
   { key: "cartTab", label: "장바구니 탭", cls: "FrameLayout", id: "", acc: "장바구니", text: "장바구니" },
   { key: "cartClear", label: "전체 삭제 버튼", cls: "Button", id: "btn_cart_clear", acc: "", text: "전체 삭제" },
   { key: "cartEmpty", label: "빈 장바구니 안내", cls: "TextView", id: "txt_cart_empty", acc: "", text: "장바구니가 비어 있습니다" },
+  /* 시연용 확장 — 상품 상세 · 옵션 · 정렬 · 필터 · 찜 · 주문서 (TC 임포트 샘플이 쓰는 화면 요소) */
+  { key: "detail", label: "상품 상세 제목", cls: "TextView", id: "txt_detail_title", acc: "", text: "상품 상세" },
+  { key: "opt10", label: "용량 옵션 10g", cls: "Button", id: "opt_10g", acc: "", text: "10g" },
+  { key: "qtyPlus", label: "수량 증가 버튼", cls: "ImageButton", id: "btn_qty_plus", acc: "", text: "" },
+  { key: "qty", label: "수량 표시", cls: "TextView", id: "txt_qty", acc: "", text: "수량 2" },
+  { key: "goCart", label: "장바구니로 이동 버튼", cls: "Button", id: "btn_go_cart", acc: "", text: "장바구니로 이동" },
+  { key: "sort", label: "정렬 버튼", cls: "Button", id: "btn_sort", acc: "", text: "추천순" },
+  { key: "sortLow", label: "낮은 가격순 옵션", cls: "TextView", id: "", acc: "sort_price_low", text: "낮은 가격순" },
+  { key: "filter", label: "필터 버튼", cls: "Button", id: "btn_filter", acc: "", text: "필터" },
+  { key: "tagMoist", label: "보습 태그", cls: "TextView", id: "", acc: "", text: "보습", xpath: "//android.widget.HorizontalScrollView//android.widget.TextView[@text='보습']" },
+  { key: "apply", label: "적용 버튼", cls: "Button", id: "btn_apply", acc: "", text: "적용" },
+  { key: "resultCnt", label: "검색 결과 수", cls: "TextView", id: "txt_result_count", acc: "", text: "검색 결과 12건" },
+  { key: "wish", label: "찜하기 버튼", cls: "ImageButton", id: "", acc: "찜하기", text: "" },
+  { key: "wishToast", label: "찜 안내 문구", cls: "TextView", id: "toast_wish", acc: "", text: "찜 목록에 추가했습니다" },
+  { key: "wishMenu", label: "찜 목록 메뉴", cls: "TextView", id: "menu_wish", acc: "", text: "찜 목록" },
+  { key: "order", label: "주문하기 버튼", cls: "Button", id: "btn_order", acc: "", text: "주문하기" },
+  { key: "coupon", label: "쿠폰 선택 버튼", cls: "Button", id: "btn_coupon", acc: "", text: "쿠폰 선택" },
+  { key: "couponNew", label: "신규 가입 쿠폰", cls: "TextView", id: "", acc: "coupon_welcome", text: "신규 가입 10% 할인" },
+  { key: "discount", label: "할인 적용 표시", cls: "TextView", id: "txt_discount", acc: "", text: "쿠폰 할인 적용" },
+  { key: "payCard", label: "신용카드 결제 선택", cls: "RadioButton", id: "pay_card", acc: "", text: "신용카드" },
 ];
 /* 로케이터 추천 — 고유 ID > 접근성 ID > 위치(xpath). 위치는 화면이 조금만 바뀌어도 깨진다 */
 export const recommendLoc = (el, pkg = SAMPLE_PKG) => {
@@ -117,6 +137,21 @@ const KNOWN = [
   { k: ["전체 삭제"], el: "cartClear" },
   { k: ["로그인 버튼"], el: "login" },
   { k: ["첫 번째 상품", "첫 상품"], el: "p0" },
+  { k: ["장바구니로 이동"], el: "goCart" },
+  { k: ["장바구니 탭"], el: "cartTab" },
+  { k: ["용량", "10g"], el: "opt10" },
+  { k: ["수량 증가", "수량을 하나 늘", "+ 버튼"], el: "qtyPlus" },
+  { k: ["정렬 버튼"], el: "sort" },
+  { k: ["낮은 가격순"], el: "sortLow" },
+  { k: ["필터 버튼"], el: "filter" },
+  { k: ["보습"], el: "tagMoist" },
+  { k: ["찜하기"], el: "wish" },
+  { k: ["찜 목록"], el: "wishMenu" },
+  { k: ["주문하기"], el: "order" },
+  { k: ["쿠폰 선택"], el: "coupon" },
+  { k: ["신규 가입"], el: "couponNew" },
+  { k: ["신용카드"], el: "payCard" },
+  { k: ["적용 버튼"], el: "apply" },
 ];
 const findKnown = (t) => { const h = KNOWN.find((x) => x.k.some((k) => t.includes(k))); return h ? SCREEN_ELEMENTS.find((e) => e.key === h.el) : null; };
 const quoted = (t) => { const m = String(t || "").match(/["“'‘]([^"”'’]+)["”'’]/); return m ? m[1] : ""; };
@@ -260,9 +295,10 @@ export const rowToCase = (row, map) => {
   const get = (k) => (map[k] != null && map[k] !== "" ? String(row[map[k]] || "") : "");
   const lines = get("proc").split(/\r?\n/).map((l) => stripNo(l)).filter(Boolean);
   const exps = get("exp").split(/\r?\n/).map((l) => stripNo(l)).filter(Boolean);
-  const proc = lines.map((t) => ({ t, e: "" }));
-  if (exps.length && exps.length === proc.length) proc.forEach((p, i) => { p.e = exps[i]; });
-  else if (exps.length && proc.length) proc[proc.length - 1].e = exps.join(" / ");
+  /* 절차 칸 안의 '→ 기대 결과' 는 그 절차의 기대 결과로 (수동 TC 문서에 흔한 형식) */
+  const proc = lines.map((l) => { const [t, ...e] = l.split(/\s*(?:→|->)\s*/); return { t: t.trim(), e: e.join(" → ").trim() }; });
+  if (exps.length && exps.length === proc.length && !proc.some((p) => p.e)) proc.forEach((p, i) => { p.e = exps[i]; });
+  else if (exps.length && proc.length) { const lp = proc[proc.length - 1]; lp.e = [lp.e, ...exps].filter(Boolean).join(" / "); }
   return { name: get("name").trim(), pre: get("pre").trim(), suite: get("suite").trim(), proc };
 };
 export const parseCsv = (text) => {
@@ -281,11 +317,25 @@ export const parseCsv = (text) => {
 };
 
 /* ── 가져오기 체험용 샘플 파일 ── (특정 고객사·서비스명 없음) */
+/* TC 임포트 샘플 — 실제 수동 TC 문서처럼 절차가 길고, 기대 결과가 절차 중간중간에 있다.
+   시연 포인트: 대부분은 AI가 자동으로 스텝을 만들고(확정), 일부는 사람이 고른다
+     · 3번 '마음에 드는 상품' → 요소를 특정할 수 없어 '확인 필요' (사람이 화면에서 선택)
+     · 2번 '보습 태그' → 고유 ID가 없어 위치 로케이터 (통과하지만 깨지기 쉬움 경고)
+     · 3 · 4번 사전조건 '로그인 상태' → 전제조건 케이스 지정 안내 */
 export const SAMPLE_EXCEL = [
   ["번호", "시나리오명", "사전조건", "테스트 절차", "기대결과", "분류"],
-  ["1", "마이 탭에서 주문 내역 열기", "일반 계정으로 로그인 상태", "1. 하단 마이 탭을 누른다\n2. 주문 내역을 누른다", "주문 내역 화면이 표시된다", "주문"],
-  ["2", "검색 결과 없음 안내", "", "1. 검색창을 누른다\n2. \"zzzz\"를 입력한다", "\"검색 결과가 없습니다\"가 보인다", "상품 탐색"],
-  ["3", "상품 목록 스크롤", "", "1. 검색창을 누른다\n2. \"립밤\"을 입력한다\n3. 화면을 내린다", "", "상품 탐색"],
+  ["1", "상품 검색 후 옵션 선택해 장바구니 담기", "",
+    "1. 검색창을 누른다\n2. \"수분 립밤\"을 입력한다 → \"수분 립밤\"이 보인다\n3. 검색 결과 첫 번째 상품을 연다 → \"상품 상세\"가 보인다\n4. 용량 옵션 10g을 선택한다\n5. 수량 증가 버튼을 누른다 → \"수량 2\"가 보인다\n6. 장바구니 담기를 누른다 → \"장바구니에 담았습니다\"가 보인다\n7. 장바구니로 이동 버튼을 누른다",
+    "장바구니에 \"수분 립밤\"이 담겨 있다", "주문"],
+  ["2", "검색 결과 정렬 · 필터 적용", "",
+    "1. 검색창을 누른다\n2. \"립밤\"을 입력한다\n3. 정렬 버튼을 누른다\n4. 낮은 가격순을 선택한다\n5. 필터 버튼을 누른다\n6. 보습 태그를 선택한다\n7. 적용 버튼을 누른다 → \"검색 결과 12건\"이 보인다\n8. 화면을 내린다",
+    "", "상품 탐색"],
+  ["3", "상품 찜하기 후 찜 목록 확인", "일반 계정으로 로그인 상태",
+    "1. 검색창을 누른다\n2. \"립밤\"을 입력한다\n3. 마음에 드는 상품을 연다\n4. 찜하기 버튼을 누른다 → \"찜 목록에 추가했습니다\"가 보인다\n5. 뒤로 간다\n6. 하단 마이 탭을 누른다\n7. 찜 목록을 누른다",
+    "찜 목록에 \"수분 립밤\"이 보인다", "상품 탐색"],
+  ["4", "주문서 쿠폰 적용 (결제 전까지)", "일반 계정으로 로그인 상태 · 장바구니에 상품 1개 이상",
+    "1. 하단 장바구니 탭을 누른다\n2. 주문하기 버튼을 누른다\n3. 쿠폰 선택 버튼을 누른다\n4. 신규 가입 쿠폰을 선택한다\n5. 적용 버튼을 누른다 → \"쿠폰 할인 적용\"이 보인다\n6. 결제 수단에서 신용카드를 선택한다",
+    "\"신용카드\"가 선택된다 · 결제는 진행하지 않는다", "주문"],
 ];
 export const SAMPLE_ROBOT = {
   name: "sample_tests.robot",

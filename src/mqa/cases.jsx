@@ -1040,7 +1040,7 @@ export function PickModal({ step, build, device, onPick, onClose, title, ctx }) 
         <div className="col-span-5">
           <div className="mb-2 flex items-center justify-between text-xs text-slate-500"><span>{ctx ? "스텝 " + (ctx.idx + 1) + " 직전 화면 · " : ""}{device ? devLabel(device) : "단말"} · v{build}</span><button className="flex items-center gap-1 text-sky-600"><RefreshCw size={12} />다시 캡처</button></div>
           <div className="mx-auto w-60 rounded-3xl border-4 border-slate-800 bg-white p-2">
-            <div className="space-y-2 rounded-2xl bg-slate-50 p-2.5">
+            <div className="space-y-2 overflow-y-auto rounded-2xl bg-slate-50 p-2.5" style={{ maxHeight: 420 }}>
               {screen.map((e) => (
                 <button key={e.key} onClick={() => setSel(e.key)} className={"block w-full rounded-md border px-2 py-1.5 text-left text-xs " + (sel === e.key ? "border-sky-500 bg-sky-50 ring-2 ring-sky-200" : "border-slate-200 bg-white hover:border-sky-300")}><span className="text-slate-800">{e.text || e.label}</span><span className="ml-1 text-slate-400">{e.cls}</span>{rec0 && rec0.key === e.key && (step.src || step.el) && <span className="ml-1 rounded bg-sky-100 px-1 text-sky-700">AI 추천</span>}</button>
               ))}

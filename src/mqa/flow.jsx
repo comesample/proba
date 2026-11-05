@@ -10,7 +10,7 @@
 // ============================================================
 import { useState, useEffect } from "react";
 import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap } from "lucide-react";
-import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, nowStamp } from "../common/ui.jsx";
+import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
 import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
@@ -25,7 +25,8 @@ export const casesOfPlan = (p, cases) => (cases || []).filter((c) => c.systemId 
 const devOf = (runners, id) => flatDevices(runners).find((d) => d.id === id) || null;
 /* 실행을 막는 사유 — 빈 문자열이면 실행 가능. scheduled=true 면 예약 시각 기준(편집 세션은 끊고 시작)으로 본다.
    editPreempt=true 면 편집 세션이 점유한 단말은 '사용 가능' 으로 본다 (예약 실행이 우선) */
-export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride) => {
+/* queueOk=true: 다른 '실행' 이 단말을 쓰는 중이면 막지 않는다 — 단말 대기열에 들어간다 */
+export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride, queueOk = true) => {
   const { e } = envOfPlan(ctx.systems, p);
   if (p.status !== "활성") return "계획이 초안입니다 — 활성으로 바꾼 뒤 실행할 수 있습니다";
   if (!e) return "대상·환경을 찾을 수 없습니다";
@@ -34,7 +35,8 @@ export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride) => {
   if (!casesOfPlan(p, ctx.cases).length) return "조건에 맞는 승인 케이스가 없습니다";
   const d = devOf(ctx.runners, p.devId);
   if (!d) return "실행 단말이 지정되지 않았습니다";
-  const dd = editPreempt && d.state === "사용 중" && /^편집 세션/.test(d.busy || "") ? { ...d, state: "사용 가능" } : d;
+  const free = d.state === "사용 중" && ((editPreempt && /^편집 세션/.test(d.busy || "")) || (queueOk && /^실행 /.test(d.busy || "")));
+  const dd = free ? { ...d, state: "사용 가능" } : d;
   return deviceBlock(dd, b);
 };
 /* 예약 — 공통 스케줄 설정(FQA 와 같은 컴포넌트)을 쓴다
@@ -64,40 +66,73 @@ const passRate = (r) => { const cs = (r.cases || []).filter((c) => c.st === "통
 const resultText = (r) => { const cs = r.cases || []; const p = cs.filter((c) => c.st === "통과").length; const f = cs.filter((c) => c.st === "실패").length; return "통과 " + p + " · 실패 " + f + (cs.length - p - f ? " · 기타 " + (cs.length - p - f) : ""); };
 const gateOk = (r) => { const pr = passRate(r); return pr != null && pr >= (r.gate || 0); };
 
-/* ── 실행 엔진 (목업) — 결과를 미리 계산하고 타이머로 진행을 흘려보낸다.
-   화면을 떠나도 진행되도록 모듈 단위로 둔다 (실 구현: 러너가 진행 상황을 서버로 보고) ── */
+/* ── 실행 엔진 (목업) — 결과를 미리 계산하고, 가상 시계로 진행을 흘려보낸다.
+   화면을 떠나도 진행되도록 모듈 단위로 둔다 (실 구현: 러너가 진행 상황을 서버로 보고)
+   시간은 실제 단말 기준에 가깝게: 앱 설치 · 실행 4초, 케이스 시작(앱 초기화) 1.5초, 스텝 1.2초
+   목업 배속(SPEED)을 바꾸면 진행 중인 실행에도 바로 적용된다 ── */
 const RUN_TIMERS = {};
+const T = { install: 4000, caseStart: 1500, step: 1200, caseEnd: 600, end: 800 };
+let SPEED = 1;
+export const getSpeed = () => SPEED;
+export const setSpeed = (v) => { SPEED = v; };
+/* 단말별 대기열 — 1단말 1작업. 실행 중인 단말에 들어온 실행은 막지 않고 줄을 세운다 */
+const QUEUE = {};   // devId → [{ id, args }]
+export const queueOf = (devId) => (QUEUE[devId] || []).map((q) => q.id);
 const actName = (s) => ((L.ACT[s.act] || { needs: [] }).needs.includes("loc") ? L.elName(s) : s.act === "화면 확인" ? "\"" + (s.val || "") + "\"" : s.act === "입력" ? "" : s.val || "");
 const robotRows = (code) => String(code || "").split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "ok", msg: "" } }));
 /* 같은 순간에 여러 실행을 만들 수 있어(새 버전 이벤트) 마지막으로 낸 번호도 함께 본다 */
 let LAST_RUN_NO = 0;
 const nextRunId = (runs) => { const n = Math.max(LAST_RUN_NO, ...(runs || []).map((r) => parseInt(String(r.id).replace(/\D/g, ""), 10) || 0)) + 1; LAST_RUN_NO = n; return "MRUN-" + String(n).padStart(3, "0"); };
-export function startRun({ plan, cases, allCases, sys, env, build, dev, trigger, note, api, runs }) {
+const planOf = ({ cases, allCases, build }) => cases.map((c) => {
+  const pre = c.preCase ? [{ act: "전제조건", name: c.preCase + " " + ((allCases.find((x) => x.id === c.preCase) || {}).name || ""), res: { st: "ok", msg: "" } }] : [];
+  const body = c.level === "Full-Code" ? robotRows(c.code) : (c.steps || []).map((s) => ({ act: s.act, name: actName(s), val: s.act === "입력" ? s.val : "", el: s.el || "", res: L.simulateStep(s, build.ver) }));
+  const all = [...pre, ...body];
+  return { c, all, pl: pre.length, fi: all.findIndex((x) => x.res.st === "fail") };
+});
+const runShell = (id, { plan, sys, env, build, dev, trigger, note }, plans, status) => ({
+  id, planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver, devId: dev.id, device: devLabel(dev), trigger, note: note || "",
+  status, startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry, elapsed: 0, queuedAt: status === "대기 중" ? nowStamp() : "",
+  log: status === "대기 중" ? [{ lv: "INFO", t: "단말 대기 — " + dev.model + " 이(가) 다른 실행에 사용 중" }] : [],
+  cases: plans.map(({ c, all, pl }) => ({ id: c.id, name: c.name, st: "대기", preCase: c.preCase || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", el: x.el || "", st: "대기", msg: x.res.msg || "" })) })),
+});
+/* 큐에 넣기 — 단말이 다른 '실행' 에 쓰이는 중일 때 */
+export function enqueueRun(args) {
+  const { dev, api, runs } = args;
   const id = nextRunId(runs);
-  const plans = cases.map((c) => {
-    const pre = c.preCase ? [{ act: "전제조건", name: c.preCase + " " + ((allCases.find((x) => x.id === c.preCase) || {}).name || ""), res: { st: "ok", msg: "" } }] : [];
-    const body = c.level === "Full-Code" ? robotRows(c.code) : (c.steps || []).map((s) => ({ act: s.act, name: actName(s), val: s.act === "입력" ? s.val : "", res: L.simulateStep(s, build.ver) }));
-    const all = [...pre, ...body];
-    return { c, all, pl: pre.length, fi: all.findIndex((x) => x.res.st === "fail") };
-  });
-  const cur = {
-    id, planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver, devId: dev.id, device: devLabel(dev), trigger, note: note || "",
-    status: "실행 중", startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry,
-    log: [{ t: "앱 v" + build.ver + " 설치 · 데이터 초기화 · 실행 — " + dev.model }],
-    cases: plans.map(({ c, all, pl }) => ({ id: c.id, name: c.name, st: "대기", preCase: c.preCase || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", st: "대기", msg: x.res.msg || "" })) })),
-  };
+  api.addMqaRun(runShell(id, args, planOf(args), "대기 중"));
+  (QUEUE[dev.id] = QUEUE[dev.id] || []).push({ id, args });
+  return id;
+}
+const drain = (devId) => { const q = QUEUE[devId]; if (!q || !q.length) return; const next = q.shift(); startRun({ ...next.args, existingId: next.id }); };
+export function startRun(args) {
+  const { plan, dev, api, runs, existingId, build } = args;
+  const id = existingId || nextRunId(runs);
+  const plans = planOf(args);
+  const cur = runShell(id, args, plans, "실행 중");
+  cur.log = [{ lv: "INFO", t: "러너 배정 — " + dev.model }, { lv: "INFO", t: "앱 v" + build.ver + " 설치 · 데이터 초기화 · 실행" }];
+  if (existingId) cur.log.unshift({ lv: "INFO", t: "단말이 비어 대기열에서 시작" });
+  cur.phase = "앱 설치 · 실행";
   api.lockMqaDevice(dev.id, "실행 " + id);
-  api.addMqaRun(JSON.parse(JSON.stringify(cur)));
-  const push = () => api.updateMqaRun(id, JSON.parse(JSON.stringify({ status: cur.status, endedAt: cur.endedAt, cases: cur.cases, log: cur.log })));
-  const tm = (RUN_TIMERS[id] = []);
-  const at = (ms, fn) => tm.push(setTimeout(() => { fn(); push(); }, ms));
-  let t = 700; let stop = false;
+  if (existingId) api.updateMqaRun(id, JSON.parse(JSON.stringify(cur))); else api.addMqaRun(JSON.parse(JSON.stringify(cur)));
+  const push = () => api.updateMqaRun(id, JSON.parse(JSON.stringify({ status: cur.status, startedAt: cur.startedAt, endedAt: cur.endedAt, cases: cur.cases, log: cur.log, elapsed: cur.elapsed, phase: cur.phase })));
+  const ev = []; const at = (ms, fn) => ev.push({ at: ms, fn });
+  let t = T.install; let stop = false;
   plans.forEach(({ c, all, fi, pl }, i) => {
     const rc = cur.cases[i];
-    at(t, () => { if (stop) { rc.st = "건너뜀"; return; } rc.st = "실행 중"; cur.log.push({ t: c.id + " " + c.name }); });
+    at(t, () => { if (stop) { rc.st = "건너뜀"; return; } rc.st = "실행 중"; cur.phase = c.id + " 시작 — 앱 초기화"; cur.log.push({ lv: "TC", t: c.id + " " + c.name }); });
+    t += T.caseStart;
     const last = fi >= 0 ? fi : all.length - 1;
-    for (let j = 0; j <= last; j++) { t += 180; const jj = j; at(t, () => { if (stop) return; rc.steps[jj].st = all[jj].res.st === "fail" ? "실패" : "통과"; }); }
-    t += 200;
+    for (let j = 0; j <= last; j++) {
+      const jj = j, x = all[j];
+      at(t, () => { if (stop) return; rc.steps[jj].st = "실행 중"; cur.phase = c.id + " · 스텝 " + (jj < pl ? "전" : jj + 1 - pl); cur.log.push({ lv: "STEP", t: x.act + (x.name ? " · " + x.name : "") + (x.val ? " \"" + x.val + "\"" : "") }); });
+      t += T.step;
+      at(t, () => { if (stop) return; rc.steps[jj].st = x.res.st === "fail" ? "실패" : "통과"; });
+    }
+    if (fi >= 0 && plan.retry > 0) {
+      at(t, () => { if (stop) return; cur.log.push({ lv: "RETRY", t: c.id + " 실패 → 재시도 (" + plan.retry + "회)" }); });
+      t += (T.caseStart + T.step * (last + 1)) * plan.retry;
+    }
+    t += T.caseEnd;
     at(t, () => {
       if (stop) return;
       for (let j = last + 1; j < rc.steps.length; j++) rc.steps[j].st = "실행 안 함";
@@ -106,20 +141,36 @@ export function startRun({ plan, cases, allCases, sys, env, build, dev, trigger,
       cur.log.push({ lv: "FAIL", t: c.id + " 실패 — " + (fi < pl ? "전제조건" : "스텝 " + (fi + 1 - pl)) + " · " + all[fi].res.msg + (rc.retried ? " (재시도 " + rc.retried + "회 후)" : "") });
       if (plan.onfail === "첫 실패 시 중단") stop = true;
     });
-    if (fi >= 0 && plan.retry > 0) t += 180 * (last + 1) * plan.retry;   // 재시도 시간
   });
-  at(t + 300, () => {
+  t += T.end;
+  at(t, () => {
     cur.cases.forEach((rc) => { if (rc.st === "대기") rc.st = "건너뜀"; });
-    cur.status = "완료"; cur.endedAt = nowStamp(); cur.log.push({ t: "완료 · 단말 반납" });
+    cur.status = "완료"; cur.phase = ""; cur.endedAt = nowStamp(); cur.log.push({ lv: "INFO", t: "완료 · 단말 반납" });
     api.releaseMqaDevice(dev.id);
-    delete RUN_TIMERS[id];
+    if (api.notify) { const p = cur.cases.filter((x) => x.st === "통과").length, f = cur.cases.filter((x) => x.st === "실패").length; api.notify({ icon: "play", text: plan.name + " 완료 — 통과 " + p + " / 실패 " + f, to: { domain: "MQA", view: "mqa-result-detail", run: id } }); }
   });
+  /* 가상 시계 — 100ms 마다 SPEED 배로 흐른다 */
+  let v = 0, tick = 0;
+  const iv = setInterval(() => {
+    v += 100 * SPEED; cur.elapsed = v; tick++;
+    let any = false;
+    while (ev.length && ev[0].at <= v) { ev.shift().fn(); any = true; }
+    if (any || tick % 5 === 0 || !ev.length) push();   // 화면 갱신은 변화가 있을 때 + 0.5초마다(경과 시간)
+    if (!ev.length) { clearInterval(iv); delete RUN_TIMERS[id]; drain(dev.id); }
+  }, 100);
+  RUN_TIMERS[id] = iv;
   return id;
 }
 export function stopRun(run, api) {
-  (RUN_TIMERS[run.id] || []).forEach(clearTimeout); delete RUN_TIMERS[run.id];
-  api.updateMqaRun(run.id, { status: "중단", endedAt: nowStamp(), cases: run.cases.map((c) => (c.st === "대기" || c.st === "실행 중" ? { ...c, st: "건너뜀" } : c)), log: [...(run.log || []), { t: "사용자가 중단 · 단말 반납" }] });
+  if (run.status === "대기 중") {   // 대기열에서 빼기
+    const q = QUEUE[run.devId] || []; QUEUE[run.devId] = q.filter((x) => x.id !== run.id);
+    api.updateMqaRun(run.id, { status: "중단", endedAt: nowStamp(), log: [...(run.log || []), { lv: "INFO", t: "대기 중 취소" }] });
+    return;
+  }
+  clearInterval(RUN_TIMERS[run.id]); delete RUN_TIMERS[run.id];
+  api.updateMqaRun(run.id, { status: "중단", phase: "", endedAt: nowStamp(), cases: run.cases.map((c) => (c.st === "대기" || c.st === "실행 중" ? { ...c, st: "건너뜀" } : c)), log: [...(run.log || []), { lv: "INFO", t: "사용자가 중단 · 단말 반납" }] });
   api.releaseMqaDevice(run.devId);
+  drain(run.devId);
 }
 /* 실행 시작 — 계획 · 실패만 다시 · 예약이 모두 이 함수를 지난다 */
 const useRunner = () => {
@@ -130,11 +181,13 @@ const useRunner = () => {
     const b = build || buildOf(e); const dev = devOf(ctx.runners, plan.devId);
     let cases = casesOfPlan(plan, ctx.cases); if (only) cases = cases.filter((c) => only.includes(c.id));
     if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger !== "수동") app.releaseMqaDevice(dev.id);
-    return startRun({ plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, api: app, runs: app.mqaRuns });
+    const args = { plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, api: app, runs: app.mqaRuns };
+    if (dev && dev.state === "사용 중" && /^실행 /.test(dev.busy || "")) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 대기열
+    return startRun(args);
   };
   /* 자동 실행(예약 · 새 버전) — 그 순간의 상태로 판단한다. 편집 세션은 끊고 시작, 그 밖의 문제는 건너뛰지 않고 '실행 불가' 로 기록 */
   const autoRun = (p, trigger, build) => {
-    const blk = planBlock(p, ctx, true, true, build);
+    const blk = planBlock(p, ctx, true, true, build, true);
     if (blk) {
       const { sy, e } = envOfPlan(ctx.systems, p); const bd = build || buildOf(e); const dv = devOf(ctx.runners, p.devId);
       app.addMqaRun({ id: nextRunId(app.mqaRuns), planId: p.id, planName: p.name, systemId: p.systemId, sysName: sy ? sy.name : "", env: p.env, build: bd ? bd.ver : "", devId: p.devId, device: dv ? devLabel(dv) : "—", trigger, status: "실행 불가", startedAt: nowStamp(), endedAt: nowStamp(), gate: p.gate, note: blk, cases: [], log: [{ lv: "FAIL", t: "실행 불가 — " + blk }] });
@@ -299,75 +352,156 @@ const SuitePick = ({ suites, value, onChange }) => (
   <div className="grid grid-cols-2 gap-2">{suites.map((x) => { const on = (value || []).includes(x.id); return <button key={x.id} onClick={() => onChange(on ? value.filter((s) => s !== x.id) : [...(value || []), x.id])} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (on ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name}</button>; })}</div>
 );
 
-/* ═══════════ 실행 ═══════════ */
+/* ═══════════ 실행 ═══════════
+   FQA 실행 화면과 같은 배치 — 좌: 지금 실행 · 실행 큐 / 우: 선택한 실행의 진행 상세
+   MQA 특성: 병목은 단말 → 단말별 대기열 · 사용 가능 단말 · 오늘 실행 불가를 KPI 로, 진행 상세에 단말 화면
+   지난 실행 목록은 두지 않는다(실행 이력 · 대시보드에 있음) — 오늘 끝난 실행만 큐에 '완료'로 남겨 결과로 바로 간다 */
+const LV_K = { INFO: "text-slate-400", TC: "text-sky-300", STEP: "text-slate-300", PASS: "text-emerald-300", FAIL: "text-red-300", RETRY: "text-amber-300" };
+const mmss = (ms) => { const s = Math.floor((ms || 0) / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 export function MqaRunScreen({ nav }) {
   const { app, ctx, launch, autoRun } = useRunner();
   const { mqaPlans = [], mqaRuns = [] } = app;
   const [msg, flash] = useToast();
+  const [speed, setSpd] = useState(getSpeed());
   const active = mqaPlans.filter((p) => p.status === "활성");
   const [pid, setPid] = useState(active[0] ? active[0].id : null);
   const plan = mqaPlans.find((p) => p.id === pid) || active[0] || null;
+  const today = nowStamp().slice(0, 10);
+  const isToday = (r) => String(r.startedAt || "").slice(0, 10) === today;
   const running = mqaRuns.filter((r) => r.status === "실행 중");
-  const done = mqaRuns.filter((r) => r.status !== "실행 중").slice(0, 5);
+  const waiting = mqaRuns.filter((r) => r.status === "대기 중");
+  const doneToday = mqaRuns.filter((r) => ["완료", "중단", "실행 불가"].includes(r.status) && isToday(r));
+  const rows = [...running, ...waiting, ...doneToday];
+  const [selId, setSelId] = useState(null);
+  const sel = rows.find((r) => r.id === selId) || running[0] || waiting[0] || doneToday[0] || null;
   const blk = plan ? planBlock(plan, ctx, false) : "활성 계획이 없습니다";
-  const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); flash(id + " 시작"); };
+  const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); setSelId(id); const dv = devOf(ctx.runners, plan.devId); flash(dv && dv.state === "사용 중" ? id + " 단말 대기열에 추가 — 앞선 실행이 끝나면 시작" : id + " 시작"); };
   const scheduledPlans = active.filter((p) => isTimed(p.schedule) || isOnNewBuild(p.schedule));
-  /* (목업) 예약 시각 도래 */
-  const fire = (p) => { const r = autoRun(p, "예약"); flash(r.blocked ? "예약 실행 불가 — " + r.blocked : r.id + " 예약 실행 시작" + (r.pre ? " · 편집 세션 종료" : "")); };
+  const fire = (p) => { const r = autoRun(p, "예약"); if (r.id) setSelId(r.id); flash(r.blocked ? "예약 실행 불가 — " + r.blocked : r.id + " 예약 실행 시작" + (r.pre ? " · 편집 세션 종료" : "")); };
+  const stop = (r) => { if (!window.confirm(r.id + (r.status === "대기 중" ? " 을(를) 대기열에서 뺄까요?" : " 실행을 중단할까요?"))) return; stopRun(r, app); flash(r.id + (r.status === "대기 중" ? " 대기 취소" : " 중단")); };
+  const devs = flatDevices(ctx.runners);
+  const KPI_L = [["실행 중", running.length, "text-amber-600"], ["단말 대기", waiting.length, "text-slate-900"]];
+  const blockedToday = mqaRuns.filter((r) => r.status === "실행 불가" && isToday(r)).length;
+  const KPI_R = [
+    ["사용 가능 단말", devs.filter((d) => d.state === "사용 가능").length + " / " + devs.length, "text-slate-900"],
+    ["오늘 예약", active.filter((p) => isTimed(p.schedule) && nextRun(p.schedule).slice(0, 10) === today).length, "text-sky-600"],
+    ["오늘 실행 불가", blockedToday, blockedToday ? "text-red-600" : "text-slate-400"],
+  ];
+  const Kpi = ({ k }) => <Card className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>;
+  const prog = (r) => { const n = (r.cases || []).length; const d = (r.cases || []).filter((c) => ["통과", "실패", "건너뜀"].includes(c.st)).length; return [d, n]; };
   return (
     <div className="space-y-4">
-      <PageToolbar desc="계획을 골라 지금 실행 · 진행 중인 실행 · 예약 실행" />
-      <Card className="p-4">
-        <div className="mb-3 text-sm font-semibold text-slate-800">지금 실행</div>
-        {!mqaPlans.length ? <div className="text-xs text-slate-500">실행 계획이 없습니다 — <button onClick={() => app.goTo("mqa-plan")} className="text-sky-600">실행 계획</button>에서 만드세요.</div> : (
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="w-72"><Select value={plan ? plan.id : ""} onChange={(e) => setPid(+e.target.value)}>{mqaPlans.map((p) => <option key={p.id} value={p.id} disabled={p.status !== "활성"}>{p.name}{p.status !== "활성" ? " (초안)" : ""}</option>)}</Select></div>
-            {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e); const dv = devOf(ctx.runners, plan.devId); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{dv ? devLabel(dv) : "단말 미지정"}</span><span>· 케이스 {casesOfPlan(plan, ctx.cases).length}건</span></div>; })()}
-            <div className="ml-auto flex items-center gap-2">{blk && <span className="text-xs text-amber-700">⚠ {blk}</span>}<Btn kind="primary" icon={Play} disabled={!!blk} onClick={go}>실행</Btn></div>
+      <PageToolbar desc="지금 실행 · 단말 대기열 · 진행 상황">
+        <MockBtn onClick={() => { const v = speed === 1 ? 5 : 1; setSpeed(v); setSpd(v); }} title="목업 전용 — 진행 속도를 바꿉니다 (실제 제품에는 없음)">{speed === 1 ? "빠르게 ×5" : "실제 속도로"}</MockBtn>
+      </PageToolbar>
+      <div className="grid grid-cols-12 gap-4">
+        {/* 좌: 지금 실행 · 실행 큐 */}
+        <div className="col-span-6 space-y-3">
+          <div className="grid grid-cols-2 gap-3">{KPI_L.map((k) => <Kpi key={k[0]} k={k} />)}</div>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1"><Select value={plan ? plan.id : ""} onChange={(e) => setPid(+e.target.value)} disabled={!mqaPlans.length}>{!mqaPlans.length && <option value="">실행 계획 없음</option>}{mqaPlans.map((p) => <option key={p.id} value={p.id} disabled={p.status !== "활성"}>{p.name}{p.status !== "활성" ? " (초안)" : ""}</option>)}</Select></div>
+            <Btn kind="primary" icon={Play} disabled={!!blk} onClick={go} title={blk || ""}>실행</Btn>
           </div>
-        )}
-      </Card>
-
-      {running.map((r) => <LiveRun key={r.id} run={r} onStop={() => { if (window.confirm(r.id + " 실행을 중단할까요?")) { stopRun(r, app); flash(r.id + " 중단"); } }} onOpen={() => nav && nav("mqa-result-detail", r.id)} />)}
-
-      <Card className="p-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><Calendar size={15} className="text-sky-600" />예약 실행</div>
-        {!scheduledPlans.length && <div className="text-xs text-slate-500">예약된 계획이 없습니다.</div>}
-        <div className="space-y-1.5">{scheduledPlans.map((p) => { const b = planBlock(p, ctx, true, true); const dv = devOf(ctx.runners, p.devId); const r = runnerOfDev(ctx.runners, p.devId); return (
-          <div key={p.id} className="flex items-center gap-3 rounded-lg border border-slate-200 px-3 py-2 text-xs">
-            <span className="w-40 shrink-0 font-medium text-slate-800">{p.name}</span>
-            <span className="w-36 shrink-0 text-slate-600">{isTimed(p.schedule) ? <><Clock size={11} className="mr-1 inline" />{nextRun(p.schedule)}</> : <><Zap size={11} className="mr-1 inline" />새 버전 지정 시</>}</span>
-            <span className="flex-1 truncate text-slate-500"><Monitor size={11} className="mr-1 inline" />{r ? r.name : "—"} · {dv ? dv.model : "—"}</span>
-            {b ? <span className="text-amber-700">사전 점검: {b}</span> : <span className="text-emerald-700">사전 점검 정상</span>}
-            {isTimed(p.schedule) ? <MockBtn onClick={() => fire(p)} title="목업 전용 — 예약 시각이 된 것처럼 실행합니다">지금 예약 시각으로</MockBtn> : <span className="w-[118px] shrink-0" />}
-          </div>
-        ); })}</div>
-      </Card>
-
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2.5"><span className="text-sm font-semibold text-slate-800">최근 실행</span><Btn icon={History} onClick={() => nav && nav("mqa-history")}>실행 이력</Btn></div>
-        <RunTable runs={done} onOpen={(id) => nav && nav("mqa-result-detail", id)} />
-      </Card>
+          {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e); const dv = devOf(ctx.runners, plan.devId); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{dv ? devLabel(dv) : "단말 미지정"}{dv && dv.state === "사용 중" && <span className="text-amber-700"> · 사용 중 (대기열에 들어감)</span>}</span><span>· 케이스 {casesOfPlan(plan, ctx.cases).length}건</span>{blk && <span className="text-amber-700">⚠ {blk}</span>}</div>; })()}
+          <Card className="overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="px-4 py-2 font-medium">실행</th><th className="font-medium">단말</th><th className="font-medium">상태</th><th className="font-medium">진행</th><th className="pr-4" /></tr></thead>
+              <tbody>
+                {!rows.length && <tr><td colSpan={5} className="py-8 text-center text-xs text-slate-500">진행 중이거나 대기 중인 실행이 없습니다</td></tr>}
+                {rows.map((r) => { const [d, n] = prog(r); const q = r.status === "대기 중" ? queueOf(r.devId).indexOf(r.id) + 1 : 0; return (
+                  <tr key={r.id} onClick={() => setSelId(r.id)} className={"cursor-pointer border-b border-slate-100 " + (sel && sel.id === r.id ? SEL_ROW : "hover:bg-slate-50")}>
+                    <td className="px-4 py-2.5"><div className="font-mono text-xs text-sky-600">{r.id}</div><div className="text-slate-800">{r.planName}</div><div className="text-xs text-slate-500">{r.trigger}</div></td>
+                    <td className="text-xs text-slate-600">{String(r.device || "").split(" — ")[0]}</td>
+                    <td><Badge kind={RUN_K[r.status]}>{r.status}</Badge>{q > 0 && <div className="mt-0.5 text-xs text-slate-500">{q}번째</div>}</td>
+                    <td style={{ minWidth: 110 }}>{r.status === "실행 중" ? <div><div className="mb-0.5 flex justify-between text-xs text-slate-500"><span>{d}/{n}</span><span>{mmss(r.elapsed)}</span></div><div className="h-1.5 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500" style={{ width: (n ? (d / n) * 100 : 0) + "%" }} /></div></div>
+                      : r.status === "완료" ? <span className="text-xs">{resultText(r)}</span> : r.status === "실행 불가" ? <span className="text-xs text-red-700">실행하지 못함</span> : <span className="text-xs text-slate-500">{n}건 대기</span>}</td>
+                    <td className="pr-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      {r.status === "실행 중" && <button onClick={() => stop(r)} className="text-xs text-slate-500 hover:text-red-600">중단</button>}
+                      {r.status === "대기 중" && <button onClick={() => stop(r)} className="text-xs text-slate-500 hover:text-red-600">취소</button>}
+                      {(r.status === "완료" || r.status === "중단") && <button onClick={() => nav && nav("mqa-result-detail", r.id)} className="text-xs text-sky-600">결과 보기</button>}
+                    </td>
+                  </tr>
+                ); })}
+              </tbody>
+            </table>
+            {doneToday.length > 0 && <div className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">오늘 끝난 실행은 여기에 남습니다 · 지난 실행은 <button onClick={() => nav && nav("mqa-history")} className="text-sky-600">실행 이력</button></div>}
+          </Card>
+          <Card className="p-4">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><Calendar size={15} className="text-sky-600" />예약 실행</div>
+            {!scheduledPlans.length && <div className="text-xs text-slate-500">예약된 계획이 없습니다.</div>}
+            <div className="space-y-1.5">{scheduledPlans.map((p) => { const b = planBlock(p, ctx, true, true); const dv = devOf(ctx.runners, p.devId); return (
+              <div key={p.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1 truncate font-medium text-slate-800">{p.name}</span>
+                <span className="shrink-0 text-slate-600">{isTimed(p.schedule) ? <><Clock size={11} className="mr-1 inline" />{nextRun(p.schedule).slice(5)}</> : <><Zap size={11} className="mr-1 inline" />새 버전 지정 시</>}</span>
+                <span className="shrink-0 text-slate-500">{dv ? dv.model : "—"}</span>
+                {b ? <span className="shrink-0 text-amber-700" title={b}>점검 필요</span> : <span className="shrink-0 text-emerald-700">점검 정상</span>}
+                {isTimed(p.schedule) && <MockBtn onClick={() => fire(p)} title="목업 전용 — 예약 시각이 된 것처럼 실행합니다">지금 시각으로</MockBtn>}
+              </div>
+            ); })}</div>
+          </Card>
+        </div>
+        {/* 우: KPI · 선택한 실행 상세 */}
+        <div className="col-span-6 space-y-3">
+          <div className="grid grid-cols-3 gap-3">{KPI_R.map((k) => <Kpi key={k[0]} k={k} />)}</div>
+          <RunDetail run={sel} onStop={() => sel && stop(sel)} onOpen={() => sel && nav && nav("mqa-result-detail", sel.id)} />
+        </div>
+      </div>
       <Toast msg={msg} />
     </div>
   );
 }
-function LiveRun({ run, onStop, onOpen }) {
-  const cur = run.cases.find((c) => c.st === "실행 중");
-  const fin = run.cases.filter((c) => c.st === "통과" || c.st === "실패").length;
+/* 선택한 실행의 진행 상세 — 단말 화면 · 현재 케이스 스텝 · 로그(레벨 필터) */
+function RunDetail({ run, onStop, onOpen }) {
+  const [lvl, setLvl] = useState("ALL");
+  if (!run) return <Card className="flex items-center justify-center p-8 text-xs text-slate-500" style={{ minHeight: 320 }}>왼쪽에서 실행을 선택하세요.</Card>;
+  const cur = run.cases.find((c) => c.st === "실행 중") || null;
+  const [d, n] = [run.cases.filter((c) => ["통과", "실패", "건너뜀"].includes(c.st)).length, run.cases.length];
+  const live = run.status === "실행 중";
+  const step = cur ? cur.steps.find((x) => x.st === "실행 중") : null;
+  const logs = (run.log || []).filter((l) => lvl === "ALL" || l.lv === lvl);
   return (
-    <Card className="p-4">
-      <div className="mb-2 flex items-center gap-2 text-sm"><RefreshCw size={14} className="animate-spin text-sky-600" /><span className="font-mono text-sky-700">{run.id}</span><span className="font-semibold text-slate-800">{run.planName}</span><Badge kind="warn">실행 중</Badge><span className="text-xs text-slate-500">{run.trigger} · {run.device} · 앱 v{run.build}</span>
-        <div className="ml-auto flex gap-2"><Btn onClick={onOpen}>상세</Btn><Btn icon={Square} onClick={onStop}>중단</Btn></div></div>
-      {run.note && <div className="mb-2 text-xs text-amber-700">{run.note}</div>}
-      <div className="mb-2 h-1.5 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500" style={{ width: (run.cases.length ? (fin / run.cases.length) * 100 : 0) + "%" }} /></div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">{run.cases.map((c) => <div key={c.id} className="flex items-center gap-2 text-xs"><span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-700">{c.name}</span><Badge kind={CASE_K[c.st]}>{c.st}</Badge></div>)}</div>
-        <div className="rounded-lg bg-slate-900 p-2.5 font-mono text-xs leading-relaxed text-slate-100" style={{ maxHeight: 160, overflowY: "auto" }}>
-          {cur && <div className="mb-1 text-sky-300">▶ {cur.id} · 스텝 {cur.steps.filter((s) => s.st !== "대기").length}/{cur.steps.length}</div>}
-          {(run.log || []).slice(-8).map((l, i) => <div key={i} className={l.lv === "FAIL" ? "text-red-300" : l.lv === "PASS" ? "text-emerald-300" : ""}>{l.t}</div>)}
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
+        <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-800">{run.planName}</div><div className="font-mono text-xs text-sky-600">{run.id} <span className="font-sans text-slate-500">· {run.device} · 앱 v{run.build}</span></div></div>
+        <div className="flex shrink-0 items-center gap-2">
+          {live ? <span className="flex items-center gap-1 text-xs text-red-700"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />LIVE {mmss(run.elapsed)}</span> : <Badge kind={RUN_K[run.status]}>{run.status}</Badge>}
+          {(live || run.status === "대기 중") && <Btn icon={Square} onClick={onStop}>{live ? "중단" : "대기 취소"}</Btn>}
+          {(run.status === "완료" || run.status === "중단") && <Btn icon={FileText} onClick={onOpen}>결과 보기</Btn>}
         </div>
       </div>
+      {run.status === "대기 중" && <div className="px-4 py-6 text-center text-xs text-slate-500"><Clock size={18} className="mx-auto mb-2 text-slate-400" />단말이 다른 실행에 사용 중입니다 — 대기열 {queueOf(run.devId).indexOf(run.id) + 1}번째, 앞선 실행이 끝나면 자동으로 시작합니다.</div>}
+      {run.status === "실행 불가" && <div className="px-4 py-6 text-xs text-red-700">{run.note}<div className="mt-1 text-slate-500">예약 시각에 실행 조건을 만족하지 못해 실행하지 않았습니다.</div></div>}
+      {(live || run.status === "완료" || run.status === "중단") && (<>
+        <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-2 text-xs text-slate-500"><span>케이스 <span className="text-slate-800">{d}/{n}</span></span><div className="h-1.5 flex-1 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500" style={{ width: (n ? (d / n) * 100 : 0) + "%" }} /></div>{live && <span className="text-slate-700">{run.phase}</span>}</div>
+        <div className="flex gap-4 border-b border-slate-200 p-4">
+          {/* 단말 화면 — 실 구현: 러너가 몇 초 간격으로 캡처해 올린다 */}
+          <div className="shrink-0">
+            <div className="w-32 rounded-2xl border-4 border-slate-800 bg-white p-1.5"><div className="space-y-1 rounded-xl bg-slate-50 p-1.5" style={{ minHeight: 190 }}>
+              {live && run.phase && /설치/.test(run.phase) ? <div className="flex h-44 flex-col items-center justify-center text-[10px] text-slate-400"><RefreshCw size={14} className="mb-1 animate-spin" />앱 설치 · 실행</div>
+                : L.elementsFor(run.build).slice(0, 7).map((el) => <div key={el.key} className={"truncate rounded border px-1 py-0.5 text-[9px] " + (step && step.el && step.el === el.label ? "border-sky-500 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-500")}>{el.text || el.label}</div>)}
+            </div></div>
+            <div className="mt-1 text-center text-[10px] text-slate-400">{live ? "단말 화면 · 수 초 간격" : "마지막 화면"}</div>
+          </div>
+          <div className="min-w-0 flex-1">
+            {cur ? (<>
+              <div className="mb-1.5 text-xs"><span className="font-mono text-sky-600">{cur.id}</span> <span className="font-medium text-slate-800">{cur.name}</span></div>
+              <div className="space-y-0.5 overflow-y-auto" style={{ maxHeight: 190 }}>{cur.steps.map((x, i) => (
+                <div key={i} className={"flex items-center gap-2 rounded px-1.5 py-0.5 text-xs " + (x.st === "실행 중" ? "bg-sky-50" : "")}>
+                  <span className="w-4 text-right font-mono text-slate-400">{i < (cur.preLen || 0) ? "전" : i + 1 - (cur.preLen || 0)}</span>
+                  {x.st === "실행 중" ? <RefreshCw size={11} className="shrink-0 animate-spin text-sky-600" /> : x.st === "통과" ? <CheckCircle2 size={11} className="shrink-0 text-emerald-600" /> : x.st === "실패" ? <XCircle size={11} className="shrink-0 text-red-600" /> : <span className="h-[11px] w-[11px] shrink-0 rounded-full border border-slate-300" />}
+                  <span className="w-14 shrink-0 text-slate-500">{x.act}</span><span className="truncate text-slate-800">{x.name}{x.val ? " \"" + x.val + "\"" : ""}</span>
+                </div>
+              ))}</div>
+            </>) : (
+              <div className="space-y-1">{run.cases.map((c) => <div key={c.id} className="flex items-center gap-2 text-xs"><span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-700">{c.name}</span><Badge kind={CASE_K[c.st]}>{c.st}</Badge></div>)}</div>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1 border-b border-slate-200 px-3 py-1.5">{["ALL", "INFO", "TC", "STEP", "PASS", "FAIL", "RETRY"].map((l) => <button key={l} onClick={() => setLvl(l)} className={"rounded px-1.5 py-0.5 text-xs " + (lvl === l ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}>{l}</button>)}</div>
+        <div className="overflow-y-auto bg-slate-900 p-2.5 font-mono text-xs leading-relaxed" style={{ maxHeight: 220 }}>
+          {logs.slice(-60).map((l, i) => <div key={i} className="flex gap-2"><span className={"w-10 shrink-0 font-semibold " + (LV_K[l.lv] || "text-slate-400")}>{l.lv || "INFO"}</span><span className="text-slate-200">{l.t}</span></div>)}
+        </div>
+      </>)}
     </Card>
   );
 }
