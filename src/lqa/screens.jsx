@@ -2017,7 +2017,7 @@ export function Defects() {
   );
 }
 export function Report() {
-  const { toast, openModal, reportCfg, setReportCfg, setNavGuard } = useApp();   // notify 안 씀 — 발송은 이력에 남는다
+  const { toast, openModal, reportCfg, setReportCfg, setNavGuard, reportHist, addReportHist } = useApp();   // notify 안 씀 — 발송은 이력에 남는다
   const [ch, setCh] = useState(reportCfg.ch);
   const [cond, setCond] = useState(reportCfg.cond);
   const [autoJira, setAutoJira] = useState(true);
@@ -2029,10 +2029,7 @@ export function Report() {
   const saveCfg = () => { setReportCfg({ ch, cond, scope, rsched }); toast("리포트·알림 설정 저장됨", "ok"); };
   const dowK = ["일", "월", "화", "수", "목", "금", "토"];
   const nextRun = () => rsched.freq === "daily" ? "매일 " + rsched.time : rsched.freq === "monthly" ? "매월 " + rsched.dom + "일 " + rsched.time : "매주 " + dowK[rsched.dow] + "요일 " + rsched.time;
-  const [hist, setHist] = useState([
-    { t: "14:36", ch: "Slack", txt: "결제/환불 상담 평가 완료 — PASS율 79% (▲)", ok: true },
-    { t: "09:25", ch: "Email", txt: "주간 품질 리포트 발송 (수신 6명)", ok: true },
-  ]);
+  const hist = reportHist || []; const setHist = (rows) => addReportHist(rows.slice(0, rows.length - hist.length));   // 공통 발송 이력 (모든 도메인)
   const sendTest = (channel) => {
     const row = { t: "now", ch: channel, txt: "테스트 알림 발송", ok: true };
     /* 🔑 종 알림에 넣지 않는다 — 사용자가 [테스트 발송] 을 눌러서 생긴 일이고
@@ -2095,7 +2092,7 @@ export function Report() {
           <div className="-mt-1 text-xs text-slate-500">선택 범위 대시보드 지표를 <span className="text-slate-700">기간 스냅샷 + 직전 대비 델타 + 주요 실패·회귀·신규 결함 하이라이트</span>로 취합해 지정된 알림 채널로 발송합니다.</div>
           {rsched.on && (
             <div className="space-y-3">
-              <Field label="범위"><Select value={scope} onChange={(e) => setScope(e.target.value)}><option>AI 품질</option><option>기능 QA</option><option>앱 성능</option><option>부하</option><option>통합 (전체 도메인)</option></Select></Field>
+              <Field label="범위"><Select value={scope} onChange={(e) => setScope(e.target.value)}><option>AI 품질</option><option>기능 QA</option><option>기능 QA (앱)</option><option>앱 성능</option><option>부하</option><option>통합 (전체 도메인)</option></Select></Field>
               <Field label="형식"><div className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700">HTML <span className="text-xs text-slate-500">· PDF·Excel은 후속 지원</span></div></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="주기"><Select value={rsched.freq} onChange={(e) => setRsched({ ...rsched, freq: e.target.value })}><option value="daily">매일</option><option value="weekly">매주</option><option value="monthly">매월</option></Select></Field>
