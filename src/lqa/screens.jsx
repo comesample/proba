@@ -10,6 +10,7 @@ import { VarRefInput } from "../common/VarRefInput.jsx";
 import { C, vKind, KIND, TOOLTIP } from "../common/theme.js";
 import { Badge, ScoreBar, Card, Field, Btn, Input, Select, Toggle, PageToolbar, EmptyState, SearchInput, RunTime, nowStamp, Portal, SEL_CARD, SEL_IDLE, SEL_ROW } from "../common/ui.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
+import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
 // 이벤트 트리거는 정보성(읽기전용) — 감지 방식은 챗봇 연결 "모델·배포 소스"에서 정의된 값을 상속만 표시.
 const lqaEvents = (bot) => {
   const src = (bot && bot.modelSrc) || "수동";
@@ -1447,7 +1448,7 @@ const isRegression = (defects, id, bot) => !openDefectOf(defects, id, bot) && de
       결과는 LqaResultScreen 이 소유하고 lqaResultRun 으로 지목한다. */
 export function LqaRunScreen() {
   /* 이 화면은 결과로 이동시키지 않는다 — 완료는 알림이 안내하고, 지난 실행은 실행 이력이 갖는다. */
-  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, removeRun, toast, notify, jiraConfig } = useApp();
+  const { cases, plans, prompts, runs, defects, addDefect, addRun, updateRun, removeRun, toast, notify, jiraConfig, reportCfg, addReportHist } = useApp();
   /* 큐 = 진행중 + 대기. 진행중 먼저, 그 다음 적재 순서(queuedAt).
      🔑 id 사전순으로 정렬하지 않는다 — id 가 "R-" + Date.now() 뒷자리라 자리올림에서
         시간순과 어긋난다(R-99999 다음이 R-00123). PQA 처럼 queuedAt 을 쓴다. */
@@ -1517,6 +1518,12 @@ export function LqaRunScreen() {
     updateRun(id, { status: "완료", finishedAt: nowStamp(), ...agg });
     notify({ icon: "play", text: run.planName + " 완료 — PASS " + agg.pass + " / FAIL " + agg.fail, to: { domain: "LQA", view: "lqa-result", run: run.id } });
     if (made) notify({ icon: "bug", text: "FAIL " + made + "건 결함 자동 등록 (Jira 규칙)", to: { domain: "LQA", view: "defects" } });
+    /* 자동 알림 — 공통 발송 조건. '회귀'는 회귀 비교와 같은 기준: 직전 완료 실행 대비 판정 임계 하락 */
+    const prev = runs.filter((r) => r.planId === run.planId && r.status === "완료" && r.id !== run.id && r.results && r.results.length)[0];
+    const RK = { FAIL: 0, WARN: 1, PASS: 2 };
+    const regN = prev ? (run.results || []).filter((x) => { const p = prev.results.find((y) => y.id === x.id); return p && RK[x.verdict] != null && RK[p.verdict] != null && RK[x.verdict] < RK[p.verdict]; }).length : 0;
+    autoAlert({ reportCfg, addReportHist, domain: "LQA", hasFail: agg.fail > 0, hasReg: regN > 0,
+      text: run.planName + " " + run.id + " 완료 — " + agg.score + "점" + (prev && prev.score != null ? " (" + (agg.score - prev.score >= 0 ? "+" : "") + Math.round((agg.score - prev.score) * 10) / 10 + ")" : "") + (regN ? " · 회귀 " + regN + "건" : "") + " · FAIL " + agg.fail + "건" });
     toast(id + " 평가 완료 · " + agg.score + "점 · 실패 " + agg.fail + "건" + (made ? " · 결함 " + made + "건 자동 등록" : ""), "ok");
   };
   /* ── 큐 프로세서 — 단일 티커 (PQA 방식) ──
@@ -1901,6 +1908,9 @@ export function Compare() {
                 <ul className="space-y-1.5">{recs.map((c, i) => (<li key={i} className="flex gap-2 text-xs text-slate-700"><CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-600" />{c}</li>))}</ul>
               </div>
               {regressed.length > 0 && <Btn kind="primary" icon={Bug} onClick={regAllLQA}>유의미 회귀 {regressed.length}건 결함 등록</Btn>}
+              <ShareBox domain="LQA" subject={"회귀 리포트 " + aId + " → " + bId + " · 유의미 회귀 " + regressed.length}
+                preview={(B.planName || "") + " " + aId + " → " + bId + " · 점수 " + (delta != null ? (delta >= 0 ? "+" + delta : "" + delta) : "—") + " · 유의미 회귀 " + regressed.length + "건 — " + causes[0]}
+                onLeave={() => setAiOpen(false)} onDone={(chs) => toast("회귀 리포트 공유 — " + chs.join(" · ") + " (발송 이력에 기록)", "ok")} />
               <div className="text-xs text-slate-500">＊ 결정적 분석은 저장된 결과의 계산이며, AI 추정 항목은 참고용(원인·권고)입니다.</div>
             </div>
           </div>

@@ -56,7 +56,7 @@ export default function App() {
   const [reportCfg, setReportCfg] = useState({ ch: { slack: true, teams: false, email: true }, cond: "fail", scope: "통합 (전체 도메인)", rsched: { on: true, freq: "weekly", time: "09:00", dow: 1, dom: 1 } });
   /* 발송 이력 — 모든 도메인이 같은 이력에 남긴다 (리포트 · 알림 화면 · MQA 회귀 리포트 공유 · 자동 알림) */
   const [reportHist, setReportHist] = useState([
-    { t: "14:36", ch: "Slack", txt: "결제/환불 상담 평가 완료 — PASS율 79% (▲)", ok: true },
+    { t: "14:36", ch: "Slack", txt: "[AI 품질] 결제/환불 상담 평가 완료 — PASS율 79% (▲)", ok: true },
     { t: "09:25", ch: "Email", txt: "주간 품질 리포트 발송 (수신 6명)", ok: true },
   ]);
   const [toasts, setToasts] = useState([]);

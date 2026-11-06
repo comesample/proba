@@ -9,7 +9,8 @@
 //   목업: 스텝 결과는 caseLogic.simulateStep(앱 버전별 화면) 으로 정한다 — TC-007 은 v3.2.0 에서 실패한다
 // ============================================================
 import { useState, useEffect, Fragment } from "react";
-import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp, Sparkles, Bug, Share2 } from "lucide-react";
+import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp, Sparkles, Bug } from "lucide-react";
+import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
 import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
@@ -152,7 +153,7 @@ export function startRun(args) {
     cur.status = "완료"; cur.phase = ""; cur.endedAt = nowStamp(); cur.log.push({ lv: "INFO", t: "완료 · 단말 반납" });
     api.releaseMqaDevice(dev.id);
     if (api.notify) { const p = cur.cases.filter((x) => x.st === "통과").length, f = cur.cases.filter((x) => x.st === "실패").length; api.notify({ icon: "play", text: plan.name + " 완료 — 통과 " + p + " / 실패 " + f, to: { domain: "MQA", view: "mqa-result-detail", run: id } }); }
-    autoAlert(cur, api);
+    runAlert(cur, api);
   });
   /* 가상 시계 — 100ms 마다 SPEED 배로 흐른다 */
   let v = 0, tick = 0;
@@ -168,19 +169,15 @@ export function startRun(args) {
 }
 /* 자동 알림 — 공통 '리포트 · 알림' 의 채널 · 발송 조건을 그대로 따른다
    조건: always 항상 / fail 실패가 있을 때 / drop 회귀(직전 전체 실행 대비 퇴행)가 있을 때 */
-function autoAlert(run, api) {
-  const cfg = api.reportCfg; if (!cfg || !api.addReportHist) return;
-  const chs = [["slack", "Slack"], ["teams", "Teams"], ["email", "Email"]].filter(([k]) => (cfg.ch || {})[k]);
-  if (!chs.length) return;
+function runAlert(run, api) {
+  if (!api.reportCfg || !api.addReportHist) return;
   const fails = run.cases.filter((c) => c.st === "실패");
   const prev = run.partial ? null : (api.mqaRuns || []).filter((r) => r.status === "완료" && r.planId === run.planId && !r.partial && r.id !== run.id)[0];
   const reg = prev ? run.cases.filter((c) => c.st === "실패" && ((prev.cases || []).find((x) => x.id === c.id) || {}).st === "통과") : [];
-  const send = cfg.cond === "always" || (cfg.cond === "fail" && fails.length > 0) || (cfg.cond === "drop" && reg.length > 0);
-  if (!send) return;
   const causeTxt = reg.map((c) => { const j = judgeOf(run, c, [run, ...(api.mqaRuns || [])], (api.mqaCases || []).find((x) => x.id === c.id)); return c.id + (j ? " " + j.cause : ""); }).join(", ");
-  const t = new Date().toTimeString().slice(0, 5);
   const pr = passRate(run);
-  api.addReportHist(chs.map(([k, lab]) => ({ t, ch: lab, txt: "[기능 QA(앱)] " + run.planName + " " + run.id + " 완료 — " + (reg.length ? "퇴행 " + reg.length + "건 (" + causeTxt + ")" : "실패 " + fails.length + "건") + (pr != null ? " · PASS " + pr + "%" : "") + " · 자동 알림", ok: true })));
+  autoAlert({ reportCfg: api.reportCfg, addReportHist: api.addReportHist, domain: "MQA", hasFail: fails.length > 0, hasReg: reg.length > 0,
+    text: run.planName + " " + run.id + " 완료 — " + (reg.length ? "퇴행 " + reg.length + "건 (" + causeTxt + ")" : "실패 " + fails.length + "건") + (pr != null ? " · PASS " + pr + "%" : "") });
 }
 export function stopRun(run, api) {
   if (run.status === "대기 중") {   // 대기열에서 빼기
@@ -795,10 +792,6 @@ function Regression({ nav }) {
 /* AI 회귀 분석 패널 — LQA 회귀 비교와 같은 구성: 계산(결정적) → AI 추정(원인 · 권고)
    숫자는 모두 시스템 계산. AI 는 판정 근거(judgeOf · 담당자 확정)를 묶어 문장으로 설명만 한다 */
 function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems, suites, onClose, onOpen, onDefects, flash }) {
-  const { reportCfg = { ch: {} }, addReportHist, goTo } = useApp();
-  const [memo, setMemo] = useState("");
-  const CH = [["slack", "Slack"], ["teams", "Teams"], ["email", "Email"]];
-  const [pick, setPick] = useState(() => Object.fromEntries(CH.map(([k]) => [k, !!(reportCfg.ch || {})[k]])));
   const caseNow = (id) => cases.find((c) => c.id === id);
   const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행");
   const judg = reg.map((r) => { const j = r.cb ? judgeOf(B, r.cb, runs, caseNow(r.id)) : null; const k = (B.judged || {})[r.id]; return { ...r, j, kind: k || (j ? j.kind : "확인 필요"), cause: k ? k : j ? j.cause : "판정 불가", fixed: !!k }; });
@@ -862,21 +855,10 @@ function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems
             {appDef.length > 0 && <Btn kind="primary" icon={Bug} onClick={() => onDefects(appDef.map((x) => x.id))}>앱 결함 의심 {appDef.length}건 결함 등록</Btn>}
             {reg.length > 0 && <Btn icon={FileText} onClick={onOpen}>{B.id} 결과 상세</Btn>}
           </div>
-          {/* 리포트 공유 — 채널은 공통 '리포트 · 알림' 설정을 그대로 쓴다 (MQA 에 따로 두지 않음) */}
-          <div className="space-y-2 border-t border-slate-200 pt-3">
-            <div className="text-xs font-semibold text-slate-500">리포트 공유</div>
-            <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={2} placeholder="담당자 의견 (선택) — 예: 요소 다시 집기 후 오늘 재실행 예정" className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-800 outline-none focus:border-sky-500" />
-            <div className="flex flex-wrap items-center gap-3 text-xs">{CH.map(([k, lab]) => { const on = !!(reportCfg.ch || {})[k]; return on
-              ? <label key={k} className="flex cursor-pointer items-center gap-1.5 text-slate-700"><input type="checkbox" checked={!!pick[k]} onChange={(e) => setPick({ ...pick, [k]: e.target.checked })} className="accent-sky-600" />{lab}</label>
-              : <span key={k} className="text-slate-400" title="리포트 · 알림에서 채널을 켜면 쓸 수 있습니다">{lab} <button onClick={() => { onClose(); goTo("report"); }} className="text-sky-600">켜기</button></span>; })}</div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600"><div className="mb-0.5 font-medium text-slate-500">미리보기 · Slack · Teams 는 요약, Email 은 전체 리포트(HTML)</div>[기능 QA(앱)] {B.planName} {A.id} → {B.id} · 퇴행 {summ["퇴행"] || 0} · PASS {pctOf(B)} — {conclusion}{memo ? " · 의견: " + memo : ""}</div>
-            <Btn kind="primary" icon={Share2} disabled={!CH.some(([k]) => pick[k] && (reportCfg.ch || {})[k])} onClick={() => {
-              const t = new Date().toTimeString().slice(0, 5);
-              const chs = CH.filter(([k]) => pick[k] && (reportCfg.ch || {})[k]);
-              addReportHist(chs.map(([k, lab]) => ({ t, ch: lab, txt: "[기능 QA(앱)] 회귀 리포트 " + A.id + " → " + B.id + " · 퇴행 " + (summ["퇴행"] || 0) + (k === "email" ? " · 전체 리포트" : " · 요약") + (memo ? " · 의견 포함" : ""), ok: true })));
-              flash("회귀 리포트 공유 — " + chs.map((c) => c[1]).join(" · ") + " (발송 이력에 기록)");
-            }}>리포트 공유</Btn>
-          </div>
+          {/* 리포트 공유 — 공통 부품 (채널 · 이력은 공통 '리포트 · 알림') */}
+          <ShareBox domain="MQA" subject={"회귀 리포트 " + A.id + " → " + B.id + " · 퇴행 " + (summ["퇴행"] || 0)}
+            preview={B.planName + " " + A.id + " → " + B.id + " · 퇴행 " + (summ["퇴행"] || 0) + " · PASS " + pctOf(B) + " — " + conclusion}
+            onLeave={onClose} onDone={(chs) => flash("회귀 리포트 공유 — " + chs.join(" · ") + " (발송 이력에 기록)")} />
           <div className="text-xs text-slate-500">＊ 계산 항목은 저장된 결과의 산술이며, AI 추정 항목(결론 · 원인 · 권고)은 참고용입니다. 담당자가 결과 화면에서 확정한 원인이 있으면 그 판정을 따릅니다.</div>
         </div>
       </div>

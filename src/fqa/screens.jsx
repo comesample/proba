@@ -4,8 +4,9 @@ import {
   Wrench, Search, RefreshCw, Save, Copy, Plus, CheckCircle2, X, Send, ChevronLeft,
   Code2, ArrowRight, Lock, GripVertical, Layers, Calendar, Bug, Clock, History, XCircle, AlertTriangle,
   LayoutDashboard, TrendingUp, Activity, ClipboardList, Pencil,
-  Smartphone, ChevronRight, ChevronDown, Server, Trash2, Tag,
+  Smartphone, ChevronRight, ChevronDown, Server, Trash2, Tag, Sparkles,
 } from "lucide-react";
+import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { Card, Badge, Btn, Seg, Field, Input, Select, Modal, Toast, useToast, PageToolbar, backTo, RunTime, nowStamp, Portal, SEL_CARD, SEL_IDLE, SEL_ROW } from "../common/ui.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
@@ -1619,7 +1620,7 @@ const RUN_LOG = [
   { lv: "ERROR", t: "TC-401 대상 응답 없음 · ECONNREFUSED (러너 오류)" },
 ];
 export function FqaRunScreen({ nav }) {
-  const { fqaRuns, addFqaRun, updateFqaRun, removeFqaRun, fqaCases, updateFqaCase, fqaSuites, fqaSystems, fqaPlans, datasets, goto, notify } = useApp();
+  const { fqaRuns, addFqaRun, updateFqaRun, removeFqaRun, fqaCases, updateFqaCase, fqaSuites, fqaSystems, fqaPlans, datasets, goto, notify, reportCfg, addReportHist } = useApp();
   const [msg, flash] = useToast();
   const [lvl, setLvl] = useState("ALL");
   const [tab, setTab] = useState("진행");
@@ -1716,6 +1717,13 @@ export function FqaRunScreen({ nav }) {
     setTimeout(() => {
       updateFqaRun(next.id, { status: "완료", prog: 100, progt: total + "/" + total, dur: "0분 " + (12 + total) + "초", endedAt: nowStamp(), pass: total - fail - warn, warn, fail });
       if (notify) notify({ icon: "play", text: (next.plan || next.name) + " 완료 — PASS " + (total - fail - warn) + " / FAIL " + fail, to: { domain: "FQA", view: "fqa-result-detail", run: next.id } });
+      /* 자동 알림 — 공통 발송 조건. '회귀'는 회귀 비교와 같은 기준: 같은 계획의 직전 완료 실행 대비 판정 하락 */
+      const RK = { FAIL: 0, WARN: 1, HEAL: 1, PASS: 2 };
+      const prev = fqaRuns.filter((r) => r.planId === next.planId && r.status === "완료" && r.id !== next.id).sort((x, y) => parseInt(y.id.split("-")[1] || "0", 10) - parseInt(x.id.split("-")[1] || "0", 10))[0];
+      const regN = prev ? (next.tcs || []).filter((t) => { const p = (prev.tcs || []).find((x) => x.id === t.id); return p && RK[t.v] != null && RK[p.v] != null && RK[t.v] < RK[p.v]; }).length : 0;
+      const pr = total ? Math.round(((total - fail - warn) / total) * 1000) / 10 : null;
+      autoAlert({ reportCfg, addReportHist, domain: "FQA", hasFail: fail > 0, hasReg: regN > 0,
+        text: (next.plan || next.name) + " " + next.id + " 완료 — " + (regN ? "퇴행 " + regN + "건 · " : "") + "실패 " + fail + "건" + (pr != null ? " · PASS " + pr + "%" : "") });
     }, 9000);
   }, [fqaRuns]);
   const cancelRun = (r) => { if (!window.confirm(r.id + " 실행을 큐에서 취소할까요?")) return; removeFqaRun(r.id); if (selRunId === r.id) setSelRunId(null); flash(r.id + " 취소됨 — 큐에서 제거"); };
@@ -1880,6 +1888,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   const [rowsAll, setRowsAll] = useState(false);   // 데이터 구동 케이스 — 기본은 실패 행만(30행 케이스가 화면을 덮지 않도록)
   const [selRow, setSelRow] = useState(null);      // 선택 행 — 스텝 타임라인·증적이 이 행을 따라간다
   const [etab, setEtab] = useState("스크린샷");
+  const [aiOpen, setAiOpen] = useState(false);
   const healSt = (t) => healState[healKey(t)] || "검토 대기";
   /* 🔑 "다시 실행하세요" 라고 하지 않는다 — 이 화면에는 그 버튼이 없고, 붙여서도 안 된다.
      계획 전체를 돌리면 승인한 케이스가 아닌 다른 실패에 결과가 묻히고,
@@ -2253,7 +2262,8 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
             <Card className="p-4 text-center"><div className="text-2xl font-bold text-slate-700">{summ["유지"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">유지</div></Card>
           </div>
           <Card className="overflow-hidden">
-            <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {aId} → {bId}</span>{runDiff && <span className="ml-2 font-normal text-amber-600" style={{ fontSize: 12 }}>· {runDiff} — 판정 차이를 제품 회귀로 단정할 수 없습니다</span>}<span className="ml-2 font-normal text-slate-500" style={{ fontSize: 11 }}>행을 클릭하면 {bId} 결과 상세로 이동합니다</span></div>
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3"><div className="text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {aId} → {bId}</span>{runDiff && <span className="ml-2 font-normal text-amber-600" style={{ fontSize: 12 }}>· {runDiff} — 판정 차이를 제품 회귀로 단정할 수 없습니다</span>}<span className="ml-2 font-normal text-slate-500" style={{ fontSize: 11 }}>행을 클릭하면 {bId} 결과 상세로 이동합니다</span></div>
+              <div className="flex shrink-0 gap-2"><Btn icon={Download} onClick={() => flash("Excel 내보내기 완료")}>Excel</Btn><Btn kind="primary" icon={Sparkles} onClick={() => setAiOpen(true)}>AI 분석</Btn></div></div>
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">ID</th><th className="font-medium">TC</th><th className="font-medium">A</th><th></th><th className="font-medium">B</th><th className="font-medium">변화</th></tr></thead>
               <tbody>
@@ -2268,6 +2278,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
               </tbody>
             </table>
           </Card>
+          {aiOpen && runA && runB && <FqaRegAiPanel A={runA} B={runB} rows={regRows} summ={summ} cls={cls} rate={rate} runDiff={runDiff} cases={fqaCases} planName={(fqaPlans.find((p) => p.id === regPlan) || {}).name || runB.plan} flash={flash} onClose={() => setAiOpen(false)} onOpen={() => { setAiOpen(false); nav && nav("fqa-result-detail", bId); }} />}
           </>
           )}
         </>
@@ -2312,6 +2323,69 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
 }
 /* ═══════════ 8. FQA 대시보드 ═══════════ */
 const barColor = (p) => (p >= 90 ? C.sky : p >= 80 ? C.warn : C.err);
+/* AI 회귀 분석 — LQA · MQA 와 같은 구성: 계산(결정적) → AI 추정(원인 · 권고) → 리포트 공유
+   원인 묶음은 러너가 붙인 실패 원인(로케이터 · 검증 · 타이밍 · 환경)을 그대로 쓴다 — AI 가 새로 분류하지 않는다 */
+const CAUSE_WHO = { "로케이터": "테스트 보정 대상 (QA)", "타이밍": "테스트 보정 대상 (QA)", "검증": "제품 결함 의심 (개발)", "환경": "환경 문제 (인프라)", "기타": "원인 확인 필요", "미분류": "원인 확인 필요" };
+function FqaRegAiPanel({ A, B, rows, summ, cls, rate, runDiff, cases, planName, flash, onClose, onOpen }) {
+  const tcB = (id) => (B.tcs || []).find((t) => t.id === id) || {};
+  const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행").map((r) => { const t = tcB(r.id); return { ...r, cause: t.cause || "미분류", heal: healUsable(cases, t) }; });
+  const groups = {}; reg.forEach((x) => { (groups[x.cause] = groups[x.cause] || { cause: x.cause, ids: [] }).ids.push(x.id); });
+  const G = [...CAUSE_ORDER, "미분류"].filter((k) => groups[k]).map((k) => groups[k]);
+  const revN = rows.filter((r) => r.ra != null && r.rb != null && r.ra !== r.rb).length;
+  const healN = reg.filter((x) => x.heal).length;
+  const snap = [["빌드", A.ver || "-", B.ver || "-"], ["브라우저", A.brow || "API", B.brow || "API"], ["러너 (Playwright)", A.pw || "-", B.pw || "-"]];
+  const conclusion = !reg.length
+    ? (summ["개선"] ? "퇴행 없음 — 개선 " + summ["개선"] + "건, " + B.id + "는 " + A.id + "보다 나아졌습니다" : "퇴행 없음 — 두 실행의 품질이 같습니다")
+    : G.map((g) => "퇴행 " + g.ids.length + "건은 " + g.cause + " — " + CAUSE_WHO[g.cause]).join(" · ") + (runDiff ? " (" + runDiff + " — 실행 조건 영향 확인 필요)" : "");
+  const recs = [];
+  if (healN) recs.push("보정 제안 " + healN + "건 검토 · 승인 (결과 상세)");
+  if (groups["로케이터"] && groups["로케이터"].ids.length > healN) recs.push("보정 제안이 없는 로케이터 실패는 에디터에서 직접 수정");
+  if (groups["타이밍"]) recs.push("대기 조건 보정 후 다음 회차에서 재확인 (" + groups["타이밍"].ids.join(", ") + ")");
+  if (groups["검증"]) recs.push("검증 실패 " + groups["검증"].ids.length + "건은 결과 상세에서 증적 확인 후 결함 등록");
+  if (groups["환경"]) recs.push("대상 환경 · 서버 상태 확인 후 다시 실행");
+  if (revN) recs.push("케이스가 바뀐 " + revN + "건은 케이스 변경분을 먼저 확인");
+  if (runDiff) recs.push("같은 브라우저 · 러너 조건으로 다시 비교");
+  if (!recs.length) recs.push(reg.length ? "실패 시점 증적으로 원인을 확인하세요" : "조치 필요 없음 — 다음 정기 실행에서 추이 확인");
+  return (
+    <Portal><div className="fixed inset-0 z-40 flex justify-end bg-black/50" onClick={onClose}>
+      <div className="h-full w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-center justify-between"><span className="flex items-center gap-2 font-semibold text-slate-900"><Sparkles size={16} className="text-sky-600" />AI 회귀 분석</span><button onClick={onClose} className="text-slate-500 hover:text-slate-700"><X size={20} /></button></div>
+        <div className="space-y-4 text-sm">
+          <div className="flex items-center gap-2"><Badge kind="info">계산</Badge><span className="text-xs text-slate-500">결정적 분석 — 저장된 실행 결과 산술</span></div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="text-xs text-slate-500">변화 요약 · {A.id} → {B.id}</div>
+            <div className="mt-1 text-slate-800">퇴행 <b className="text-red-700">{summ["퇴행"] || 0}</b> · 개선 <b className="text-emerald-700">{summ["개선"] || 0}</b> · 유지 {summ["유지"] || 0} · PASS {rate(A)}% → {rate(B)}%</div>
+            {B.gate != null && <div className="mt-1 text-xs">품질 게이트 <span className={rate(B) >= B.gate ? "font-semibold text-emerald-700" : "font-semibold text-red-700"}>{rate(B) >= B.gate ? "통과" : "미달"}</span> <span className="text-slate-500">· 기준 {B.gate}%</span></div>}
+          </div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">무엇이 바뀌었나</div>
+            <div className="space-y-1">{snap.map((r) => <div key={r[0]} className={"flex items-center justify-between rounded px-2 py-1 text-xs " + (r[1] !== r[2] ? "bg-slate-100" : "")}><span className="text-slate-500">{r[0]}</span><span className={r[1] !== r[2] ? "text-amber-700" : "text-slate-500"}>{r[1]} → {r[2]}</span></div>)}
+              <div className="flex items-center justify-between px-2 py-1 text-xs"><span className="text-slate-500">케이스 변경</span><span className={revN ? "text-amber-700" : "text-slate-500"}>{revN ? revN + "건 (rev 다름)" : "없음"}</span></div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 border-t border-slate-200 pt-3"><Badge kind="active">AI 추정</Badge><span className="text-xs text-slate-500">서버 경유 · 개인정보 가림 · 검증 필요</span></div>
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">한 줄 결론</div>
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-slate-800">{conclusion}</div>
+          </div>
+          {G.length > 0 && <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">원인별 묶음</div>
+            <ul className="space-y-1.5">{G.map((g) => <li key={g.cause} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-700"><Badge kind={CAUSE_K[g.cause] || "draft"}>{g.cause}</Badge><span className="font-medium">{g.ids.length}건</span><span className="text-slate-500">{CAUSE_WHO[g.cause]}</span><span className="font-mono text-slate-500">— {g.ids.join(", ")}</span></li>)}</ul>
+          </div>}
+          <div>
+            <div className="mb-1.5 text-xs font-semibold text-slate-500">권장 조치</div>
+            <ul className="space-y-1.5">{recs.map((c, i) => <li key={i} className="flex gap-2 text-xs text-slate-700"><CheckCircle2 size={13} className="mt-0.5 shrink-0 text-emerald-600" />{c}</li>)}</ul>
+          </div>
+          {reg.length > 0 && <Btn icon={FileText} onClick={onOpen}>{B.id} 결과 상세{healN ? " · 보정 제안 " + healN + "건" : ""}</Btn>}
+          <ShareBox domain="FQA" subject={"회귀 리포트 " + A.id + " → " + B.id + " · 퇴행 " + (summ["퇴행"] || 0)}
+            preview={planName + " " + A.id + " → " + B.id + " · 퇴행 " + (summ["퇴행"] || 0) + " · PASS " + rate(B) + "% — " + conclusion}
+            onLeave={onClose} onDone={(chs) => flash("회귀 리포트 공유 — " + chs.join(" · ") + " (발송 이력에 기록)")} />
+          <div className="text-xs text-slate-500">＊ 계산 항목은 저장된 결과의 산술이며, AI 추정 항목(결론 · 원인 · 권고)은 참고용입니다.</div>
+        </div>
+      </div>
+    </div></Portal>
+  );
+}
 export function FqaDashboardScreen({ nav }) {
   const { fqaRuns, fqaCases, fqaSuites, fqaPlans, defects, healState } = useApp();
   const [msg, flash] = useToast();
