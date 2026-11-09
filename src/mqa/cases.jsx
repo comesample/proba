@@ -691,7 +691,8 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                 {(() => { const renderStep = (s) => { const i = d.steps.indexOf(s);
                   const a = L.ACT[s.act] || {};
                   const st = L.stateOf(s);
-                  const canPick = (a.needs || []).includes("loc") || s.act === "화면 확인";
+                  // API·코드 스텝은 화면 요소를 가리키지 않는다 — 요소 집기를 붙이지 않는다
+                  const canPick = !a.api && !a.raw && ((a.needs || []).includes("loc") || s.act === "화면 확인" || s.act === "화면에 없음 확인");
                   return (
                     <div key={s.id} id={"step-" + s.id} onDragOver={(e) => e.preventDefault()} onDrop={() => { if (dragIdx !== null && dragIdx !== i) moveStep(dragIdx, i); setDragIdx(null); }} onMouseEnter={() => setHoverN(s.n)} onMouseLeave={() => setHoverN(null)}
                       className={"border-b border-slate-200 py-2 pr-3 " + (hasProc ? "pl-9 " : "pl-3 ") + (focusStep === s.id ? "bg-red-50 ring-2 ring-inset ring-red-300 " : st === "미확정" ? "bg-amber-50/50" : hoverN === s.n ? "bg-sky-50" : "")}>
@@ -700,7 +701,10 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                         <span className="w-5 shrink-0 text-right font-mono text-xs text-slate-500">{i + 1}</span>
                         <div className="w-28 shrink-0"><Select value={s.act} onChange={(e) => updStep(s.id, { act: e.target.value })}>{L.ACTS.map((x) => <option key={x.id}>{x.id}</option>)}</Select></div>
                         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                          {(a.needs || []).includes("loc") && (raw[s.id] || !s.loc
+                          {/* API 스텝의 loc 은 화면 요소가 아니라 경로·검증 대상이다 — 요소 집기를 붙이지 않는다 */}
+                          {a.api
+                            ? <Input value={s.loc || ""} onChange={(e) => updStep(s.id, { loc: e.target.value })} placeholder={a.hint} className="font-mono text-xs" />
+                            : (a.needs || []).includes("loc") && (raw[s.id] || !s.loc
                             ? <Input value={s.loc || ""} autoFocus={!!raw[s.id]} onChange={(e) => updStep(s.id, { loc: e.target.value, el: "" })} onBlur={() => s.loc && setRaw((r) => ({ ...r, [s.id]: false }))} placeholder="요소 집기로 고르거나 로케이터 입력 (id=…)" className="font-mono text-xs" />
                             : <button onClick={() => setRaw((r) => ({ ...r, [s.id]: true }))} title={s.loc + "\n눌러서 로케이터를 직접 고칩니다"} className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left hover:border-slate-300">
                                 <span className="truncate text-sm text-slate-800">{L.elName(s)}</span>
@@ -711,6 +715,12 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                           {s.act === "텍스트 비교" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="정확히 일치해야 하는 값" />}
                           {/* 코드 스텝 — 적은 그대로 .robot 에 나간다. 요소 집기·자가보정은 받지 못한다 */}
                           {s.act === "코드 스텝" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="Long Press    id=btn    2000" className="font-mono text-xs" />}
+                          {/* API — 경로는 loc, 본문·저장은 선택. base URL 과 토큰은 환경에서 주입된다 */}
+                          {s.act === "요청" && <>
+                            <div className="w-40 shrink-0"><Input value={s.body || ""} onChange={(e) => updStep(s.id, { body: e.target.value })} placeholder="본문 (선택)" className="font-mono text-xs" /></div>
+                            <div className="w-44 shrink-0"><Input value={s.save || ""} onChange={(e) => updStep(s.id, { save: e.target.value })} placeholder="저장 (선택) orderId = $.orderId" className="font-mono text-xs" /></div>
+                          </>}
+                          {s.act === "응답 검증" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="200 · 존재 · 기대값" />}
                           {/* 방향은 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
                           {s.act === "스와이프" && <div className="w-32"><Select value={s.val || "위로"} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
                           {s.act === "대기" && <><div className="w-16"><Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="2" /></div><span className="text-xs text-slate-500">초</span></>}

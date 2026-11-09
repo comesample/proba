@@ -200,7 +200,11 @@ const useRunner = () => {
     let cases = casesOfPlan(plan, ctx.cases); if (only) cases = cases.filter((c) => only.includes(c.id));
     if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger !== "수동") app.releaseMqaDevice(dev.id);
     const args = { plan, cases, allCases: ctx.cases, sys: sy, env: e, build: b, dev, trigger, note, partial: !!only, api: app, runs: app.mqaRuns };
-    if (dev && dev.state === "사용 중" && /^실행 /.test(dev.busy || "")) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 대기열
+    /* 🔑 API 스텝만 있는 실행은 단말을 기다리지 않는다 — 기기를 안 쓰는데 점유할 이유가 없다.
+       클라우드 Device Farm 은 동시 실행 1개당 월 비용이 붙어서 그냥 낭비가 아니라 돈이 샌다.
+       (Full-Code 케이스는 무엇을 하는지 모르므로 단말이 필요하다고 본다 — 모르면 잡는 쪽이 안전하다) */
+    const useDev = cases.some((c) => c.level === "Full-Code" || L.needsDevice(c.steps));
+    if (useDev && dev && dev.state === "사용 중" && /^실행 /.test(dev.busy || "")) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 대기열
     return startRun(args);
   };
   /* 자동 실행(예약 · 새 버전) — 그 순간의 상태로 판단한다. 편집 세션은 끊고 시작, 그 밖의 문제는 건너뛰지 않고 '실행 불가' 로 기록 */
@@ -579,10 +583,21 @@ export function MqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
 }
 /* 실패 원인 판정 — 규칙으로 갈리는 것은 규칙으로, 나머지는 AI 가 근거와 함께 제안한다 (담당자가 확정)
    목업: 실패 메시지 · 같은 계획의 다른 실행 · 케이스 기준 앱 버전으로 흉내 낸다 */
-const JUDGE_K = { "테스트 문제": "warn", "앱 결함 의심": "fail", "환경 문제": "info", "확인 필요": "draft" };
+/* 🔑 '백엔드 결함 의심' 이 따로 있는 이유 — 원인이 담당자를 가른다.
+   UI 실패는 QA·프론트로, API 5xx 는 백엔드로 간다. '앱 결함' 에 섞으면 엉뚱한 사람에게 간다. */
+const JUDGE_K = { "테스트 문제": "warn", "앱 결함 의심": "fail", "백엔드 결함 의심": "fail", "환경 문제": "info", "확인 필요": "draft" };
 const judgeOf = (run, c, runs, caseNow) => {
   if (c.st !== "실패") return null;
   const m = c.failMsg || "";
+  /* 🔑 API 스텝 실패는 UI 실패와 다른 곳으로 간다 — 화면을 못 찾은 것이 아니라 서버가 답한 것이다.
+     UI 규칙(요소를 찾지 못했습니다 …)보다 먼저 본다. 메시지 모양이 겹칠 수 있다.
+     ⚠️ 목업 시뮬레이터는 아직 API 실패를 만들지 않는다 — 실 실행에서 쓰이는 경로다. */
+  const apiFail = (c.steps || []).some((x) => x.st === "실패" && (L.ACT[x.act] || {}).api);
+  if (apiFail) {
+    if (/\b5\d\d\b/.test(m)) return { kind: "백엔드 결함 의심", cause: "서버 오류 (5xx)", by: "규칙", basis: "API 응답이 5xx — 앱이 아니라 서버가 실패했습니다" };
+    if (/\b4\d\d\b/.test(m)) return { kind: "테스트 문제", cause: "요청 오류 (4xx)", by: "규칙", basis: "API 응답이 4xx — 경로 · 본문 · 권한을 확인하세요" };
+    return { kind: "확인 필요", cause: "API 응답 불일치", by: "AI", conf: "중간", basis: "API 스텝에서 실패 — 기대값과 실제 응답을 비교하세요" };
+  }
   if (/크래시|ANR/.test(m)) return { kind: "앱 결함 의심", cause: "앱 크래시", by: "규칙", basis: "앱 로그에 크래시 · ANR 기록" };
   if (/서버|연결/.test(m)) return { kind: "환경 문제", cause: "서버 · 연결 오류", by: "규칙", basis: "서버 응답 오류 · 연결 끊김 기록" };
   const others = completed(runs).filter((r) => r.id !== run.id && r.planId === run.planId);
@@ -941,7 +956,7 @@ function Flaky({ nav }) {
      · 불안정 · 지속 실패는 불안정 화면과 같은 함수(caseHistory)
      · 원인은 결과 화면과 같은 판정(judgeOf) — 담당자 확정이 우선
      · 필터(계획 · 기간)는 모든 카드에 똑같이 적용 */
-const CAUSE_COLOR = { "요소 변경": "bg-sky-500", "대기 부족 (불안정)": "bg-amber-500", "앱 결함 의심": "bg-red-500", "환경 문제": "bg-slate-500", "확인 필요": "bg-slate-300", "기대값 불일치": "bg-red-400", "테스트 문제": "bg-amber-400", "앱 크래시": "bg-red-600", "서버 · 연결 오류": "bg-slate-400", "판정 불가": "bg-slate-300" };
+const CAUSE_COLOR = { "요소 변경": "bg-sky-500", "대기 부족 (불안정)": "bg-amber-500", "앱 결함 의심": "bg-red-500", "환경 문제": "bg-slate-500", "서버 오류 (5xx)": "bg-rose-600", "요청 오류 (4xx)": "bg-amber-600", "API 응답 불일치": "bg-slate-400", "확인 필요": "bg-slate-300", "기대값 불일치": "bg-red-400", "테스트 문제": "bg-amber-400", "앱 크래시": "bg-red-600", "서버 · 연결 오류": "bg-slate-400", "판정 불가": "bg-slate-300" };
 const hbar = (p) => (p >= 90 ? "#10b981" : p >= 70 ? "#f59e0b" : "#ef4444");
 export function MqaDashboardScreen({ nav }) {
   const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [], mqaSuites = [] } = useApp();

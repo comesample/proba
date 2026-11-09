@@ -45,6 +45,24 @@ export const ACTS = [
     toLine: (s) => String(s.val).replace(/[^\d.]/g, "") + "s",
     fromLine: (tok) => ({ val: String(tok[1] || "1").replace(/[^\d.]/g, "") }),
     sample: ["Sleep    2s", "2"] },
+  /* 🔑 API — UI 와 섞어 쓴다. 현장에서 준비·정리뿐 아니라 검증도 API 로 한다.
+     화면 토스트 "장바구니에 담았습니다" 는 프론트가 보여준 것일 뿐이다.
+     서버에 실제로 반영됐는지는 API 로 봐야 안다 — UI 만 보면 조용히 통과한다.
+
+     🔑 RequestsLibrary 를 직접 쓰지 않고 proba.resource 의 키워드를 부른다.
+        직접 쓰면 ${res}= 같은 변수 대입이 케이스 본문에 들어오는데, 그건 한 줄짜리
+        동작이 아니라 상태를 만드는 문장이라 스텝 모델과 맞지 않는다.
+        '앱 실행' 을 이미 같은 방식으로 주입하고 있다 — base URL·토큰도 거기로 들어간다. */
+  { id: "요청", kw: "API 요청", needs: ["loc"], hint: "METHOD /경로 (예: POST /v1/orders)", api: true,
+    toLine: (s) => [s.loc, ...(String(s.body || "").trim() ? ["body=" + s.body] : []), ...(String(s.save || "").trim() ? ["저장=" + s.save] : [])].join(SEP),
+    fromLine: (tok) => {
+      const rest = tok.slice(1);
+      const pick = (p) => (rest.find((x) => x.startsWith(p)) || "").slice(p.length);
+      return { loc: rest.filter((x) => !/^(body=|저장=)/.test(x)).join(" "), body: pick("body="), save: pick("저장=") };
+    },
+    sample: ["API 요청    POST /v1/orders    저장=orderId=$.orderId", "POST /v1/orders"] },
+  /* loc = 검증 대상(상태코드 · $.경로), val = 기대값(200 · 존재 · 실제 값) — FQA 와 같은 모양 */
+  { id: "응답 검증", kw: "응답 검증", needs: ["loc", "val"], hint: "상태코드 또는 $.경로", api: true },
   /* 🔑 탈출구 — 위 동작으로 표현 못 하는 키워드를 그 스텝만 원본으로 둔다(FQA 코드 스텝과 같은 역할).
      이것이 없으면 케이스 '전체' 가 Full-Code 로 간다 — 한 스텝을 잃는 쪽이 낫다.
 
@@ -69,6 +87,24 @@ export const stateOf = (s) => {
   return "확정";
 };
 export const unresolvedOf = (steps) => (steps || []).filter((s) => stateOf(s) === "미확정").length;
+
+/* 응답 저장 — "이름 = $.경로" 꼴. 이름은 .robot 에서 ${이름} 이 되므로 아무 글자나 쓸 수 없다.
+   FQA 와 같은 규칙을 쓴다(영문·숫자·_ · 숫자로 시작 금지) — 두 도메인이 다르면 가져오기가 어긋난다.
+   비어 있으면 '저장 안 함' 이라 오류가 아니다. */
+const SAVE_ID = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const saveError = (save) => {
+  const v = String(save || "").trim();
+  if (!v) return "";
+  const [nm, pth] = v.split("=").map((x) => (x || "").trim());
+  if (!nm || !pth) return "\"이름 = $.경로\" 형식이 아닙니다 (예: orderId = $.orderId)";
+  if (!SAVE_ID.test(nm)) return "이름 '" + nm + "' 을 쓸 수 없습니다 (영문·숫자·_ 만, 숫자로 시작 불가)";
+  if (!/^\$\.?/.test(pth)) return "경로는 $. 로 시작합니다 (예: $.orderId)";
+  return "";
+};
+
+/* 이 케이스가 기기를 쓰는가 — API 전용 케이스는 단말을 잡지 않는다.
+   클라우드 Device Farm 은 동시 실행 1개당 월 비용이 붙는다. 안 쓰는 케이스가 점유하면 돈이 샌다. */
+export const needsDevice = (steps) => (steps || []).some((s) => !(ACT[s.act] || {}).api);
 
 /* ── 자연어 절차 ── 한 줄 = 한 단계, "→" 뒤는 기대 결과 */
 const stripNo = (t) => t.replace(/^\s*(\d+[.)]|[-•*·])\s*/, "").trim();
@@ -242,7 +278,12 @@ export const stepLine = (s, procLine) => {
   return [a.kw, ...args].join(SEP);
 };
 export const toRobot = (c) => {
-  const L = ["*** Settings ***", "Library" + SEP + "AppiumLibrary", "Resource" + SEP + "proba.resource" + SEP + "# 앱 실행 · 계정 변수 (실행 시 자동 주입)"];
+  /* API 스텝이 있으면 RequestsLibrary 를 같이 싣는다 — 케이스가 쓰는 것은 proba.resource 의
+     'API 요청'·'응답 검증' 이고, 그 안에서 이 라이브러리를 쓴다. 안 쓰는 케이스에는 싣지 않는다. */
+  const hasApi = (c.steps || []).some((s) => (ACT[s.act] || {}).api);
+  const L = ["*** Settings ***", "Library" + SEP + "AppiumLibrary",
+    ...(hasApi ? ["Library" + SEP + "RequestsLibrary"] : []),
+    "Resource" + SEP + "proba.resource" + SEP + "# 앱 실행 · 계정 변수 · API base·토큰 (실행 시 자동 주입)"];
   L.push("Test Setup" + SEP + "앱 실행", "Test Teardown" + SEP + "Close Application", "", "*** Test Cases ***", c.id + " " + c.name);
   if (c.pre) L.push(SEP + "[Documentation]" + SEP + "전제조건: " + c.pre);
   /* 전제조건 케이스 — PROBA 실행기가 그 케이스를 먼저 수행한 세션에서 시작한다 (집계에는 세지 않음) */
@@ -306,7 +347,10 @@ export const robotTestToSteps = (t, kwMap) => {
     lines.forEach((raw) => {
       const tok = raw.map((x) => subst(x, env));
       const k = tok[0]; const lk = k.toLowerCase();
-      if (CONTROL.test(k) || /^\$\{.+\}\s*=?$/.test(k)) { reasons.push(from ? "키워드 '" + from + "'에 반복·조건 포함" : "반복·조건·변수 대입 포함"); return; }
+      /* 🔑 블록 구조만 Full-Code 로 보낸다. 변수 대입(${x}= …)은 한 줄이라 코드 스텝으로 흘려보낸다.
+         전에는 둘을 같이 막아서 변수 하나 때문에 케이스 전체를 잃었다 — 1단계의 판단과 같다.
+         (대입을 코드 스텝으로 두어도 RF 는 같은 테스트 본문에서 그 변수를 그대로 읽는다) */
+      if (CONTROL.test(k)) { reasons.push(from ? "키워드 '" + from + "'에 반복·조건 포함" : "반복·조건 포함"); return; }
       if (IGNORE.includes(lk)) return;
       const st = lineToStep(tok);
       if (st) { steps.push({ id: sid(), n: steps.length + 1, ...st }); return; }

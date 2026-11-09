@@ -34,7 +34,11 @@ export const MQA_HIDDEN = [
 const MB = 1048576;
 export const INIT_MQA_SYSTEMS = [
   { id: 1, name: "샘플 쇼핑 앱", platforms: ["Android"], envs: [
+    /* 🔑 apiBase·apiTokenRef — UI 와 섞인 케이스가 서버를 확인할 때 쓴다.
+       lastCheck.url 은 WebView 화면 주소지 API 가 아니다. 케이스는 이 값을 모르고
+       실행할 때 proba.resource 로 주입된다("케이스는 환경을 모른다"). */
     { env: "스테이징", prod: false, status: "확인됨", ver: "3.2.0", deploy: { mode: "수동" },
+      apiBase: "https://api-stg.example.com", apiTokenRef: "${stg_api_token}",
       lastCheck: { at: "2026-10-29 16:40", device: "Galaxy S23 · Android 14", ver: "3.2.0", secs: 6.8, launch: "com.example.shop.MainActivity", native: { n: 5, ids: 5 }, web: true, webview: "130", url: "https://m-stg.example.com/main" },
       app: { platform: "Android", appId: "com.example.shop", defBuild: "B-102", builds: [
         { id: "B-102", ver: "3.2.0", code: 30200, minSdk: 26, file: "shop-stg-3.2.0.apk", size: 78.4 * MB, at: "2026-10-29 16:32", by: "박지영", note: "보안 기능 해제 테스트 빌드", _sim: { web: true, url: "https://m-stg.example.com/main" } },
@@ -47,6 +51,7 @@ export const INIT_MQA_SYSTEMS = [
   ] },
   { id: 2, name: "샘플 멤버십 앱", platforms: ["Android"], envs: [
     { env: "스테이징", prod: false, status: "미확인", ver: "1.8.0", deploy: { mode: "수동" },
+      apiBase: "", apiTokenRef: "",   // 아직 안 받은 환경 — API 스텝을 쓰면 실행 전에 채워야 한다
       app: { platform: "Android", appId: "com.example.membership", defBuild: "B-201", builds: [
         { id: "B-201", ver: "1.8.0", code: 10800, minSdk: 28, file: "membership-stg-1.8.0.apk", size: 41.3 * MB, at: "2026-10-27 11:48", by: "이민준", note: "", _sim: { web: false, url: "https://membership-stg.example.com/home" } },
       ] },
