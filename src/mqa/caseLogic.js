@@ -23,10 +23,21 @@ export const ACTS = [
   { id: "입력", kw: "Input Text", alias: ["Input Value"], needs: ["loc", "val"] },
   { id: "화면 확인", kw: "Wait Until Page Contains", alias: ["Page Should Contain Text"], needs: ["val"], hint: "화면에 보여야 하는 문구" },
   { id: "요소 확인", kw: "Wait Until Element Is Visible", alias: ["Element Should Be Visible"], needs: ["loc"] },
-  /* 퍼센트 네 개로 방향을 표현한다 — needs 로는 못 적어 예외로 둔다 */
-  { id: "스와이프", kw: "Swipe By Percent", needs: [], opts: ["위로", "아래로"],
-    toLine: (s) => (s.val === "아래로" ? "50    20    50    80" : "50    80    50    20"),
-    fromLine: (tok) => ({ val: Number(tok[2]) > Number(tok[4]) ? "위로" : "아래로" }),
+  /* 🔑 부정 확인 — QA 케이스의 상당수가 "없어야 한다" 다.
+     "삭제하면 목록에서 사라진다" 를 긍정 확인만으로는 쓸 수 없다. */
+  { id: "요소 없음 확인", kw: "Wait Until Element Is Not Visible", alias: ["Element Should Not Be Visible"], needs: ["loc"] },
+  { id: "화면에 없음 확인", kw: "Page Should Not Contain Text", alias: ["Wait Until Page Does Not Contain"], needs: ["val"], hint: "화면에 없어야 하는 문구" },
+  /* '화면 확인' 은 포함이고 이쪽은 정확히 같은지를 본다 — "금액이 12,000원인가" */
+  { id: "텍스트 비교", kw: "Element Text Should Be", alias: ["Element Should Contain Text"], needs: ["loc", "val"], hint: "정확히 일치해야 하는 값" },
+  /* 퍼센트 네 개로 방향을 표현한다 — needs 로는 못 적어 예외로 둔다.
+     좌우는 x 가, 상하는 y 가 움직인다. 역변환은 어느 축이 변했는지로 가른다. */
+  { id: "스와이프", kw: "Swipe By Percent", needs: [], opts: ["위로", "아래로", "왼쪽으로", "오른쪽으로"],
+    toLine: (s) => ({ "아래로": "50    20    50    80", "왼쪽으로": "80    50    20    50", "오른쪽으로": "20    50    80    50" }[s.val] || "50    80    50    20"),
+    fromLine: (tok) => {
+      const [x1, y1, x2, y2] = [tok[1], tok[2], tok[3], tok[4]].map(Number);
+      if (y1 !== y2) return { val: y1 > y2 ? "위로" : "아래로" };
+      return { val: x1 > x2 ? "왼쪽으로" : "오른쪽으로" };
+    },
     sample: ["Swipe By Percent    50    80    50    20", "위로"] },
   { id: "뒤로", kw: "Go Back", needs: [] },
   /* 값은 숫자만 받고 내보낼 때 s 를 붙인다 */
@@ -34,6 +45,14 @@ export const ACTS = [
     toLine: (s) => String(s.val).replace(/[^\d.]/g, "") + "s",
     fromLine: (tok) => ({ val: String(tok[1] || "1").replace(/[^\d.]/g, "") }),
     sample: ["Sleep    2s", "2"] },
+  /* 🔑 탈출구 — 위 동작으로 표현 못 하는 키워드를 그 스텝만 원본으로 둔다(FQA 코드 스텝과 같은 역할).
+     이것이 없으면 케이스 '전체' 가 Full-Code 로 간다 — 한 스텝을 잃는 쪽이 낫다.
+
+     ⚠️ 대신 이 스텝은 요소 집기·자가보정·AI 초안을 받지 못한다. 로케이터가 문자열 안에
+        묻혀 있어 플랫폼이 손댈 수 없다. 자주 쓰이는 키워드는 정식 동작으로 올려야 한다.
+     ⚠️ AI 초안(draftSteps)은 이 동작을 만들지 않는다 — 허용하면 어려운 것을 전부
+        여기로 떠넘겨 스텝 모델이 있으나 마나가 된다. 모르면 '미확정' 으로 남긴다. */
+  { id: "코드 스텝", kw: "", needs: ["val"], raw: true, hint: "AppiumLibrary 키워드 한 줄" },
 ];
 export const ACT = Object.fromEntries(ACTS.map((a) => [a.id, a]));
 
@@ -217,6 +236,7 @@ export const stepLine = (s, procLine) => {
   if (stateOf(s) === "미확정") return "# [미확정] " + s.n + ". " + s.act + " — " + (s.src || procLine || "값을 채워 주세요");
   const a = ACT[s.act];
   if (!a) return "# 알 수 없는 동작: " + s.act;
+  if (a.raw) return s.val;   // 코드 스텝 — 적은 그대로 내보낸다
   // 예외 변환이 있으면 그것이 인자 전부를 만든다. 없으면 needs 순서대로 값을 늘어놓는다.
   const args = a.toLine ? [a.toLine(s)] : (a.needs || []).map((k) => s[k]);
   return [a.kw, ...args].join(SEP);
@@ -281,7 +301,7 @@ const lineToStep = (tok) => {
   return st;
 };
 export const robotTestToSteps = (t, kwMap) => {
-  const steps = []; const reasons = []; const expanded = [];
+  const steps = []; const reasons = []; const expanded = []; const raws = [];
   const walk = (lines, env, depth, from) => {
     lines.forEach((raw) => {
       const tok = raw.map((x) => subst(x, env));
@@ -295,11 +315,16 @@ export const robotTestToSteps = (t, kwMap) => {
         const env2 = {}; (kw.args || []).forEach((a, i) => { env2[a.replace(/^\$\{|\}$/g, "")] = tok[i + 1] != null ? tok[i + 1] : ""; });
         expanded.push(k); walk(kw.lines, env2, depth + 1, k); return;
       }
-      reasons.push("알 수 없는 키워드: " + k);
+      /* 🔑 모르는 키워드는 그 줄만 코드 스텝으로 보존한다 — 케이스 전체를 Full-Code 로 보내지 않는다.
+         반복·조건(위 CONTROL)은 여전히 Full-Code 다. 한 줄이 아니라 블록이라 스텝으로 쪼갤 수 없다. */
+      steps.push({ id: sid(), n: steps.length + 1, act: "코드 스텝", val: tok.join(SEP), src: k });
+      raws.push(k);
     });
   };
   walk(t.lines, {}, 0, "");
-  return { steps, reasons: [...new Set(reasons)], expanded: [...new Set(expanded)] };
+  /* raws = 코드 스텝으로 보존한 키워드. 비율이 높으면 "Low-Code" 라 부르기 민망하므로
+     가져오기 화면이 건수를 보여주고 Full-Code 를 권한다 — 통계가 거짓말하지 않게. */
+  return { steps, reasons: [...new Set(reasons)], expanded: [...new Set(expanded)], raws: [...new Set(raws)] };
 };
 
 /* ── 엑셀 가져오기 ── 열 매핑 후 행 → 케이스. 절차 셀은 여러 줄 가능, 기대 결과는 줄 수가 같으면 짝지음 */

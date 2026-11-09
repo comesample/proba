@@ -707,8 +707,12 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                                 <span className={"ml-auto shrink-0 rounded px-1.5 text-xs " + (L.locKind(s.loc) === "위치" ? "bg-amber-100 text-amber-800" : "bg-slate-200 text-slate-600")}>{L.locKind(s.loc)}</span>
                               </button>)}
                           {s.act === "입력" && <ValInput value={s.val || ""} onChange={(v) => updStep(s.id, { val: v })} vars={variables} />}
-                          {s.act === "화면 확인" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="화면에 보여야 하는 문구" />}
-                          {s.act === "스와이프" && <div className="w-28"><Select value={s.val || "위로"} onChange={(e) => updStep(s.id, { val: e.target.value })}><option>위로</option><option>아래로</option></Select></div>}
+                          {(s.act === "화면 확인" || s.act === "화면에 없음 확인") && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder={a.hint || "문구"} />}
+                          {s.act === "텍스트 비교" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="정확히 일치해야 하는 값" />}
+                          {/* 코드 스텝 — 적은 그대로 .robot 에 나간다. 요소 집기·자가보정은 받지 못한다 */}
+                          {s.act === "코드 스텝" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="Long Press    id=btn    2000" className="font-mono text-xs" />}
+                          {/* 방향은 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
+                          {s.act === "스와이프" && <div className="w-32"><Select value={s.val || "위로"} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
                           {s.act === "대기" && <><div className="w-16"><Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="2" /></div><span className="text-xs text-slate-500">초</span></>}
                           {s.act === "뒤로" && <span className="text-xs text-slate-500">이전 화면으로</span>}
                         </div>
@@ -1186,8 +1190,10 @@ export function RobotImport({ onImport, onCancel }) {
   const go = () => {
     const chosen = judged.filter((x) => !off[x.i]);
     if (!chosen.length) { flash("가져올 테스트를 골라 주세요"); return; }
-    const items = chosen.map(({ t, steps, reasons, expanded }) => {
-      const base = { name: t.name, tags: t.tags.join(","), origin: "스크립트 임포트", proc: [], note: expanded.length ? "키워드 " + expanded.join(", ") + " 의 내용을 펼쳐 넣었습니다" : "" };
+    const items = chosen.map(({ t, steps, reasons, expanded, raws }) => {
+      const notes = [expanded.length ? "키워드 " + expanded.join(", ") + " 의 내용을 펼쳐 넣었습니다" : "",
+                     (raws || []).length ? "코드 스텝으로 보존: " + raws.join(", ") : ""].filter(Boolean);
+      const base = { name: t.name, tags: t.tags.join(","), origin: "스크립트 임포트", proc: [], note: notes.join(" · ") };
       if (!reasons.length) return { ...base, steps, level: "Low-Code" };
       const used = parsed.keywords.filter((k) => t.lines.some((tk) => tk[0] === k.name));
       const script = ["*** Settings ***", "Library    AppiumLibrary", "Resource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)", "Test Setup    앱 실행", "Test Teardown    Close Application", "", "*** Test Cases ***", ...t.raw, ...(used.length ? ["", "*** Keywords ***", ...used.flatMap((k) => k.raw)] : [])].join("\n");
@@ -1210,7 +1216,8 @@ export function RobotImport({ onImport, onCancel }) {
                 <tr key={x.i} className="border-t border-slate-100 align-top">
                   <td className="px-2 py-2"><input type="checkbox" checked={!off[x.i]} onChange={(e) => setOff({ ...off, [x.i]: !e.target.checked })} className="accent-sky-600" /></td>
                   <td className="py-2 text-slate-800">{x.t.name}</td>
-                  <td className="py-2">{x.reasons.length ? <><Badge kind="warn">Full-Code로</Badge><span className="ml-1.5 text-slate-500">{x.reasons.join(" · ")}</span></> : <><Badge kind="pass">Low-Code로</Badge><span className="ml-1.5 text-slate-500">{x.steps.length}개{x.expanded.length ? " · 키워드 펼침: " + x.expanded.join(", ") : ""}</span></>}</td>
+                  {/* 🔑 코드 스텝 건수를 같이 보여준다 — 비율이 높으면 "Low-Code" 라는 말이 거짓말이 된다 */}
+                  <td className="py-2">{x.reasons.length ? <><Badge kind="warn">Full-Code로</Badge><span className="ml-1.5 text-slate-500">{x.reasons.join(" · ")}</span></> : <><Badge kind="pass">Low-Code로</Badge><span className="ml-1.5 text-slate-500">{x.steps.length}개{(() => { const r = x.steps.filter((s) => s.act === "코드 스텝").length; return r ? " · 코드 스텝 " + r + "건" : ""; })()}{x.expanded.length ? " · 키워드 펼침: " + x.expanded.join(", ") : ""}</span>{(() => { const r = x.steps.filter((s) => s.act === "코드 스텝").length; return r && r * 2 > x.steps.length ? <span className="ml-1.5 text-amber-700">절반 넘게 원본입니다 — Full-Code 가 나을 수 있습니다</span> : null; })()}</>}</td>
                   <td className="py-2 text-slate-500">{x.t.tags.join(", ") || "—"}</td>
                 </tr>
               ))}</tbody>
