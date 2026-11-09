@@ -6,17 +6,40 @@
 // ============================================================
 
 /* ── 동작 = RF AppiumLibrary 키워드 1:1 ─────────────────────────
-   needs: 이 동작이 확정되려면 무엇이 있어야 하나 (loc = 대상 요소, val = 값) */
+   🔑 이 표가 유일한 출처다. 스텝→.robot(stepLine), .robot→스텝(REV·lineToStep) 이
+      전부 여기서 파생된다. 동작을 추가할 때 고칠 곳은 이 표와 편집 화면의 입력칸뿐이다.
+
+      전에는 같은 매핑을 ACTS 와 REV 두 곳에 손으로 적었고, 역변환(REV·lineToStep)을
+      빠뜨려도 알 방법이 없었다 — 내보낸 .robot 을 다시 가져오면 그 스텝만 조용히
+      Full-Code 가 된다. (CLI 가 dsl.js 로 푼 문제와 같다)
+
+   needs  이 동작이 확정되려면 무엇이 있어야 하나 (loc = 대상 요소, val = 값)
+          동시에 키워드 인자의 순서이기도 하다 — Input Text <loc> <val>
+   alias  같은 뜻으로 쓰이는 다른 키워드 (가져오기에서만 인식, 내보낼 때는 kw 를 쓴다)
+   toLine / fromLine  인자가 1:1 이 아닌 동작의 예외 변환
+   sample 왕복 예시 — 예외 변환이 있는 동작은 짝이 맞는지 여기서 눈으로 확인한다 */
 export const ACTS = [
-  { id: "탭", kw: "Click Element", needs: ["loc"] },
-  { id: "입력", kw: "Input Text", needs: ["loc", "val"] },
-  { id: "화면 확인", kw: "Wait Until Page Contains", needs: ["val"], hint: "화면에 보여야 하는 문구" },
-  { id: "요소 확인", kw: "Wait Until Element Is Visible", needs: ["loc"] },
-  { id: "스와이프", kw: "Swipe By Percent", needs: [], opts: ["위로", "아래로"] },
+  { id: "탭", kw: "Click Element", alias: ["Tap"], needs: ["loc"] },
+  { id: "입력", kw: "Input Text", alias: ["Input Value"], needs: ["loc", "val"] },
+  { id: "화면 확인", kw: "Wait Until Page Contains", alias: ["Page Should Contain Text"], needs: ["val"], hint: "화면에 보여야 하는 문구" },
+  { id: "요소 확인", kw: "Wait Until Element Is Visible", alias: ["Element Should Be Visible"], needs: ["loc"] },
+  /* 퍼센트 네 개로 방향을 표현한다 — needs 로는 못 적어 예외로 둔다 */
+  { id: "스와이프", kw: "Swipe By Percent", needs: [], opts: ["위로", "아래로"],
+    toLine: (s) => (s.val === "아래로" ? "50    20    50    80" : "50    80    50    20"),
+    fromLine: (tok) => ({ val: Number(tok[2]) > Number(tok[4]) ? "위로" : "아래로" }),
+    sample: ["Swipe By Percent    50    80    50    20", "위로"] },
   { id: "뒤로", kw: "Go Back", needs: [] },
-  { id: "대기", kw: "Sleep", needs: ["val"], hint: "초" },
+  /* 값은 숫자만 받고 내보낼 때 s 를 붙인다 */
+  { id: "대기", kw: "Sleep", needs: ["val"], hint: "초",
+    toLine: (s) => String(s.val).replace(/[^\d.]/g, "") + "s",
+    fromLine: (tok) => ({ val: String(tok[1] || "1").replace(/[^\d.]/g, "") }),
+    sample: ["Sleep    2s", "2"] },
 ];
 export const ACT = Object.fromEntries(ACTS.map((a) => [a.id, a]));
+
+/* 키워드(소문자) → 동작 id. ACTS 에서 파생한다 — 손으로 적지 않는다. */
+const REV = {};
+ACTS.forEach((a) => [a.kw, ...(a.alias || [])].forEach((k) => { REV[String(k).toLowerCase()] = a.id; }));
 
 /* 스텝 상태는 저장하지 않고 매번 계산한다 — 사람이 요소를 채우는 순간 '확정' 이 된다 */
 export const stateOf = (s) => {
@@ -192,16 +215,11 @@ export const draftSteps = (proc) => {
 const SEP = "    ";
 export const stepLine = (s, procLine) => {
   if (stateOf(s) === "미확정") return "# [미확정] " + s.n + ". " + s.act + " — " + (s.src || procLine || "값을 채워 주세요");
-  switch (s.act) {
-    case "탭": return "Click Element" + SEP + s.loc;
-    case "입력": return "Input Text" + SEP + s.loc + SEP + s.val;
-    case "화면 확인": return "Wait Until Page Contains" + SEP + s.val;
-    case "요소 확인": return "Wait Until Element Is Visible" + SEP + s.loc;
-    case "스와이프": return "Swipe By Percent" + SEP + (s.val === "아래로" ? "50    20    50    80" : "50    80    50    20");
-    case "뒤로": return "Go Back";
-    case "대기": return "Sleep" + SEP + String(s.val).replace(/[^\d.]/g, "") + "s";
-    default: return "# 알 수 없는 동작: " + s.act;
-  }
+  const a = ACT[s.act];
+  if (!a) return "# 알 수 없는 동작: " + s.act;
+  // 예외 변환이 있으면 그것이 인자 전부를 만든다. 없으면 needs 순서대로 값을 늘어놓는다.
+  const args = a.toLine ? [a.toLine(s)] : (a.needs || []).map((k) => s[k]);
+  return [a.kw, ...args].join(SEP);
 };
 export const toRobot = (c) => {
   const L = ["*** Settings ***", "Library" + SEP + "AppiumLibrary", "Resource" + SEP + "proba.resource" + SEP + "# 앱 실행 · 계정 변수 (실행 시 자동 주입)"];
@@ -225,12 +243,7 @@ export const toRobot = (c) => {
 /* ── .robot 가져오기 파서 ─────────────────────────────────────
    RF 파일 형식: *** Section *** / 들여쓰지 않은 줄 = 테스트·키워드 이름 / 들여쓴 줄 = 본문(2칸 이상 공백으로 구분)
    판정: 아는 키워드만 있으면 Low-Code(스텝), 반복·조건·변수 대입·모르는 키워드가 있으면 Full-Code */
-const REV = {
-  "click element": "탭", "tap": "탭", "input text": "입력", "input value": "입력",
-  "wait until page contains": "화면 확인", "page should contain text": "화면 확인",
-  "wait until element is visible": "요소 확인", "element should be visible": "요소 확인",
-  "swipe by percent": "스와이프", "go back": "뒤로", "sleep": "대기",
-};
+/* REV 는 위 ACTS 에서 파생된다 (파일 상단 참조) */
 const IGNORE = ["open application", "close application", "close all applications", "log", "capture page screenshot"];
 const CONTROL = /^(FOR|END|IF|ELSE IF|ELSE|WHILE|TRY|EXCEPT|FINALLY|BREAK|CONTINUE|RETURN)$/;
 export const parseRobot = (text, fileName) => {
@@ -258,15 +271,14 @@ export const parseRobot = (text, fileName) => {
    사용자 키워드(*** Keywords ***) 호출은 그 내용을 '펼쳐 넣는다' — 인자는 호출 값으로 치환.
    (MQA 는 공통 키워드라는 별도 개념을 두지 않는다. 재사용은 FQA 와 같은 '전제조건 케이스' 로 한다) */
 const subst = (v, env) => String(v).replace(/\$\{([^}]+)\}/g, (m, k) => (k in env ? env[k] : m));
-const lineToStep = (tok, n) => {
-  const act = REV[tok[0].toLowerCase()];
-  if (act === "탭" || act === "요소 확인") return { act, loc: tok[1] || "" };
-  if (act === "입력") return { act, loc: tok[1] || "", val: tok[2] || "" };
-  if (act === "화면 확인") return { act, val: tok[1] || "" };
-  if (act === "스와이프") return { act, val: Number(tok[2]) > Number(tok[4]) ? "위로" : "아래로" };
-  if (act === "뒤로") return { act };
-  if (act === "대기") return { act, val: String(tok[1] || "1").replace(/[^\d.]/g, "") };
-  return null;
+/* 줄 → 스텝. stepLine 의 역방향이고 같은 ACTS 를 본다 — 둘이 어긋날 수 없다. */
+const lineToStep = (tok) => {
+  const a = ACT[REV[String(tok[0] || "").toLowerCase()]];
+  if (!a) return null;                       // 모르는 키워드 → 호출부가 Full-Code 로 보낸다
+  if (a.fromLine) return { act: a.id, ...a.fromLine(tok) };
+  const st = { act: a.id };
+  (a.needs || []).forEach((k, i) => { st[k] = tok[i + 1] || ""; });
+  return st;
 };
 export const robotTestToSteps = (t, kwMap) => {
   const steps = []; const reasons = []; const expanded = [];
