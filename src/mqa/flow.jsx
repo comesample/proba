@@ -82,7 +82,11 @@ export const setSpeed = (v) => { SPEED = v; };
 /* 단말별 대기열 — 1단말 1작업. 실행 중인 단말에 들어온 실행은 막지 않고 줄을 세운다 */
 const QUEUE = {};   // devId → [{ id, args }]
 export const queueOf = (devId) => (QUEUE[devId] || []).map((q) => q.id);
-const actName = (s) => ((L.ACT[s.act] || { needs: [] }).needs.includes("loc") ? L.elName(s) : s.act === "화면 확인" ? "\"" + (s.val || "") + "\"" : s.act === "입력" ? "" : s.val || "");
+/* 🔑 API 스텝의 loc 은 화면 요소가 아니라 경로·검증 대상이다 — 요소로 풀면 "위치로 지정한 요소" 가 되어
+   어느 경로를 쳤는지가 화면에서 사라진다. api 를 먼저 가른다. */
+const actName = (s) => { const a = L.ACT[s.act] || { needs: [] };
+  if (a.api) return [s.loc, s.val].filter(Boolean).join(" = ");
+  return a.needs.includes("loc") ? L.elName(s) : s.act === "화면 확인" ? "\"" + (s.val || "") + "\"" : s.act === "입력" ? "" : s.val || ""; };
 const robotRows = (code) => String(code || "").split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "ok", msg: "" } }));
 /* 같은 순간에 여러 실행을 만들 수 있어(새 버전 이벤트) 마지막으로 낸 번호도 함께 본다 */
 let LAST_RUN_NO = 0;
@@ -151,6 +155,11 @@ export function startRun(args) {
   at(t, () => {
     cur.cases.forEach((rc) => { if (rc.st === "대기") rc.st = "건너뜀"; });
     cur.status = "완료"; cur.phase = ""; cur.endedAt = nowStamp(); cur.log.push({ lv: "INFO", t: "완료 · 단말 반납" });
+    /* 원인을 지금 박는다 — 이 시점의 이력으로 판단하고, 이후 실행이 과거를 바꾸지 못하게 한다 */
+    cur.cases.filter((rc) => rc.st === "실패" && !rc.cause).forEach((rc) => {
+      const j = judgeOf(cur, rc, api.mqaRuns || [], (api.mqaCases || []).find((x) => x.id === rc.id));
+      if (j) rc.cause = j;
+    });
     api.releaseMqaDevice(dev.id);
     if (api.notify) { const p = cur.cases.filter((x) => x.st === "통과").length, f = cur.cases.filter((x) => x.st === "실패").length; api.notify({ icon: "play", text: plan.name + " 완료 — 통과 " + p + " / 실패 " + f, to: { domain: "MQA", view: "mqa-result-detail", run: id } }); }
     runAlert(cur, api);
@@ -557,7 +566,9 @@ export function MqaHistoryScreen({ nav }) {
             {hist.map((r) => { const v = verdictOf(r); const n = (r.cases || []).length; const p = (r.cases || []).filter((c) => c.st === "통과").length; const pr = passRate(r); return (
               <tr key={r.id} onClick={() => nav && nav("mqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
                 <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td>
-                <td className="text-slate-800">{planNow(r) || r.planName}{planNow(r) && r.planName && planNow(r) !== r.planName && <span className="ml-1.5 text-xs text-slate-500">· 당시 “{r.planName}”</span>}</td>
+                {/* 🔑 부분 실행 표시 — 회귀 비교·대시보드에는 이미 있는데 이 표에만 없었다.
+                    없으면 "실패 2건만 다시 돌려 통과" 가 계획 전체가 통과한 회차로 읽힌다. */}
+                <td className="text-slate-800">{planNow(r) || r.planName}{r.partial && <span className="ml-1.5 rounded bg-amber-100 px-1.5 text-xs text-amber-800">부분</span>}{planNow(r) && r.planName && planNow(r) !== r.planName && <span className="ml-1.5 text-xs text-slate-500">· 당시 “{r.planName}”</span>}</td>
                 <td className="font-mono text-xs text-slate-500">{r.build ? "v" + r.build : "-"}</td>
                 <td className="text-xs text-slate-500">{r.sysName} · {r.env}</td>
                 <td className="text-xs text-slate-500">{String(r.device || "-").split(" — ")[0]}</td>
@@ -586,8 +597,14 @@ export function MqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
 /* 🔑 '백엔드 결함 의심' 이 따로 있는 이유 — 원인이 담당자를 가른다.
    UI 실패는 QA·프론트로, API 5xx 는 백엔드로 간다. '앱 결함' 에 섞으면 엉뚱한 사람에게 간다. */
 const JUDGE_K = { "테스트 문제": "warn", "앱 결함 의심": "fail", "백엔드 결함 의심": "fail", "환경 문제": "info", "확인 필요": "draft" };
+/* 🔑 원인은 회차의 일부다 — 완료 시점에 한 번 정하고 그 뒤로는 바뀌지 않는다.
+   전에는 조회할 때마다 다시 계산해서, 고친 뒤 재실행해 통과하면 '과거 회차' 의 원인이
+   '요소 변경' → '대기 부족(불안정)' 으로 소급 변경됐다. 실제로 고친 원인이 통계에서 사라지고
+   일어나지 않은 원인이 기록으로 남는다. (F5 — 참조는 깨지고 사실은 안 깨진다)
+   c.cause 가 있으면 그것이 정본이고, 없으면 이 함수가 처음 정하는 순간이다. */
 const judgeOf = (run, c, runs, caseNow) => {
   if (c.st !== "실패") return null;
+  if (c.cause) return c.cause;              // 완료 시점에 동결된 판정
   const m = c.failMsg || "";
   /* 🔑 API 스텝 실패는 UI 실패와 다른 곳으로 간다 — 화면을 못 찾은 것이 아니라 서버가 답한 것이다.
      UI 규칙(요소를 찾지 못했습니다 …)보다 먼저 본다. 메시지 모양이 겹칠 수 있다.
@@ -659,7 +676,7 @@ function ResultDetail({ runId, back, backLabel, nav }) {
       </Card>
       {run.status === "실행 불가" ? <Card className="p-4 text-sm text-red-700">{run.note}<div className="mt-1 text-xs text-slate-500">예약 시각에 실행 조건을 만족하지 못해 실행하지 않았습니다. 테스트 기기에서 러너 · 단말 상태를 확인하세요.</div></Card> : (<>
       <div className="grid grid-cols-4 gap-3">{SUM.map((k) => <Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>)}</div>
-      {pr != null && <Card className="flex items-center gap-3 p-3 text-sm"><span className={"font-semibold " + (gateOk(run) ? "text-emerald-700" : "text-red-700")}>품질 게이트 {gateOk(run) ? "통과" : "미달"}</span><span className="text-xs text-slate-500">PASS {pr}% · 기준 {run.gate}%</span><div className="h-2 flex-1 rounded bg-slate-100"><div className={"h-2 rounded " + (gateOk(run) ? "bg-emerald-500" : "bg-red-500")} style={{ width: pr + "%" }} /></div></Card>}
+      {pr != null && <Card className="flex items-center gap-3 p-3 text-sm"><span className={"font-semibold " + (gateOk(run) ? "text-emerald-700" : "text-red-700")}>품질 게이트 {gateOk(run) ? "통과" : "미달"}</span><span className="text-xs text-slate-500">PASS {pr}% · 기준 {run.gate}%</span>{/* 🔑 부분 실행이면 모집단이 계획 전체가 아니다 — 숫자는 그대로 두고 범위를 밝힌다. */}{run.partial && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-800">부분 실행 기준 — 계획 전체가 아닙니다</span>}<div className="h-2 flex-1 rounded bg-slate-100"><div className={"h-2 rounded " + (gateOk(run) ? "bg-emerald-500" : "bg-red-500")} style={{ width: pr + "%" }} /></div></Card>}
       <div className="grid grid-cols-12 gap-4">
         <Card className="col-span-4 overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">케이스 <span className="text-xs font-normal text-slate-500">{run.cases.length}건</span></div>
@@ -886,11 +903,14 @@ function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems
    · 최근 FLAKY_WINDOW 회의 완료 실행만 본다
    · 같은 앱 버전 안에서 통과/실패가 섞이면 '불안정' — 버전이 바뀐 뒤 계속 실패하면 불안정이 아니라 '지속 실패(회귀)'
    · 연속 2회 이상 실패도 '지속 실패'
-   · 담당자가 결과 화면에서 '앱 결함 의심' 으로 확정한 실패가 있으면 '결함' 으로 (불안정에서 뺀다) */
+   · 담당자가 결과 화면에서 '앱 결함 의심' 으로 확정한 실패가 있으면 '결함' 으로 (불안정에서 뺀다)
+   · 🔑 '실패만 다시' 같은 부분 실행은 빼고 전체 실행만 본다 — 다른 집계와 같은 규칙이다.
+     안 빼면 "고쳐서 다시 돌려 통과" 가 같은 버전 안의 통과/실패 혼재로 읽혀 '불안정' 이 되고,
+     화면이 '격리' 를 권한다. 수정을 확인한 행위가 케이스를 빼라는 권고로 바뀐다. */
 export const FLAKY_WINDOW = 5;
 export const caseHistory = (runs) => {
   const m = {};
-  completed(runs).slice().reverse().forEach((r) => r.cases.forEach((c) => {
+  completed(runs).filter((r) => !r.partial).slice().reverse().forEach((r) => r.cases.forEach((c) => {
     if (c.st !== "통과" && c.st !== "실패") return;
     (m[c.id] = m[c.id] || { id: c.id, name: c.name, seq: [] }).seq.push({ st: c.st, run: r.id, build: r.build, judged: (r.judged || {})[c.id], defect: (r.defects || {})[c.id] });
   }));

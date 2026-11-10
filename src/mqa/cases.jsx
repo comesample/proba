@@ -467,8 +467,12 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
     if (sessionRef.current) endSession(true);
     lockMqaDevice(dev.id, "디버그 실행 " + tc.id); held.current = dev.id;
     const rows = isFull
-      ? String(d.code).split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "ok", msg: "" } }))
-      : d.steps.map((x, i) => ({ i, id: x.id, act: x.act, name: (L.ACT[x.act] || { needs: [] }).needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build, dbg) }));
+      /* 🔑 Full-Code 는 플랫폼이 한 줄씩 검증하지 않는다 — 통과(ok)로 칠하면 "확인했다"는 거짓이 된다.
+         "평가 안 함(na)"으로 두어 버전 확인·승인 가드가 이 실행을 근거로 삼지 않게 한다 */
+      ? String(d.code).split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "na", msg: "" } }))
+      // API 스텝은 loc 이 경로다 — 요소로 풀면 "위치로 지정한 요소" 가 되어 무엇을 쳤는지 사라진다
+      : d.steps.map((x, i) => { const a = L.ACT[x.act] || { needs: [] };
+          return { i, id: x.id, act: x.act, name: a.api ? [x.loc, x.val].filter(Boolean).join(" = ") : a.needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build, dbg) }; });
     const pre = d.preCase ? [{ pre: true, act: "전제조건 " + d.preCase, name: ((mqaCases.find((x) => x.id === d.preCase) || {}).name || "") + (d.acctRole ? " · " + d.acctRole + " 계정" : ""), res: { st: "ok", msg: "" } }] : [];
     const all = [...pre, ...rows];
     const failAt = all.findIndex((r) => r.res.st === "fail");
@@ -481,7 +485,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
       const fail = failAt >= 0 ? all[failAt] : null;
       setRunRes((r) => r && { ...r, done: true, at, fail, steps: r.steps.map((x, j) => (failAt >= 0 && j > failAt ? { ...x, st: "skip" } : x)) });
       releaseMqaDevice(held.current); held.current = null;
-      if (!isNew) updateMqaCase(tc.id, { lastDry: { at, build, env: dbgEnv, device: dev.model, result: fail ? "실패" : "통과", ...(fail && !fail.pre ? { failStep: fail.i + 1 } : {}) } });
+      if (!isNew) updateMqaCase(tc.id, { lastDry: { at, build, env: dbgEnv, device: dev.model, result: isFull ? "평가 안 함" : fail ? "실패" : "통과", ...(fail && !fail.pre ? { failStep: fail.i + 1 } : {}) } });
     }, 350 * (last + 1) + 250);
   };
   /* 검토 — 에디터에서 바로 승인 · 반려한다 (목록으로 돌아가 서랍을 열지 않아도 되게)
@@ -722,8 +726,10 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                             <div className="w-44 shrink-0"><Input value={s.save || ""} onChange={(e) => updStep(s.id, { save: e.target.value })} placeholder="저장 (선택) orderId = $.orderId" className="font-mono text-xs" /></div>
                           </>}
                           {s.act === "응답 검증" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="200 · 존재 · 기대값" />}
-                          {/* 방향·컨텍스트는 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
-                          {(s.act === "스와이프" || s.act === "화면 전환") && <div className="w-40"><Select value={s.val || (a.opts || [])[0]} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
+                          {/* 방향은 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
+                          {s.act === "스와이프" && <div className="w-32"><Select value={s.val || (a.opts || [])[0]} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
+                          {/* 컨텍스트 이름은 앱마다 달라 목록으로 못 만든다 — 기기에서 확인해 적는다 */}
+                          {s.act === "화면 전환" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder={a.hint} className="font-mono text-xs" />}
                           {s.act === "키보드 숨기기" && <span className="text-xs text-slate-500">입력 후 가려진 버튼을 누르려면 필요합니다</span>}
                           {s.act === "대기" && <><div className="w-16"><Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="2" /></div><span className="text-xs text-slate-500">초</span></>}
                           {s.act === "뒤로" && <span className="text-xs text-slate-500">이전 화면으로</span>}
@@ -732,7 +738,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                         {canPick ? <button onClick={() => openPick(s.id)} title="기기 화면에서 요소 집기" className="shrink-0 text-sky-600 hover:text-sky-800"><MousePointerClick size={15} /></button> : <span className="w-[15px] shrink-0" />}
                         <button onClick={() => delStep(s.id)} className="shrink-0 text-slate-400 hover:text-red-600" title="스텝 삭제"><X size={13} /></button>
                       </div>
-                      {st === "미확정" && s.why && <div className="mt-1 pl-14 text-xs text-amber-700">{s.why}</div>}
+                      {st === "미확정" && L.stepWhy(s) && <div className="mt-1 pl-14 text-xs text-amber-700">{L.stepWhy(s)}</div>}
                     </div>
                   );
                 };
@@ -777,16 +783,19 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                   {runRes.steps.map((x, i) => (
                     <div key={i} className={"border-b border-slate-200 px-3 py-1.5 text-xs last:border-0 " + (x.st === "fail" ? "bg-red-50" : "")}>
                       <div className="flex items-center gap-2">
-                        {x.st === "ok" ? <CheckCircle2 size={13} className="text-emerald-600" /> : x.st === "warn" ? <AlertTriangle size={13} className="text-amber-600" /> : x.st === "fail" ? <XCircle size={13} className="text-red-600" /> : x.st === "skip" ? <span className="h-[13px] w-[13px] rounded-full border border-slate-300" /> : <RefreshCw size={13} className="animate-spin text-slate-400" />}
+                        {x.st === "ok" ? <CheckCircle2 size={13} className="text-emerald-600" /> : x.st === "warn" ? <AlertTriangle size={13} className="text-amber-600" /> : x.st === "fail" ? <XCircle size={13} className="text-red-600" /> : x.st === "skip" || x.st === "na" ? <span className="h-[13px] w-[13px] rounded-full border border-slate-300" /> : <RefreshCw size={13} className="animate-spin text-slate-400" />}
                         <span className={"shrink-0 " + (x.pre ? "text-slate-500" : x.st === "skip" ? "text-slate-400" : "text-slate-700")}>{x.pre ? "" : (x.i != null ? x.i + 1 + ". " : "")}{x.act}</span>
                         <span className={"flex-1 truncate " + (x.st === "skip" ? "text-slate-400" : "text-slate-600")}>{x.name}{x.act === "화면 확인" ? "\"" + x.val + "\"" : x.val ? " · \"" + x.val + "\"" : ""}</span>
                         {x.st === "skip" && <span className="shrink-0 text-slate-400">실행 안 함</span>}
+                        {x.st === "na" && <span className="shrink-0 text-slate-400">평가 안 함</span>}
                       </div>
                       {(x.st === "fail" || x.st === "warn") && x.res.msg && <div className={"mt-0.5 pl-5 " + (x.st === "fail" ? "text-red-700" : "text-amber-700")}>{x.res.msg}</div>}
                     </div>
                   ))}
                 </div>
-                {runRes.done && !runRes.fail && <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800"><CheckCircle2 size={14} />통과 · {runRes.at}</div>}
+                {runRes.done && !runRes.fail && (isFull
+                  ? <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">실행 완료 · {runRes.at} — <span className="font-semibold">평가 안 함</span>. Full-Code 는 스크립트를 그대로 돌리므로 플랫폼이 스텝별 성공·실패를 판정하지 않습니다. 실제 결과는 실행 로그·리포트에서 확인하세요.</div>
+                  : <div className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800"><CheckCircle2 size={14} />통과 · {runRes.at}</div>)}
                 {runRes.done && runRes.fail && (
                   <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-3">
                     <div className="flex h-24 w-14 shrink-0 flex-col items-center justify-center rounded-md border border-slate-300 bg-white text-slate-400" title="실패한 순간의 화면"><Smartphone size={14} /><span className="mt-1 text-[10px]">실패 화면</span></div>

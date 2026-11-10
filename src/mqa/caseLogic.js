@@ -26,7 +26,10 @@ export const ACTS = [
   /* 🔑 부정 확인 — QA 케이스의 상당수가 "없어야 한다" 다.
      "삭제하면 목록에서 사라진다" 를 긍정 확인만으로는 쓸 수 없다. */
   { id: "요소 없음 확인", kw: "Wait Until Element Is Not Visible", alias: ["Element Should Not Be Visible"], needs: ["loc"] },
-  { id: "화면에 없음 확인", kw: "Page Should Not Contain Text", alias: ["Wait Until Page Does Not Contain"], needs: ["val"], hint: "화면에 없어야 하는 문구" },
+  /* 🔑 기다리는 쪽을 내보낸다. 즉시 평가(Page Should Not Contain Text)로 내보내면
+     사라지는 중인 토스트·애니메이션을 "아직 있다" 고 읽어 거의 항상 거짓 실패가 난다.
+     긍정 확인(Wait Until Page Contains)도 기다리는 쪽이라 짝이 맞는다. */
+  { id: "화면에 없음 확인", kw: "Wait Until Page Does Not Contain", alias: ["Page Should Not Contain Text"], needs: ["val"], hint: "화면에서 사라져야 하는 문구" },
   /* '화면 확인' 은 포함이고 이쪽은 정확히 같은지를 본다 — "금액이 12,000원인가" */
   { id: "텍스트 비교", kw: "Element Text Should Be", alias: ["Element Should Contain Text"], needs: ["loc", "val"], hint: "정확히 일치해야 하는 값" },
   /* 퍼센트 네 개로 방향을 표현한다 — needs 로는 못 적어 예외로 둔다.
@@ -45,7 +48,10 @@ export const ACTS = [
      WebView 전환: 네이티브 껍데기 + WebView 인 앱은 이것이 없으면 안쪽을 아예 못 만진다.
                    (국내 앱 상당수가 이 구조다 — 없으면 그 고객군이 통째로 Full-Code) */
   { id: "키보드 숨기기", kw: "Hide Keyboard", needs: [] },
-  { id: "화면 전환", kw: "Switch To Context", needs: ["val"], hint: "NATIVE_APP 또는 WEBVIEW_…", opts: ["NATIVE_APP", "WEBVIEW"] },
+  /* 🔑 드롭다운으로 만들 수 없다 — WebView 컨텍스트 이름은 WEBVIEW_<패키지> 또는 WEBVIEW_<번호> 라
+     앱마다 다르다. 'WEBVIEW' 단독은 실기기에 존재하지 않는 값이라, 고르면 반드시 실패한다.
+     이름은 기기에서 확인해 적는다(Appium 의 contexts 조회). */
+  { id: "화면 전환", kw: "Switch To Context", needs: ["val"], hint: "NATIVE_APP 또는 WEBVIEW_com.example.shop" },
   /* 값은 숫자만 받고 내보낼 때 s 를 붙인다 */
   { id: "대기", kw: "Sleep", needs: ["val"], hint: "초",
     toLine: (s) => String(s.val).replace(/[^\d.]/g, "") + "s",
@@ -90,7 +96,20 @@ export const stateOf = (s) => {
   if (!a) return "미확정";
   if (a.needs.includes("loc") && !String(s.loc || "").trim()) return "미확정";
   if (a.needs.includes("val") && !String(s.val || "").trim()) return "미확정";
+  /* 🔑 저장식이 틀린 것도 '미확정' 으로 본다 — 칸은 채워졌지만 그대로 내보내면 실행에서 깨진다.
+     새 상태를 만들지 않는 이유: 미확정이 이미 저장·디버그 실행·승인을 막고 있다.
+     상태를 하나 더 두면 같은 가드를 세 군데에 또 붙여야 한다. */
+  if (saveError(s.save)) return "미확정";
   return "확정";
+};
+/* 미확정 사유 — 스텝 행이 'why' 자리에 보여준다. 무엇을 고쳐야 하는지 말해 주지 않으면
+   칸이 다 찬 스텝이 노란 배지만 달고 있어 사용자가 이유를 알 수 없다. */
+export const stepWhy = (s) => {
+  const a = ACT[s.act];
+  if (!a) return "알 수 없는 동작입니다";
+  const e = saveError(s.save);
+  if (e) return "응답 저장 — " + e;
+  return s.why || "";
 };
 export const unresolvedOf = (steps) => (steps || []).filter((s) => stateOf(s) === "미확정").length;
 
@@ -479,8 +498,13 @@ const L_ELEMS = () => SCREEN_ELEMENTS;
 /* ── Full-Code 문법 검사 (목업) — 실행하지 않고 구조만 본다
    실 구현: 러너/서버에서 Robot Framework 의 dry-run 으로 키워드 존재 · 인자 수까지 확인한다
    오류(error)는 검토중 저장 · 디버그 실행을 막고, 주의(warn)는 알리기만 한다 */
-const KNOWN_KW = ["click element", "tap", "input text", "input value", "wait until page contains", "page should contain text", "wait until element is visible", "element should be visible",
-  "swipe by percent", "go back", "sleep", "log", "capture page screenshot", "open application", "close application", "close all applications", "앱 실행", "전제조건 케이스"];
+/* 🔑 ACTS 에서 파생한다 — 손으로 적으면 동작을 추가할 때마다 빠뜨리고,
+   그러면 플랫폼이 '자기가 만든 키워드' 를 알 수 없는 키워드라고 경고한다(실제로 그랬다).
+   뒤의 목록은 ACTS 에 없지만 .robot 에 정상적으로 나오는 것들 — 실행기가 넣거나 RF 기본 키워드다. */
+const KNOWN_KW = [
+  ...ACTS.filter((a) => a.kw).flatMap((a) => [a.kw, ...(a.alias || [])]).map((k) => k.toLowerCase()),
+  "log", "capture page screenshot", "open application", "close application", "close all applications", "앱 실행", "전제조건 케이스",
+];
 const CTRL = /^(FOR|END|IF|ELSE IF|ELSE|WHILE|TRY|EXCEPT|FINALLY|BREAK|CONTINUE|RETURN)$/;
 export const checkRobot = (code) => {
   const lines = String(code || "").replace(/\r/g, "").split("\n");
