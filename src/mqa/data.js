@@ -131,6 +131,18 @@ export const INIT_MQA_CASES = [
       { id: "s704", n: 3, act: "탭", loc: P + "btn_cart_add", el: "장바구니 담기 버튼" },
       { id: "s705", n: 3, act: "화면 확인", val: "장바구니에 담았습니다" },
     ] },
+  /* 🔑 UI 와 API 가 섞인 케이스 — 화면 토스트는 "프론트가 보여준 것" 까지만 말한다.
+     서버에 실제로 담겼는지는 API 로 확인해야 안다. UI 만 보면 조용히 통과한다. */
+  { id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", systemId: 1, suiteId: 3, tags: "regression", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "", preCase: "", acctRole: "일반", lastDry: { at: "10:31", build: "3.2.0", env: "스테이징", result: "통과" },
+    proc: [{ t: "상품 상세에서 장바구니 담기를 누른다", e: "\"장바구니에 담았습니다\"가 보인다" }, { t: "서버 장바구니를 조회한다", e: "담긴 상품이 1건이다" }],
+    steps: [
+      { id: "s801", n: 1, act: "탭", loc: P + "btn_cart_add", el: "장바구니 담기 버튼" },
+      { id: "s802", n: 1, act: "화면 확인", val: "장바구니에 담았습니다" },
+      { id: "s803", n: 2, act: "요청", loc: "GET /v1/cart", save: "cnt = $.items.length" },
+      { id: "s804", n: 2, act: "응답 검증", loc: "상태코드", val: "200" },
+      { id: "s805", n: 2, act: "응답 검증", loc: "$.items.length", val: "1" },
+    ] },
   { id: "TC-005", name: "상품 3개 연속 담기", systemId: 1, suiteId: 3, tags: "", status: "초안", origin: "스크립트 임포트", level: "Full-Code", mismatch: false, baseBuild: "",
     note: "Full-Code로 가져옴 — 반복·조건·변수 대입 포함",
     pre: "", preCase: "TC-001", acctRole: "일반", proc: [], steps: [],
@@ -170,8 +182,20 @@ const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", preCas
 const TC6 = (fail) => ({ id: "TC-006", name: "로그인 · 빈 장바구니로 시작", st: fail ? "실패" : "통과", preCase: "", ...(fail ? { failStep: 6, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
   steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("탭", "장바구니 탭"), fail ? { ...st("탭", "전체 삭제", "실패"), msg: "요소를 찾지 못했습니다" } : st("탭", "전체 삭제"), fail ? st("화면 확인", "\"장바구니가 비어 있습니다\"", "실행 안 함") : st("화면 확인", "\"장바구니가 비어 있습니다\"")] });
 const RUN = (id, build, at, end, trig, cases) => ({ id, planId: 1, planName: "야간 회귀 · 스테이징", systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, devId: "D-3", device: "Galaxy A54 (Android 14) — 10층 실행 PC", trigger: trig, status: "완료", startedAt: at, endedAt: end, gate: 90, retry: 1, note: "", cases, log: [] });
+/* API 스텝에서 실패한 회차 — 화면은 성공했는데 서버 반영이 안 됐다.
+   UI 만 봤으면 '통과' 로 끝났을 실패이고, 원인은 앱이 아니라 백엔드로 간다(judgeOf 참고). */
+const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", st: fail ? "실패" : "통과", preCase: "",
+  ...(fail ? { failStep: 4, failMsg: "응답 상태코드 500 — 기대 200", retried: 1 } : {}),
+  steps: [
+    st("탭", "장바구니 담기 버튼"),
+    st("화면 확인", "\"장바구니에 담았습니다\""),   // 프론트는 성공했다고 말한다
+    st("요청", "GET /v1/cart"),
+    fail ? { ...st("응답 검증", "상태코드", "실패"), msg: "응답 상태코드 500 — 기대 200" } : st("응답 검증", "상태코드"),
+    fail ? st("응답 검증", "$.items.length", "실행 안 함") : st("응답 검증", "$.items.length"),
+  ] });
 export const INIT_MQA_RUNS = [
-  RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", [TC1(), TC6(false)]),
-  RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", [TC1(), TC6(true)]),
-  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", [TC1(), TC6(false)]),
+  RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", [TC1(), TC6(false), TC8(false)]),
+  /* 한 회차에 원인이 둘 — 요소 변경(UI)과 백엔드 결함(API). 담당자가 갈리는 것을 보여준다 */
+  RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", [TC1(), TC6(true), TC8(true)]),
+  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", [TC1(), TC6(false), TC8(false)]),
 ];
