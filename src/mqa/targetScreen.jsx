@@ -32,7 +32,7 @@ const readAppFile = (name, app, sysId) => {
   return { ver, code: verCode(ver.split(/[-_]/)[0]), appId: app.appId || "com.example.app" + sysId, minSdk: (latest && latest.minSdk) || 26, _sim: sim };
 };
 const ST_K = { "확인됨": "pass", "미확인": "warn", "실패": "fail" };
-const newEnv = (name, appId) => ({ env: name, prod: name === "운영", status: "미확인", ver: "-", accts: [], deploy: { mode: "수동" }, app: { platform: "Android", appId: appId || "", builds: [], defBuild: null } });
+const newEnv = (name, appId) => ({ env: name, prod: name === "운영", status: "미확인", ver: "-", accts: [], apiBase: "", apiTokenRef: "", deploy: { mode: "수동" }, app: { platform: "Android", appId: appId || "", builds: [], defBuild: null } });
 
 /* 앱 실행 확인 — 별도 카드. 진행 중이든 결과든 같은 3줄(설치·실행 / 웹 화면 연결 / 열린 주소)을 유지해
    화면이 들썩이지 않게 한다. 각 줄은 상태 아이콘 + 이름 + 값, 글자 크기는 한 가지 */
@@ -365,6 +365,19 @@ export function MqaTargetScreen() {
                 {(!cfg.accts || cfg.accts.length === 0) && <div className="px-1 py-2 text-xs text-slate-500">이 환경의 계정이 없습니다 — + 계정으로 추가</div>}
               </div>
               <div className="text-xs text-slate-500">케이스의 <span className="text-slate-700">실행 계정 역할</span>과 같은 역할의 계정이 <span className="font-mono text-sky-600">{"${계정 ID}"}</span>·<span className="font-mono text-sky-600">{"${계정 비밀번호}"}</span>로 주입됩니다.{env.prod && " 운영 환경은 테스트 전용(합성) 계정만 쓰세요."}</div>
+            </Card>
+
+            {/* API — 계정과 같은 자리에 둔다. 둘 다 "케이스가 모르는 환경 정보" 이고 실행할 때 주입된다.
+                케이스에는 'GET /v1/cart' 처럼 경로만 적히고, 앞의 주소는 여기서 붙는다. */}
+            <Card className="space-y-3 p-4">
+              <div className="text-sm font-semibold text-slate-800">API</div>
+              <Field label="Base URL" hint="케이스의 요청 경로 앞에 붙습니다 — 비우면 API 스텝이 실패합니다">
+                <Input value={cfg.apiBase || ""} onChange={(e) => setEnvCfg({ apiBase: e.target.value })} placeholder="https://api-stg.example.com" className="font-mono text-xs" />
+              </Field>
+              <Field label="인증 토큰 (변수 참조)" hint="값을 직접 적지 않습니다 — 공통 변수 화면에서 관리합니다">
+                {secretRef(cfg.apiTokenRef, (val) => setEnvCfg({ apiTokenRef: val }), "${stg_api_token}")}
+              </Field>
+              {!String(cfg.apiBase || "").trim() && <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-700">Base URL 이 없습니다 — 이 환경에서는 <span className="font-semibold">요청·응답 검증 스텝이 실패</span>합니다. UI 스텝만 있는 케이스는 영향이 없습니다.</div>}
             </Card>
           </div>
         </div>

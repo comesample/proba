@@ -40,6 +40,12 @@ export const ACTS = [
     },
     sample: ["Swipe By Percent    50    80    50    20", "위로"] },
   { id: "뒤로", kw: "Go Back", needs: [] },
+  /* 🔑 모바일에서만 생기는 두 가지 — 빈도가 명백해 증거를 기다리지 않고 올렸다.
+     키보드 숨기기: 입력 후 키보드가 다음 버튼을 덮어 탭이 안 먹는다. '대기' 로는 못 푼다.
+     WebView 전환: 네이티브 껍데기 + WebView 인 앱은 이것이 없으면 안쪽을 아예 못 만진다.
+                   (국내 앱 상당수가 이 구조다 — 없으면 그 고객군이 통째로 Full-Code) */
+  { id: "키보드 숨기기", kw: "Hide Keyboard", needs: [] },
+  { id: "화면 전환", kw: "Switch To Context", needs: ["val"], hint: "NATIVE_APP 또는 WEBVIEW_…", opts: ["NATIVE_APP", "WEBVIEW"] },
   /* 값은 숫자만 받고 내보낼 때 s 를 붙인다 */
   { id: "대기", kw: "Sleep", needs: ["val"], hint: "초",
     toLine: (s) => String(s.val).replace(/[^\d.]/g, "") + "s",
@@ -194,11 +200,18 @@ export const elName = (s) => {
 /* ── 실행 흉내 (목업) — 샘플 화면에 있는 요소 · 문구면 통과, 없으면 그 스텝에서 실패하고 멈춘다
    실 구현: 러너가 RF 로 실행하고 output.xml 에서 스텝별 결과 · 오류 · 스크린샷을 돌려준다 */
 const KNOWN_TEXTS = () => new Set(SCREEN_ELEMENTS.map((e) => e.text).filter(Boolean));
-export const simulateStep = (s, build) => {
+export const simulateStep = (s, build, env) => {
+  /* 🔑 API 스텝은 환경의 Base URL 이 있어야 돈다 — 없으면 경로만 가지고 어디로 보낼지 모른다.
+     실제로 나는 오류이고, 원인이 UI 실패와 달라 담당자도 갈린다(flow.jsx judgeOf 참고). */
+  if ((ACT[s.act] || {}).api && env && !String(env.apiBase || "").trim())
+    return { st: "fail", msg: "API Base URL 이 없습니다 — 대상·환경에서 설정하세요 (응답 상태코드 없음)" };
   const needsLoc = ["탭", "입력", "요소 확인"].includes(s.act);
   const onScreen = (loc) => elementsFor(build).some((e) => recommendLoc(e).loc === loc);
   if (needsLoc && !onScreen(s.loc)) return { st: "fail", msg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다" };
+  /* 부정 확인은 판정이 뒤집힌다 — '있으면' 실패다. 긍정 확인과 같이 묶으면 거꾸로 동작한다. */
+  if (s.act === "요소 없음 확인" && onScreen(s.loc)) return { st: "fail", msg: "요소가 아직 화면에 있습니다 — 사라져야 합니다" };
   if (s.act === "화면 확인" && !/^\$\{/.test(s.val || "") && !KNOWN_TEXTS().has(s.val)) return { st: "fail", msg: "화면에서 \"" + s.val + "\" 문구를 찾지 못했습니다" };
+  if (s.act === "화면에 없음 확인" && KNOWN_TEXTS().has(s.val)) return { st: "fail", msg: "\"" + s.val + "\" 문구가 아직 화면에 있습니다 — 사라져야 합니다" };
   if (/^xpath=/.test(s.loc || "")) return { st: "warn", msg: "통과 — 위치로 찾은 요소는 화면이 바뀌면 깨지기 쉽습니다" };
   return { st: "ok", msg: "" };
 };

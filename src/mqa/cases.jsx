@@ -34,7 +34,8 @@ const unresolvedOfCase = (c) => (c.level === "Full-Code" ? (String(c.code || "")
 /* 환경별 기본 테스트 버전 — 디버그 실행·요소 집기·AI 초안의 '생성 기준 빌드' */
 const envBuildObj = (e) => { const a = (e && e.app) || {}; return (a.builds || []).find((x) => x.id === a.defBuild) || null; };
 const envBuild = (e) => (envBuildObj(e) || {}).ver || "";
-const envsOf = (sys) => ((sys && sys.envs) || []).map((e) => ({ env: e.env, build: envBuild(e), buildObj: envBuildObj(e), prod: e.prod }));
+// apiBase 를 같이 넘긴다 — 디버그 실행에서 API 스텝이 이 값을 본다(없으면 실패)
+const envsOf = (sys) => ((sys && sys.envs) || []).map((e) => ({ env: e.env, build: envBuild(e), buildObj: envBuildObj(e), prod: e.prod, apiBase: e.apiBase || "" }));
 const readText = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result || "")); r.onerror = () => res(""); r.readAsText(f); });
 const taCls = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500";
 const Hdr = ({ icon: Icon, title, desc, badge }) => (
@@ -467,7 +468,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
     lockMqaDevice(dev.id, "디버그 실행 " + tc.id); held.current = dev.id;
     const rows = isFull
       ? String(d.code).split("\n").filter((l) => /^\s{2,}\S/.test(l)).map((l) => l.trim()).filter((l) => !l.startsWith("#") && !l.startsWith("[")).map((l) => ({ act: l.split(/\s{2,}/)[0], name: l.split(/\s{2,}/).slice(1).join("  "), res: { st: "ok", msg: "" } }))
-      : d.steps.map((x, i) => ({ i, id: x.id, act: x.act, name: (L.ACT[x.act] || { needs: [] }).needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build) }));
+      : d.steps.map((x, i) => ({ i, id: x.id, act: x.act, name: (L.ACT[x.act] || { needs: [] }).needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build, dbg) }));
     const pre = d.preCase ? [{ pre: true, act: "전제조건 " + d.preCase, name: ((mqaCases.find((x) => x.id === d.preCase) || {}).name || "") + (d.acctRole ? " · " + d.acctRole + " 계정" : ""), res: { st: "ok", msg: "" } }] : [];
     const all = [...pre, ...rows];
     const failAt = all.findIndex((r) => r.res.st === "fail");
@@ -721,8 +722,9 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                             <div className="w-44 shrink-0"><Input value={s.save || ""} onChange={(e) => updStep(s.id, { save: e.target.value })} placeholder="저장 (선택) orderId = $.orderId" className="font-mono text-xs" /></div>
                           </>}
                           {s.act === "응답 검증" && <Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="200 · 존재 · 기대값" />}
-                          {/* 방향은 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
-                          {s.act === "스와이프" && <div className="w-32"><Select value={s.val || "위로"} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
+                          {/* 방향·컨텍스트는 ACTS 의 opts 에서 온다 — 목록을 여기 또 적지 않는다 */}
+                          {(s.act === "스와이프" || s.act === "화면 전환") && <div className="w-40"><Select value={s.val || (a.opts || [])[0]} onChange={(e) => updStep(s.id, { val: e.target.value })}>{(a.opts || []).map((o) => <option key={o}>{o}</option>)}</Select></div>}
+                          {s.act === "키보드 숨기기" && <span className="text-xs text-slate-500">입력 후 가려진 버튼을 누르려면 필요합니다</span>}
                           {s.act === "대기" && <><div className="w-16"><Input value={s.val || ""} onChange={(e) => updStep(s.id, { val: e.target.value })} placeholder="2" /></div><span className="text-xs text-slate-500">초</span></>}
                           {s.act === "뒤로" && <span className="text-xs text-slate-500">이전 화면으로</span>}
                         </div>

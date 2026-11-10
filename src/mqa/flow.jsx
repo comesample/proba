@@ -87,9 +87,9 @@ const robotRows = (code) => String(code || "").split("\n").filter((l) => /^\s{2,
 /* 같은 순간에 여러 실행을 만들 수 있어(새 버전 이벤트) 마지막으로 낸 번호도 함께 본다 */
 let LAST_RUN_NO = 0;
 const nextRunId = (runs) => { const n = Math.max(LAST_RUN_NO, ...(runs || []).map((r) => parseInt(String(r.id).replace(/\D/g, ""), 10) || 0)) + 1; LAST_RUN_NO = n; return "MRUN-" + String(n).padStart(3, "0"); };
-const planOf = ({ cases, allCases, build }) => cases.map((c) => {
+const planOf = ({ cases, allCases, build, env }) => cases.map((c) => {
   const pre = c.preCase ? [{ act: "전제조건", name: c.preCase + " " + ((allCases.find((x) => x.id === c.preCase) || {}).name || ""), res: { st: "ok", msg: "" } }] : [];
-  const body = c.level === "Full-Code" ? robotRows(c.code) : (c.steps || []).map((s) => ({ act: s.act, name: actName(s), val: s.act === "입력" ? s.val : "", el: s.el || "", res: L.simulateStep(s, build.ver) }));
+  const body = c.level === "Full-Code" ? robotRows(c.code) : (c.steps || []).map((s) => ({ act: s.act, name: actName(s), val: s.act === "입력" ? s.val : "", el: s.el || "", res: L.simulateStep(s, build.ver, env) }));
   const all = [...pre, ...body];
   return { c, all, pl: pre.length, fi: all.findIndex((x) => x.res.st === "fail") };
 });
@@ -594,6 +594,8 @@ const judgeOf = (run, c, runs, caseNow) => {
      ⚠️ 목업 시뮬레이터는 아직 API 실패를 만들지 않는다 — 실 실행에서 쓰이는 경로다. */
   const apiFail = (c.steps || []).some((x) => x.st === "실패" && (L.ACT[x.act] || {}).api);
   if (apiFail) {
+    /* 설정이 빠진 것은 서버 잘못도 테스트 잘못도 아니다 — 환경을 채우면 해결된다 */
+    if (/Base URL/.test(m)) return { kind: "환경 문제", cause: "API 설정 누락", by: "규칙", basis: "대상·환경에 API Base URL 이 없습니다" };
     if (/\b5\d\d\b/.test(m)) return { kind: "백엔드 결함 의심", cause: "서버 오류 (5xx)", by: "규칙", basis: "API 응답이 5xx — 앱이 아니라 서버가 실패했습니다" };
     if (/\b4\d\d\b/.test(m)) return { kind: "테스트 문제", cause: "요청 오류 (4xx)", by: "규칙", basis: "API 응답이 4xx — 경로 · 본문 · 권한을 확인하세요" };
     return { kind: "확인 필요", cause: "API 응답 불일치", by: "AI", conf: "중간", basis: "API 스텝에서 실패 — 기대값과 실제 응답을 비교하세요" };
@@ -956,7 +958,7 @@ function Flaky({ nav }) {
      · 불안정 · 지속 실패는 불안정 화면과 같은 함수(caseHistory)
      · 원인은 결과 화면과 같은 판정(judgeOf) — 담당자 확정이 우선
      · 필터(계획 · 기간)는 모든 카드에 똑같이 적용 */
-const CAUSE_COLOR = { "요소 변경": "bg-sky-500", "대기 부족 (불안정)": "bg-amber-500", "앱 결함 의심": "bg-red-500", "환경 문제": "bg-slate-500", "서버 오류 (5xx)": "bg-rose-600", "요청 오류 (4xx)": "bg-amber-600", "API 응답 불일치": "bg-slate-400", "확인 필요": "bg-slate-300", "기대값 불일치": "bg-red-400", "테스트 문제": "bg-amber-400", "앱 크래시": "bg-red-600", "서버 · 연결 오류": "bg-slate-400", "판정 불가": "bg-slate-300" };
+const CAUSE_COLOR = { "요소 변경": "bg-sky-500", "대기 부족 (불안정)": "bg-amber-500", "앱 결함 의심": "bg-red-500", "환경 문제": "bg-slate-500", "서버 오류 (5xx)": "bg-rose-600", "요청 오류 (4xx)": "bg-amber-600", "API 응답 불일치": "bg-slate-400", "API 설정 누락": "bg-slate-500", "확인 필요": "bg-slate-300", "기대값 불일치": "bg-red-400", "테스트 문제": "bg-amber-400", "앱 크래시": "bg-red-600", "서버 · 연결 오류": "bg-slate-400", "판정 불가": "bg-slate-300" };
 const hbar = (p) => (p >= 90 ? "#10b981" : p >= 70 ? "#f59e0b" : "#ef4444");
 export function MqaDashboardScreen({ nav }) {
   const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [], mqaSuites = [] } = useApp();
