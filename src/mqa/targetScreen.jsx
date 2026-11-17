@@ -9,6 +9,7 @@ import { VarRefInput } from "../common/VarRefInput.jsx";
 import { flatDevices, deviceBlock, devLabel, pickDefault, osName } from "./devices.js";
 import { DeviceSelect } from "./workPickers.jsx";
 import { useRunner, isOnNewBuild } from "./flow.jsx";
+import * as BV from "./builds.js";
 
 const ENV_NAMES = ["스테이징", "운영", "개발"];
 const PLATFORMS = [{ id: "Android", ready: true, ext: ".apk" }, { id: "iOS", ready: false, ext: ".ipa" }];
@@ -32,7 +33,7 @@ const readAppFile = (name, app, sysId) => {
   return { ver, code: verCode(ver.split(/[-_]/)[0]), appId: app.appId || "com.example.app" + sysId, minSdk: (latest && latest.minSdk) || 26, _sim: sim };
 };
 const ST_K = { "확인됨": "pass", "미확인": "warn", "실패": "fail" };
-const newEnv = (name, appId) => ({ env: name, prod: name === "운영", status: "미확인", ver: "-", accts: [], apiBase: "", apiTokenRef: "", deploy: { mode: "수동" }, app: { platform: "Android", appId: appId || "", builds: [], defBuild: null } });
+const newEnv = (name, appId) => ({ env: name, prod: name === "운영", accts: [], apiBase: "", apiTokenRef: "", deploy: { mode: "수동" }, app: { platform: "Android", appId: appId || "", builds: [] } });
 
 /* 앱 실행 확인 — 별도 카드. 진행 중이든 결과든 같은 3줄(설치·실행 / 웹 화면 연결 / 열린 주소)을 유지해
    화면이 들썩이지 않게 한다. 각 줄은 상태 아이콘 + 이름 + 값, 글자 크기는 한 가지 */
@@ -45,7 +46,7 @@ const StepRow = ({ st, label, children }) => (
     <div className="flex min-w-0 flex-1 items-center text-sm text-slate-800">{children}</div>
   </div>
 );
-function CheckPanel({ check, last, stale, devs, dev, setDevId, defB, onRun, goTo }) {
+function CheckPanel({ check, last, devs, dev, setDevId, build, builds, buildId, setBuildId, onRun, goTo }) {
   const busy = !!(check && (check.s === "run" || check.s === "wait"));
   const r = busy ? null : last;
   const s1 = check && check.s === "run" ? "run" : busy || r ? "ok" : "idle";
@@ -58,9 +59,10 @@ function CheckPanel({ check, last, stale, devs, dev, setDevId, defB, onRun, goTo
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-slate-800">앱 실행 확인</span>
         <span className="text-xs text-slate-500">{busy ? check.device : r ? r.device + " · " + r.at : "아직 확인하지 않았습니다"}</span>
-        {stale && !busy && <Badge kind="warn">기본 버전 변경됨 · 다시 확인</Badge>}
         <div className="ml-auto flex items-center gap-2">
-          <div style={{ width: 380 }}><DeviceSelect devs={devs} value={dev ? dev.id : ""} onChange={setDevId} build={defB} /></div>
+          {/* 버전마다 확인한다 — 올린 파일이 실제로 설치·실행되는지는 버전마다 다르다 */}
+          <div style={{ width: 170 }}><Select value={buildId} onChange={(e) => setBuildId(e.target.value)} disabled={busy}>{builds.map((b, i) => <option key={b.id} value={b.id}>v{b.ver}{i === 0 ? " · 최신" : ""}{b.check && b.check.st === "확인됨" ? " ✓" : ""}</option>)}</Select></div>
+          <div style={{ width: 340 }}><DeviceSelect devs={devs} value={dev ? dev.id : ""} onChange={setDevId} build={build} /></div>
           <Btn kind="primary" icon={Play} onClick={onRun} disabled={busy}>{busy ? "확인 중" : "실행"}</Btn>
         </div>
       </div>
@@ -101,8 +103,11 @@ export function MqaTargetScreen() {
   /* 신규 조직은 대상 0건으로 시작한다 — sys.envs 접근 전에 막는다 */
   const sys = systems[sel] || systems[0] || null;
   const env = sys ? (sys.envs[envIdx] || sys.envs[0]) : null;
-  const app = (env && env.app) || { platform: "Android", appId: "", builds: [], defBuild: null };
-  const defB = (app.builds || []).find((b) => b.id === app.defBuild) || null;
+  const app = (env && env.app) || { platform: "Android", appId: "", builds: [] };
+  const builds = BV.buildsOf(env);              // 빌드 번호 내림차순 — 맨 앞이 최신
+  const latest = builds[0] || null;
+  const [chkId, setChkId] = useState("");       // 앱 실행 확인할 버전 (비우면 최신)
+  const chkB = (chkId && builds.find((b) => b.id === chkId)) || latest;
   const secretRef = (val, setVal, ph) => <VarRefInput value={val} onChange={setVal} placeholder={ph} />;
   /* 저장 버튼으로 반영되는 것 = 대상 이름 · 테스트 계정 (draft).
      앱 파일 작업(올리기·기본 지정·삭제)은 즉시 반영한다 — 파일을 올리고 저장을 잊으면 파일이 사라지는 게 더 나쁘다. */
@@ -110,14 +115,14 @@ export function MqaTargetScreen() {
   const setEnvCfg = (patch) => setDraft((d) => ({ ...d, ...patch }));
   const dirty = Object.keys(draft).length > 0 || (nameDraft !== null && nameDraft !== ((sys || {}).name || ""));
   useEffect(() => { setNavGuard(dirty ? "저장하지 않은 변경이 있습니다. 이동하면 사라집니다.\n\n이동할까요?" : null); return () => setNavGuard(null); }, [dirty]);
-  useEffect(() => { setDraft({}); setNameDraft(null); setCheck(null); }, [(sys || {}).id]);
+  useEffect(() => { setDraft({}); setNameDraft(null); setCheck(null); setChkId(""); }, [(sys || {}).id, envIdx]);
   const guardSwitch = (fn) => { if (dirty && !window.confirm("저장하지 않은 변경이 있습니다. 이동하시겠습니까?")) return; setDraft({}); setNameDraft(null); fn(); };
   const choose = (i) => guardSwitch(() => { setSel(i); setEnvIdx(0); setCheck(null); });
   const patchEnv = (patch) => updateMqaSystem(sys.id, { envs: sys.envs.map((e, i) => (i === envIdx ? { ...e, ...patch } : e)) });
   const patchApp = (patch, extra) => patchEnv({ app: { ...app, ...patch }, ...(extra || {}) });
   const saveCfg = () => { updateMqaSystem(sys.id, { ...(nameDraft !== null ? { name: nameDraft } : {}), envs: sys.envs.map((e, i) => (i === envIdx ? { ...e, ...draft } : e)) }); setDraft({}); setNameDraft(null); flash("설정 저장됨"); };
 
-  /* ── 참조 무결성 — 실행 계획이 쓰고 있는 대상·환경은 지울 수 없다 ── */
+  /* ── 참조 무결성 — 실행 계획이 쓰고 있는 대상·환경·버전은 지울 수 없다 ── */
   const usedEnvs = ((sys || {}).envs || []).map((e) => e.env);
   const envOpts = ENV_NAMES.filter((n) => !usedEnvs.includes(n));
   const plansUsing = (systemId, envName) => (mqaPlans || []).filter((p) => { const r = { systemId: p.systemId, env: p.env }; return r.systemId === systemId && (envName == null || r.env === envName); });
@@ -156,37 +161,40 @@ export function MqaTargetScreen() {
     if (!lower.endsWith(".apk")) { flash("Android 앱 설치 파일(.apk)만 올릴 수 있습니다"); return; }
     const info = readAppFile(f.name, app, sys.id);
     if ((app.builds || []).some((b) => b.code === info.code)) { flash("빌드 번호 " + info.code + " 은(는) 이미 올라와 있습니다 — 같은 빌드입니다"); return; }
-    setPending({ file: f.name, size: f.size, ...info, makeDefault: !defB || info.code > defB.code, note: "" });
+    setPending({ file: f.name, size: f.size, ...info, newest: !latest || info.code > latest.code, note: "" });
   };
   const confirmUpload = () => {
     const p = pending;
     const b = { id: "B" + Date.now(), ver: p.ver, code: p.code, minSdk: p.minSdk, _sim: p._sim, file: p.file, size: p.size, at: mqaStamp(), by: currentUser || "—", note: p.note };
     const builds = [b, ...(app.builds || [])].sort((x, y) => y.code - x.code);
-    patchApp({ appId: p.appId, builds, ...(p.makeDefault ? { defBuild: b.id } : {}) }, p.makeDefault ? { ver: p.ver, status: "미확인" } : {});
-    setPending(null); setCheck(null);
-    flash("v" + p.ver + " 올림" + (p.makeDefault ? " · 기본 테스트 버전으로 지정" + onNewDefault(b) : ""));
+    patchApp({ appId: p.appId, builds });
+    setPending(null); setCheck(null); setChkId("");
+    flash("v" + p.ver + " 올림" + (p.newest ? " · 최신 버전" + onNewLatest(b) : " · 최신보다 낮은 빌드 번호라 '최신' 은 그대로입니다"));
   };
-  /* 새 기본 테스트 버전 — '새 버전 지정 시' 이벤트로 설정된 활성 계획을 바로 실행한다 */
+  /* 새 최신 버전 — '새 버전을 올리면' 이벤트이고 앱 버전이 '최신' 인 활성 계획을 바로 실행한다.
+     특정 버전으로 고정한 계획은 새 버전과 무관하므로 돌리지 않는다 */
   const { autoRun } = useRunner();
-  const onNewDefault = (b) => {
-    const ps = (mqaPlans || []).filter((p) => p.status === "활성" && p.systemId === sys.id && p.env === env.env && isOnNewBuild(p.schedule));
+  const onNewLatest = (b) => {
+    const ps = (mqaPlans || []).filter((p) => p.status === "활성" && p.systemId === sys.id && p.env === env.env && !p.buildId && isOnNewBuild(p.schedule));
     const rs = ps.map((p) => autoRun(p, "새 버전", b));
     return ps.length ? " · 계획 " + ps.length + "건 " + (rs.some((r) => r.blocked) ? "실행 (일부 실행 불가)" : "실행 시작") : "";
   };
-  const makeDefault = (b) => { patchApp({ defBuild: b.id }, { ver: b.ver, status: "미확인" }); setCheck(null); flash("기본 테스트 버전 → v" + b.ver + onNewDefault(b)); };
+  /* 삭제 — 이 버전으로 고정한 실행 계획이 있으면 막는다. '최신' 으로 두는 계획은 다음 최신으로 넘어간다 */
   const delBuild = (b) => {
-    if (b.id === app.defBuild) { flash("기본 테스트 버전은 삭제할 수 없습니다 — 다른 버전을 기본으로 지정한 뒤 삭제하세요"); return; }
-    if (!window.confirm("v" + b.ver + " 파일을 삭제할까요?")) return;
-    patchApp({ builds: app.builds.filter((x) => x.id !== b.id) }); flash("v" + b.ver + " 삭제됨");
+    const pinned = (mqaPlans || []).filter((p) => p.systemId === sys.id && p.env === env.env && p.buildId === b.id);
+    if (pinned.length) { setBlock({ what: "v" + b.ver, plans: pinned, hint: "해당 계획의 앱 버전을 다른 버전이나 '최신' 으로 바꾼 뒤 다시 시도하세요." }); return; }
+    const isLatest = latest && latest.id === b.id;
+    if (!window.confirm("v" + b.ver + " 파일을 삭제할까요?" + (isLatest && builds[1] ? "\n\n최신 버전입니다 — 삭제하면 v" + builds[1].ver + " 이(가) 최신이 되고, '최신' 으로 둔 실행 계획은 그 버전으로 돕니다." : ""))) return;
+    patchApp({ builds: app.builds.filter((x) => x.id !== b.id) }); if (chkId === b.id) setChkId(""); flash("v" + b.ver + " 삭제됨");
   };
 
-  /* ── 앱 실행 확인 — 테스트 기기의 단말에 기본 버전을 설치 → 실행 → 첫 화면 캡처.
+  /* ── 앱 실행 확인 — 테스트 기기의 단말에 고른 버전을 설치 → 실행 → 첫 화면 캡처. 결과는 버전마다 남는다.
      올린 파일이 실제로 설치·실행되는지가 이 화면에서 확인할 수 있는 유일한 '연결' 이다.
      단말은 확인하는 동안 점유한다 (1단말 1작업). 쓸 수 없는 단말이면 사유를 보여주고 시작하지 않는다 ── */
   const devs = flatDevices(mqaRunners);
   const devId = mqaWork.devId || "";
   const setDevId = (v) => setMqaWork({ devId: v });   // 테스트케이스의 작업 단말과 같은 선택을 공유한다
-  const dev = devs.find((x) => x.id === devId) || pickDefault(devs, defB);
+  const dev = devs.find((x) => x.id === devId) || pickDefault(devs, chkB);
   /* 앱 실행 확인 — 설치 · 실행 → 웹 화면 대기 → 판정.
      상용 앱은 권한 안내 · 로그인 같은 앞 화면이 네이티브인 경우가 많아 첫 화면에서는 웹뷰가 없다.
      사람이 단말에서 웹 화면까지 직접 진행하는 동안 러너가 몇 초마다 웹 영역(WEBVIEW 컨텍스트)을 찾는다.
@@ -202,13 +210,13 @@ export function MqaTargetScreen() {
     ckClear(); releaseMqaDevice(d.id); ckDev.current = null;
     const r = { at: mqaStamp(), device: d.model + " · " + osName(d.sdk), ver: b.ver, web, url: web ? url : "" };
     setCheck({ s: "ok", ...r });
-    patchEnv({ status: "확인됨", lastCheck: r });
+    patchApp({ builds: (app.builds || []).map((x) => (x.id === b.id ? { ...x, check: { st: "확인됨", ...r } } : x)) });
   };
   const runCheck = () => {
-    if (!defB) { setCheck({ s: "err", m: "기본 테스트 버전이 없습니다 — 앱 설치 파일을 먼저 올리세요" }); patchEnv({ status: "실패" }); return; }
-    const b = deviceBlock(dev, defB);
-    if (b) { setCheck({ s: "err", m: b, dev: true }); return; }   // 단말 문제는 앱 문제가 아니다 — 환경 상태를 '실패'로 바꾸지 않는다
-    const d = dev, bd = defB, sim = defB._sim || { web: true, url: "" };
+    if (!chkB) { setCheck({ s: "err", m: "앱 설치 파일이 없습니다 — 먼저 올리세요" }); return; }
+    const b = deviceBlock(dev, chkB);
+    if (b) { setCheck({ s: "err", m: b, dev: true }); return; }   // 단말 문제는 앱 문제가 아니다 — 버전의 확인 결과를 바꾸지 않는다
+    const d = dev, bd = chkB, sim = chkB._sim || { web: true, url: "" };
     lockMqaDevice(d.id, "앱 실행 확인 " + sys.name); ckDev.current = d.id;
     setCheck({ s: "run", device: devLabel(d), ver: bd.ver });
     ckTimers.current.push(setTimeout(() => {
@@ -219,7 +227,8 @@ export function MqaTargetScreen() {
       ckTimers.current.push(setTimeout(() => ckFinish(!!sim.web, sim.url, d, bd), 4000));
     }, 1200));
   };
-  const last = check && check.s === "ok" ? check : (env || {}).lastCheck && (env || {}).status === "확인됨" ? env.lastCheck : null;
+  const last = check && check.s === "ok" && check.ver === (chkB || {}).ver ? check : chkB && chkB.check && chkB.check.st === "확인됨" ? chkB.check : null;
+  const chkOf = (b) => (b && b.check && b.check.st === "확인됨" ? (b.check.web === false ? { k: "warn", t: "웹 화면 연결 안 됨" } : { k: "pass", t: "실행 확인됨" }) : { k: "warn", t: "실행 미확인" });
 
   const header = (
     <PageToolbar desc="대상(앱) → 환경(스테이징·운영·개발) · 앱 설치 파일 · 테스트 계정" />
@@ -290,7 +299,7 @@ export function MqaTargetScreen() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <div className="w-56 shrink-0"><Input value={nameDraft ?? sys.name} onChange={(e) => setNameDraft(e.target.value)} className="text-base font-semibold" /></div>
-                <Badge kind={env.status === "확인됨" && (env.lastCheck || {}).web === false ? "warn" : ST_K[env.status] || "warn"}>{env.status === "확인됨" ? ((env.lastCheck || {}).web === false ? "웹 화면 연결 안 됨" : "실행 확인됨") : env.status === "실패" ? "확인 실패" : "실행 미확인"}</Badge>
+                {latest ? <Badge kind={chkOf(latest).k}>최신 v{latest.ver} · {chkOf(latest).t}</Badge> : <Badge kind="warn">앱 파일 없음</Badge>}
               </div>
               <div className="flex shrink-0 items-center gap-2">{dirty && <span className="text-xs text-amber-700">미저장 변경</span>}<Btn kind="primary" icon={Save} onClick={saveCfg} disabled={!dirty}>설정 저장</Btn></div>
             </div>
@@ -303,7 +312,7 @@ export function MqaTargetScreen() {
             </div>
           </Card>
           <div className="text-xs text-slate-500">생성 {sys.createdBy || "—"} · {sys.createdAt || "—"} · 수정 {sys.updatedBy || "—"} · {sys.updatedAt || "—"}</div>
-          <CheckPanel check={check} last={last} stale={!!last && !!defB && last.ver !== defB.ver} devs={devs} dev={dev} setDevId={setDevId} defB={defB} onRun={runCheck} goTo={goTo} />
+          <CheckPanel check={check} last={last} devs={devs} dev={dev} setDevId={setDevId} build={chkB} builds={builds} buildId={chkB ? chkB.id : ""} setBuildId={(v) => { setChkId(v); setCheck(null); }} onRun={runCheck} goTo={goTo} />
 
           <div className="grid grid-cols-2 items-start gap-3">
             {/* 앱 (Android) — FQA '접점' 자리. 파일 작업은 즉시 반영 */}
@@ -323,15 +332,15 @@ export function MqaTargetScreen() {
                 </div>
               ) : (<>
                 <div className="space-y-1.5">
-                  {app.builds.map((b) => {
-                    const isDef = b.id === app.defBuild;
+                  {builds.map((b, i) => {
+                    const ck = chkOf(b);
                     return (
-                      <div key={b.id} className={"rounded-lg border px-3 py-2 " + (isDef ? "border-sky-300 bg-sky-50" : "border-slate-200")}>
+                      <div key={b.id} className="rounded-lg border border-slate-200 px-3 py-2">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">v{b.ver}</span><span className="font-mono text-xs text-slate-500">({b.code})</span>{isDef && <Badge kind="active">기본 테스트 버전</Badge>}</div>
+                          <div className="flex min-w-0 items-center gap-2"><span className="font-mono text-sm font-semibold text-slate-800">v{b.ver}</span><span className="font-mono text-xs text-slate-500">({b.code})</span>{i === 0 && <Badge kind="active">최신</Badge>}<Badge kind={ck.k}>{ck.t}</Badge></div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {!isDef && <button onClick={() => makeDefault(b)} className="text-xs text-sky-600 hover:underline">기본으로</button>}
-                            {!isDef && <button onClick={() => delBuild(b)} className="text-slate-400 hover:text-red-600" title="파일 삭제"><Trash2 size={13} /></button>}
+                            <button onClick={() => { setChkId(b.id); setCheck(null); }} className="text-xs text-sky-600 hover:underline" title="위 앱 실행 확인에서 이 버전을 고릅니다">실행 확인</button>
+                            <button onClick={() => delBuild(b)} className="text-slate-400 hover:text-red-600" title="파일 삭제"><Trash2 size={13} /></button>
                           </div>
                         </div>
                         <div className="mt-1 truncate text-xs text-slate-500">{osOf(b.minSdk || 26)} · {b.file} · {fmtSize(b.size)}</div>
@@ -343,7 +352,7 @@ export function MqaTargetScreen() {
                 </div>
                 <Btn icon={Upload} className="w-full" onClick={pickFile}>새 버전 올리기</Btn>
               </>)}
-              <div className="text-xs text-slate-500">버전·빌드 번호·앱 ID·최소 지원 OS는 파일에서 자동으로 읽습니다. 괄호 안 숫자가 빌드 번호이고, 최신 판단은 빌드 번호로 합니다. 실행 계획에서 버전을 지정하지 않으면 <span className="text-slate-700">기본 테스트 버전</span>으로 실행합니다.</div>
+              <div className="text-xs text-slate-500">버전·빌드 번호·앱 ID·최소 지원 OS는 파일에서 자동으로 읽습니다. 괄호 안 숫자가 빌드 번호이고, <span className="text-slate-700">최신</span>은 빌드 번호가 가장 높은 버전입니다. 테스트할 버전은 케이스 편집(작업 버전)과 실행 계획(최신 또는 특정 버전)에서 고릅니다.</div>
             </Card>
 
             {/* 테스트 계정 — FQA 계정 풀과 동일. 로그인은 '흐름'이므로 케이스가 수행하고, 환경은 '누구로' 만 제공한다 */}
@@ -364,7 +373,7 @@ export function MqaTargetScreen() {
                 ))}
                 {(!cfg.accts || cfg.accts.length === 0) && <div className="px-1 py-2 text-xs text-slate-500">이 환경의 계정이 없습니다 — + 계정으로 추가</div>}
               </div>
-              <div className="text-xs text-slate-500">케이스의 <span className="text-slate-700">실행 계정 역할</span>과 같은 역할의 계정이 <span className="font-mono text-sky-600">{"${계정 ID}"}</span>·<span className="font-mono text-sky-600">{"${계정 비밀번호}"}</span>로 주입됩니다.{env.prod && " 운영 환경은 테스트 전용(합성) 계정만 쓰세요."}</div>
+              <div className="text-xs text-slate-500">스위트의 <span className="text-slate-700">계정 역할</span>과 같은 역할의 계정이 <span className="font-mono text-sky-600">{"${계정 ID}"}</span>·<span className="font-mono text-sky-600">{"${계정 비밀번호}"}</span>로 주입됩니다.{env.prod && " 운영 환경은 테스트 전용(합성) 계정만 쓰세요."}</div>
             </Card>
 
             {/* API — 계정과 같은 자리에 둔다. 둘 다 "케이스가 모르는 환경 정보" 이고 실행할 때 주입된다.
@@ -385,7 +394,7 @@ export function MqaTargetScreen() {
 
       {targetModal}
 
-      {/* 올린 파일 확인 — 자동으로 읽은 값을 보여주고 기본 버전 지정 여부만 묻는다 */}
+      {/* 올린 파일 확인 — 자동으로 읽은 값을 보여준다 */}
       {pending && (
         <Portal><div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPending(null)}>
           <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -400,7 +409,7 @@ export function MqaTargetScreen() {
                 <div className="flex justify-between"><span className="text-slate-500">환경</span><span className="text-slate-700">{sys.name} · {env.env}</span></div>
               </div>
               <Field label="메모 (선택)"><Input value={pending.note} onChange={(e) => setPending({ ...pending, note: e.target.value })} placeholder="예: 보안 기능 해제 테스트 빌드" /></Field>
-              <label className="flex items-center gap-2 text-xs text-slate-700"><input type="checkbox" checked={pending.makeDefault} onChange={(e) => setPending({ ...pending, makeDefault: e.target.checked })} />이 버전을 기본 테스트 버전으로 지정</label>
+              <div className={"rounded-lg px-3 py-2 text-xs " + (pending.newest ? "bg-sky-50 text-sky-800" : "bg-slate-100 text-slate-600")}>{pending.newest ? "가장 높은 빌드 번호라 최신 버전이 됩니다 — 앱 버전을 '최신' 으로 둔 실행 계획이 이 버전으로 돌고, '새 버전을 올리면' 실행하는 계획은 바로 시작합니다." : "최신(v" + (latest ? latest.ver : "") + ")보다 빌드 번호가 낮습니다 — 특정 버전으로 고르는 경우에만 쓰입니다."}</div>
               <div className="flex justify-end gap-2 pt-1"><Btn onClick={() => setPending(null)}>취소</Btn><Btn kind="primary" icon={Upload} onClick={confirmUpload}>올리기</Btn></div>
             </div>
           </div>
@@ -414,7 +423,7 @@ export function MqaTargetScreen() {
             <div className="space-y-3 p-5 text-sm">
               <div className="text-slate-700"><span className="font-semibold text-amber-700">{block.what}</span>을(를) 참조하는 실행 계획이 <span className="font-semibold text-amber-700">{block.plans.length}건</span> 있습니다.</div>
               <div className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3">{block.plans.map((p) => (<div key={p.id} className="flex items-center gap-2 text-xs"><ClipboardList size={12} className="text-slate-500" /><span className="text-slate-700">{p.name}</span></div>))}</div>
-              <div className="text-xs text-slate-500">해당 계획의 대상·환경을 먼저 바꾸거나 계획을 삭제한 뒤 다시 시도하세요.</div>
+              <div className="text-xs text-slate-500">{block.hint || "해당 계획의 대상·환경을 먼저 바꾸거나 계획을 삭제한 뒤 다시 시도하세요."}</div>
               <div className="flex justify-end pt-1"><Btn kind="primary" onClick={() => setBlock(null)}>확인</Btn></div>
             </div>
           </div>

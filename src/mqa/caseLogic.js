@@ -277,8 +277,8 @@ export const draftSteps = (proc) => {
     const locOf = (e) => (e ? recommendLoc(e).loc : "");
     const nameOf = (e) => (e ? e.label : "");
     let s;
-    /* 로그인은 대부분 '검증 대상' 이 아니라 '들어가기 위한 절차' 다 — FQA 와 같이 전제조건 케이스로 돌린다 */
-    if (/로그인(한다|을 한다|을 수행|된 상태|상태)/.test(t) && !/버튼|누른/.test(t)) s = { act: "탭", loc: "", why: "로그인 절차입니다 — 왼쪽 '전제조건'에 로그인 케이스를 지정하고 이 스텝은 지우는 것을 권장합니다" };
+    /* 로그인은 대부분 '검증 대상' 이 아니라 '들어가기 위한 절차' 다 — 스위트에서 로그인 케이스를 앞에 둔다 */
+    if (/로그인(한다|을 한다|을 수행|된 상태|상태)/.test(t) && !/버튼|누른/.test(t)) s = { act: "탭", loc: "", why: "로그인 절차입니다 — 스위트에서 로그인 케이스를 앞에 두고, 이 스텝은 지우는 것을 권장합니다" };
     else if (/입력|검색한다|적는다|쓴다/.test(t)) { const lc = locOf(el) || (/검색/.test(t) ? locOf(SCREEN_ELEMENTS[0]) : lastField); s = { act: "입력", loc: lc, val: q, why: !q ? "입력할 값을 찾지 못함" : !lc ? "입력할 칸을 특정하지 못함" : "" }; }
     else if (/스크롤|스와이프|내린다|올린다/.test(t)) s = { act: "스와이프", val: /올린다/.test(t) ? "아래로" : "위로" };
     else if (/뒤로/.test(t)) s = { act: "뒤로" };
@@ -316,10 +316,10 @@ export const toRobot = (c) => {
   const L = ["*** Settings ***", "Library" + SEP + "AppiumLibrary",
     ...(hasApi ? ["Library" + SEP + "RequestsLibrary"] : []),
     "Resource" + SEP + "proba.resource" + SEP + "# 앱 실행 · 계정 변수 · API base·토큰 (실행 시 자동 주입)"];
-  L.push("Test Setup" + SEP + "앱 실행", "Test Teardown" + SEP + "Close Application", "", "*** Test Cases ***", c.id + " " + c.name);
-  if (c.pre) L.push(SEP + "[Documentation]" + SEP + "전제조건: " + c.pre);
-  /* 전제조건 케이스 — PROBA 실행기가 그 케이스를 먼저 수행한 세션에서 시작한다 (집계에는 세지 않음) */
-  if (c.preCase) L.push(SEP + "[Setup]" + SEP + "전제조건 케이스" + SEP + c.preCase + (c.acctRole ? SEP + "역할=" + c.acctRole : ""));
+  /* 앱 열기·닫기는 넣지 않는다 — 스위트가 한 번 열고 순서대로 이어서 실행한다 (toSuiteRobot) */
+  L.push("", "*** Test Cases ***", c.id + " " + c.name);
+  if (c.pre) L.push(SEP + "[Documentation]" + SEP + "사전조건: " + c.pre);
+  /* 시작 상태(로그인 등)는 스위트가 정한다 — 케이스 .robot 에는 넣지 않는다 */
   const tags = String(c.tags || "").split(/[,\s]+/).filter(Boolean);
   if (tags.length) L.push(SEP + "[Tags]" + SEP + tags.join(SEP));
   /* 절차가 있으면 묶음마다 '# 절차 n' 주석을 넣는다 — .robot 만 보는 사람도 무엇을 검증하는 줄인지 알 수 있게 */
@@ -331,6 +331,72 @@ export const toRobot = (c) => {
   });
   if (!(c.steps || []).length) L.push(SEP + "# 스텝이 없습니다");
   return L.join("\n");
+};
+
+/* ── 스위트 내보내기 — suite.robot + proba.resource 두 파일이면 PROBA 밖에서도 `robot suite.robot` 으로 돈다
+   · 케이스는 부품(본문만), 실행 단위는 스위트: 앱은 Suite Setup 에서 한 번 열고 Suite Teardown 에서 닫는다
+   · 앞이 실패하면 뒤는 건너뜀 — PROBA 실행과 같은 규칙을 Test Setup 의 Skip If 로 건다
+   · Full-Code 원문의 설정 줄(Library 등)은 모으고, 앱 열기·닫기 줄은 버린다 · 키워드 이름이 겹치면 알린다
+   · 비밀번호·토큰은 파일에 쓰지 않는다 — 실행할 때 -v 로 넘긴다 */
+const sectionsOf = (text) => {
+  const out = { settings: [], variables: [], tests: [], keywords: [] }; let sec = null;
+  String(text || "").replace(/\r/g, "").split("\n").forEach((l) => {
+    const m = l.match(/^\*{3}\s*(.+?)\s*\*{3}/);
+    if (m) { const k = m[1].toLowerCase(); sec = /setting/.test(k) ? "settings" : /variable/.test(k) ? "variables" : /test case|task/.test(k) ? "tests" : /keyword/.test(k) ? "keywords" : null; return; }
+    if (sec) out[sec].push(l);
+  });
+  return out;
+};
+const blocksOf = (lines) => { const bs = []; lines.forEach((l) => { if (l.trim() && !/^\s/.test(l)) bs.push({ name: l.trim(), lines: [l] }); else if (bs.length) bs[bs.length - 1].lines.push(l); }); return bs.map((b) => ({ ...b, lines: trimEnd(b.lines) })); };
+const trimEnd = (ls) => { const a = [...ls]; while (a.length && !a[a.length - 1].trim()) a.pop(); return a; };
+export const toSuiteRobot = (s, cases) => {
+  const m = {}; (cases || []).forEach((c) => { m[c.id] = c; });
+  const list = (s.items || []).map((id) => m[id]).filter(Boolean);
+  const libs = ["Library" + SEP + "AppiumLibrary"], tests = [], vars = [], kws = [], warns = [], owner = {};
+  list.forEach((c) => {
+    const sec = sectionsOf(c.level === "Full-Code" ? stripAppSession(c.code) : toRobot(c));
+    sec.settings.map((l) => l.trim().replace(/\s{2,}#.*$/, "")).forEach((t) => {
+      if (/^library\s/i.test(t) && !libs.some((x) => x.toLowerCase() === t.toLowerCase())) libs.push(t);
+      else if (/^resource\s/i.test(t) && !/proba\.resource/i.test(t) && !libs.includes(t)) { libs.push(t); warns.push(c.id + " 이(가) " + t.split(/\s{2,}/)[1] + " 을(를) 씁니다 — 이 파일도 같은 폴더에 두세요"); }
+    });
+    tests.push("# ── " + c.id + " · " + c.level + (c.status !== "승인" ? " · " + c.status : ""), ...trimEnd(sec.tests.filter((l, i, a) => l.trim() || a.slice(0, i).some((x) => x.trim()))), "");
+    vars.push(...sec.variables.filter((l) => l.trim()));
+    blocksOf(sec.keywords).forEach((b) => {
+      const prev = owner[b.name];
+      if (!prev) { owner[b.name] = { id: c.id, body: b.lines.join("\n") }; kws.push(...b.lines, ""); }
+      else if (prev.body !== b.lines.join("\n")) warns.push("키워드 \"" + b.name + "\" 이(가) " + prev.id + " 와 " + c.id + " 에 서로 다르게 있습니다 — 한쪽 이름을 바꾸세요 (그대로면 실행 시 오류)");
+    });
+  });
+  if (list.some((c) => (c.steps || []).some((x) => (ACT[x.act] || {}).api)) && !libs.includes("Library" + SEP + "RequestsLibrary")) libs.push("Library" + SEP + "RequestsLibrary");
+  const L = ["*** Settings ***",
+    "Documentation" + SEP + s.name + (s.desc ? " — " + s.desc : "") + " · PROBA 에서 내보냄. 위에서부터 순서대로 실행하고, 앞이 실패하면 뒤는 건너뜁니다",
+    ...libs, "Resource" + SEP + "proba.resource",
+    "Suite Setup" + SEP + "앱 실행", "Suite Teardown" + SEP + "Close All Applications",
+    "Test Setup" + SEP + "Skip If" + SEP + "'${PREV TEST STATUS}' in ['FAIL', 'SKIP']" + SEP + "앞 단계 실패: ${PREV TEST NAME}", ""];
+  if (vars.length) L.push("*** Variables ***", ...vars, "");
+  L.push("*** Test Cases ***", ...tests);
+  if (kws.length) L.push("*** Keywords ***", ...trimEnd(kws));
+  return { text: trimEnd(L).join("\n") + "\n", warns };
+};
+/* 계정은 스위트의 계정 역할로 고른다. 비밀번호·토큰은 비워 둔다 (secretRef 이름만 주석으로 알려 준다) */
+export const toProbaResource = (s, env, cases) => {
+  const a = ((env && env.accts) || []).find((x) => x.role === s.acctRole) || ((env && env.accts) || [])[0] || {};
+  const app = (env && env.app) || {};
+  const api = (s.items || []).some((id) => ((cases || []).find((c) => c.id === id) || { steps: [] }).steps.some((x) => (ACT[x.act] || {}).api));
+  return [
+    "*** Settings ***", "Documentation" + SEP + "PROBA 실행 리소스 — " + (env ? env.env : "") + " 환경 · 계정 역할 " + (s.acctRole || "기본"),
+    "Library" + SEP + "AppiumLibrary", ...(api ? ["Library" + SEP + "RequestsLibrary"] : []), "",
+    "*** Variables ***",
+    "${REMOTE_URL}" + SEP + "http://127.0.0.1:4723",
+    "${APP_ID}" + SEP + (app.appId || ""),
+    "${계정 ID}" + SEP + (a.acct || ""),
+    "${계정 비밀번호}" + SEP + "${EMPTY}" + SEP + "# 파일에 쓰지 않는다 — 실행 시 -v 로 넘긴다" + (a.secretRef ? " (PROBA 변수 " + a.secretRef + ")" : ""),
+    ...(api ? ["${API_BASE}" + SEP + (env.apiBase || ""), "${API_TOKEN}" + SEP + "${EMPTY}" + SEP + "# -v 로 넘긴다" + (env.apiTokenRef ? " (PROBA 변수 " + env.apiTokenRef + ")" : "")] : []), "",
+    "*** Keywords ***",
+    "앱 실행", SEP + "Open Application" + SEP + "${REMOTE_URL}" + SEP + "platformName=" + (app.platform || "Android") + SEP + "automationName=UiAutomator2" + SEP + "appPackage=${APP_ID}" + SEP + "noReset=false",
+    ...(api ? ["", "API 요청", SEP + "[Arguments]" + SEP + "${요청}" + SEP + "@{옵션}", SEP + "# 러너가 쓰는 것과 같은 구현을 내보낸다 (목업에서는 생략)", "",
+               "응답 검증", SEP + "[Arguments]" + SEP + "${대상}" + SEP + "${기대}", SEP + "# 러너가 쓰는 것과 같은 구현을 내보낸다 (목업에서는 생략)"] : []),
+  ].join("\n") + "\n";
 };
 
 /* ── .robot 가져오기 파서 ─────────────────────────────────────
@@ -347,7 +413,7 @@ export const parseRobot = (text, fileName) => {
     if (sm) { sec = sm[1].toLowerCase(); cur = null; return; }
     if (!raw.trim() || raw.trim().startsWith("#")) return;
     const isTest = /test case|task/.test(sec); const isKw = /keyword/.test(sec);
-    if (!isTest && !isKw) { if (/^(test setup|suite setup)/i.test(raw) && /open application/i.test(raw)) out.notes.push("앱 실행 설정(Open Application)은 PROBA 실행 설정으로 대체됩니다"); return; }
+    if (!isTest && !isKw) { if (/^(test setup|suite setup)/i.test(raw) && /open application/i.test(raw)) out.notes.push("앱 열기·닫기 설정(Open Application)은 가져오지 않습니다 — 스위트가 한 번 열고 순서대로 이어서 실행합니다"); return; }
     if (!/^\s/.test(raw)) { cur = { name: raw.trim(), lines: [], tags: [], args: [], raw: [raw] }; (isTest ? out.tests : out.keywords).push({ ...cur, src: fileName }); cur = (isTest ? out.tests : out.keywords)[(isTest ? out.tests : out.keywords).length - 1]; return; }
     if (!cur) return;
     cur.raw.push(raw);
@@ -362,7 +428,7 @@ export const parseRobot = (text, fileName) => {
 };
 /* 테스트 1건 → 스텝 변환 시도. 실패 사유가 있으면 Full-Code로 가져온다.
    사용자 키워드(*** Keywords ***) 호출은 그 내용을 '펼쳐 넣는다' — 인자는 호출 값으로 치환.
-   (MQA 는 공통 키워드라는 별도 개념을 두지 않는다. 재사용은 FQA 와 같은 '전제조건 케이스' 로 한다) */
+   (MQA 는 공통 키워드라는 별도 개념을 두지 않는다. 재사용은 스위트에 케이스를 순서대로 넣어 한다 — suiteLogic.js) */
 const subst = (v, env) => String(v).replace(/\$\{([^}]+)\}/g, (m, k) => (k in env ? env[k] : m));
 /* 줄 → 스텝. stepLine 의 역방향이고 같은 ACTS 를 본다 — 둘이 어긋날 수 없다. */
 const lineToStep = (tok) => {
@@ -434,7 +500,7 @@ export const parseCsv = (text) => {
    시연 포인트: 대부분은 AI가 자동으로 스텝을 만들고(확정), 일부는 사람이 고른다
      · 3번 '마음에 드는 상품' → 요소를 특정할 수 없어 '확인 필요' (사람이 화면에서 선택)
      · 2번 '보습 태그' → 고유 ID가 없어 위치 로케이터 (통과하지만 깨지기 쉬움 경고)
-     · 3 · 4번 사전조건 '로그인 상태' → 전제조건 케이스 지정 안내 */
+     · 3 · 4번 사전조건 '로그인 상태' → 스위트에서 로그인 케이스를 앞에 두라는 안내 */
 export const SAMPLE_EXCEL = [
   ["번호", "시나리오명", "사전조건", "테스트 절차", "기대결과", "분류"],
   ["1", "상품 검색 후 옵션 선택해 장바구니 담기", "",
@@ -503,8 +569,15 @@ const L_ELEMS = () => SCREEN_ELEMENTS;
    뒤의 목록은 ACTS 에 없지만 .robot 에 정상적으로 나오는 것들 — 실행기가 넣거나 RF 기본 키워드다. */
 const KNOWN_KW = [
   ...ACTS.filter((a) => a.kw).flatMap((a) => [a.kw, ...(a.alias || [])]).map((k) => k.toLowerCase()),
-  "log", "capture page screenshot", "open application", "close application", "close all applications", "앱 실행", "전제조건 케이스",
+  "log", "capture page screenshot", "open application", "close application", "close all applications", "앱 실행",
 ];
+/* 🔑 앱 열기·닫기는 스위트가 한다 — 케이스 안에서 하면 앞 케이스가 만든 상태가 사라지고, 뒤 케이스는 앱 없이 시작한다 */
+const APP_KW = /^(open application|close application|close all applications|앱 실행)$/i;
+const APP_SET = /^(test|suite) (setup|teardown)\b/i;
+const APP_ANY = /open application|close (all )?applications?|앱 실행/i;
+export const APP_SESSION_WARN = "앱 열기·닫기는 스위트가 합니다 — 여기서 하면 앞뒤 케이스와 이어지지 않습니다";
+/* 가져온 원문의 앱 열기·닫기 설정 줄을 뺀다 */
+export const stripAppSession = (code) => String(code || "").split("\n").filter((l) => !(APP_SET.test(l.trim()) && APP_ANY.test(l))).join("\n");
 const CTRL = /^(FOR|END|IF|ELSE IF|ELSE|WHILE|TRY|EXCEPT|FINALLY|BREAK|CONTINUE|RETURN)$/;
 export const checkRobot = (code) => {
   const lines = String(code || "").replace(/\r/g, "").split("\n");
@@ -516,12 +589,14 @@ export const checkRobot = (code) => {
     const n = i + 1; const m = l.match(/^\*{3}\s*(.+?)\s*\*{3}/);
     if (m) { sec = m[1].toLowerCase(); if (/test case/.test(sec)) hasTests = true; return; }
     if (!l.trim() || l.trim().startsWith("#")) return;
+    if (/setting/.test(sec) && APP_SET.test(l.trim()) && APP_ANY.test(l)) { warns.push({ line: n, msg: APP_SESSION_WARN }); return; }
     if (!/test case|keyword/.test(sec)) return;
     if (!/^\s/.test(l)) { if (/test case/.test(sec)) testCount++; return; }
     if (/^ \S/.test(l)) { errors.push({ line: n, msg: "들여쓰기는 공백 2칸 이상이어야 합니다" }); return; }
     const tok = l.trim().split(/\s{2,}|\t+/);
     const k = tok[0];
     if (/^\[/.test(k) || /^\$\{.+\}\s*=?$/.test(k)) return;
+    if (APP_KW.test(k)) { warns.push({ line: n, msg: APP_SESSION_WARN }); return; }
     if (CTRL.test(k)) { if (k === "FOR" || k === "IF" || k === "WHILE" || k === "TRY") open++; if (k === "END") open--; return; }
     if (/\s\S/.test(k) && tok.length === 1 && /\s/.test(l.trim()) && l.trim().split(/\s{2,}/).length === 1 && /^(Click Element|Input Text|Wait Until)\s\S/.test(l.trim())) { errors.push({ line: n, msg: "키워드와 인자 사이는 공백 2칸 이상으로 띄워야 합니다" }); return; }
     if (!KNOWN_KW.includes(k.toLowerCase()) && !userKw.has(k.toLowerCase())) warns.push({ line: n, msg: "알 수 없는 키워드 \"" + k + "\" — 실행할 때 실패할 수 있습니다" });

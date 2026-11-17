@@ -14,7 +14,7 @@ export const envText = (e) => e.env + " · " + (e.build ? "앱 v" + e.build : "�
 export const EnvSelect = ({ envs, value, onChange, noProd }) => (
   <Select value={value || ""} onChange={(e) => onChange(e.target.value)}>
     {envs.length === 0 && <option value="">등록된 환경 없음 — 대상·환경에서 추가</option>}
-    {envs.map((e) => <option key={e.env} value={e.env} disabled={noProd && e.prod}>{envText(e)}{noProd && e.prod ? " — 사용 불가" : ""}</option>)}
+    {envs.map((e) => <option key={e.env} value={e.env} disabled={noProd && e.prod}>{e.env}{e.prod ? " (운영)" : ""}{e.build ? "" : " · 앱 파일 없음"}{noProd && e.prod ? " — 사용 불가" : ""}</option>)}   {/* 버전은 옆에서 따로 고른다 */}
   </Select>
 );
 

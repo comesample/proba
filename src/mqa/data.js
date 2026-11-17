@@ -1,7 +1,7 @@
 // ============================================================
 // MQA (기능 QA · 모바일 앱) 네비게이션 설정 · 초기 데이터 (단일 출처)
 // 대상(앱) → 환경 · 테스트 기기(러너 · 단말) · 스위트 · 케이스 · 실행 계획 · 실행 이력 — 범용 샘플 (고객사 이름 없음)
-//   케이스 · 계획은 스위트를 ID 로 가리킨다 (c.suiteId · p.suiteIds) — 이름을 바꿔도 연결이 끊기지 않는다
+//   스위트가 케이스를 ID 로 가리키고(s.items), 계획이 스위트를 ID 로 가리킨다(p.suiteIds) — 이름을 바꿔도 연결이 끊기지 않는다
 // ============================================================
 import { LayoutDashboard, Plug, Layers, Code2, ClipboardList, Play, FileText, History, GitCompare, Activity, Smartphone } from "lucide-react";
 
@@ -30,18 +30,20 @@ export const MQA_HIDDEN = [
 
 /* ── 대상(앱) · 환경 — 특정 고객사·서비스명이 아닌 범용 샘플 ──
    환경 = 테스트할 앱 버전(빌드) + 테스트 계정. 앱 파일 작업은 화면에서 즉시 반영된다.
-   env.ver 는 기본 테스트 버전의 버전값 — 실행·계획 화면이 env.ver 를 읽으므로 기본 버전과 항상 같게 둔다. */
+   '기본 테스트 버전' 은 두지 않는다 — 버전은 쓰는 곳(케이스 편집 · 실행 계획)에서 고르고, 최신은 빌드 번호로 계산한다 (builds.js)
+   앱 실행 확인 결과는 버전마다 남긴다 (build.check) */
 const MB = 1048576;
 export const INIT_MQA_SYSTEMS = [
   { id: 1, name: "샘플 쇼핑 앱", platforms: ["Android"], envs: [
     /* 🔑 apiBase·apiTokenRef — UI 와 섞인 케이스가 서버를 확인할 때 쓴다.
-       lastCheck.url 은 WebView 화면 주소지 API 가 아니다. 케이스는 이 값을 모르고
+       check.url 은 WebView 화면 주소지 API 가 아니다. 케이스는 이 값을 모르고
        실행할 때 proba.resource 로 주입된다("케이스는 환경을 모른다"). */
-    { env: "스테이징", prod: false, status: "확인됨", ver: "3.2.0", deploy: { mode: "수동" },
+    { env: "스테이징", prod: false, deploy: { mode: "수동" },
       apiBase: "https://api-stg.example.com", apiTokenRef: "${stg_api_token}",
-      lastCheck: { at: "2026-10-29 16:40", device: "Galaxy S23 · Android 14", ver: "3.2.0", secs: 6.8, launch: "com.example.shop.MainActivity", native: { n: 5, ids: 5 }, web: true, webview: "130", url: "https://m-stg.example.com/main" },
-      app: { platform: "Android", appId: "com.example.shop", defBuild: "B-102", builds: [
-        { id: "B-102", ver: "3.2.0", code: 30200, minSdk: 26, file: "shop-stg-3.2.0.apk", size: 78.4 * MB, at: "2026-10-29 16:32", by: "박지영", note: "보안 기능 해제 테스트 빌드", _sim: { web: true, url: "https://m-stg.example.com/main" } },
+      app: { platform: "Android", appId: "com.example.shop", builds: [
+        { id: "B-102", ver: "3.2.0", code: 30200, minSdk: 26, file: "shop-stg-3.2.0.apk", size: 78.4 * MB, at: "2026-10-29 16:32", by: "박지영", note: "보안 기능 해제 테스트 빌드",
+          check: { st: "확인됨", at: "2026-10-29 16:40", device: "Galaxy S23 · Android 14", ver: "3.2.0", secs: 6.8, launch: "com.example.shop.MainActivity", native: { n: 5, ids: 5 }, web: true, webview: "130", url: "https://m-stg.example.com/main" },
+          _sim: { web: true, url: "https://m-stg.example.com/main" } },
         { id: "B-101", ver: "3.1.4", code: 30104, minSdk: 26, file: "shop-stg-3.1.4.apk", size: 77.9 * MB, at: "2026-10-20 10:05", by: "박지영", note: "", _sim: { web: true, url: "https://m-stg.example.com/main" } },
       ] },
       accts: [
@@ -50,9 +52,9 @@ export const INIT_MQA_SYSTEMS = [
       ] },
   ] },
   { id: 2, name: "샘플 멤버십 앱", platforms: ["Android"], envs: [
-    { env: "스테이징", prod: false, status: "미확인", ver: "1.8.0", deploy: { mode: "수동" },
+    { env: "스테이징", prod: false, deploy: { mode: "수동" },
       apiBase: "", apiTokenRef: "",   // 아직 안 받은 환경 — API 스텝을 쓰면 실행 전에 채워야 한다
-      app: { platform: "Android", appId: "com.example.membership", defBuild: "B-201", builds: [
+      app: { platform: "Android", appId: "com.example.membership", builds: [
         { id: "B-201", ver: "1.8.0", code: 10800, minSdk: 28, file: "membership-stg-1.8.0.apk", size: 41.3 * MB, at: "2026-10-27 11:48", by: "이민준", note: "", _sim: { web: false, url: "https://membership-stg.example.com/home" } },
       ] },
       accts: [
@@ -60,21 +62,29 @@ export const INIT_MQA_SYSTEMS = [
       ] },
   ] },
 ];
-/* ── 스위트 — 업무 흐름 묶음 (스위트 메뉴 재설계 전 임시 최소본) ── */
+/* ── 스위트 — 위에서부터 순서대로 실행하는 흐름 (suiteLogic.js)
+   로그인이 필요하면 1번에 로그인 케이스. 서로 무관한 검증은 스위트를 작게 나눈다. 케이스는 여러 스위트에서 재사용 */
 export const INIT_MQA_SUITES = [
-  { id: 1, name: "로그인", desc: "로그인·계정" },
-  { id: 2, name: "상품 탐색", desc: "검색·상품 상세" },
-  { id: 3, name: "주문", desc: "장바구니·주문 내역" },
+  { id: 1, name: "로그인", desc: "로그인 단독 확인", systemId: 1, acctRole: "일반", items: ["TC-001"] },
+  { id: 2, name: "상품 탐색", desc: "검색·상품 상세 — 로그인 없이", systemId: 1, acctRole: "", items: ["TC-002"] },
+  /* 서로 무관한 검증은 나눈다 — 비우기가 실패해도 담기·서버 반영은 따로 확인된다 */
+  { id: 3, name: "장바구니 비우기", desc: "로그인 → 장바구니 비우기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-006"] },
+  { id: 7, name: "담기 · 서버 반영", desc: "로그인 → 담기 → 서버 장바구니 확인", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-008"] },
+  /* 승인 전 케이스가 있어 실행할 수 없는 스위트 — 계획에 넣으면 이유가 보인다 */
+  { id: 4, name: "주문 내역", desc: "로그인 → 주문 내역", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-004"] },
+  { id: 5, name: "검색 후 담기", desc: "로그인 → 검색 → 담기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-003", "TC-007"] },
+  /* Full-Code 도 본문만 — 앱 열기·닫기는 스위트가 하므로 Low-Code 뒤에 이어 붙일 수 있다 */
+  { id: 6, name: "연속 담기", desc: "로그인 → 가져온 스크립트로 3개 연속 담기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-005"] },
 ];
 /* ── 테스트케이스 — 정본 3단: proc(자연어 절차) → steps(실행 스텝) → .robot(화면에서 생성)
    step: { id, n(연결된 절차 번호), act, loc, val, why(미확정 사유) } · 확정/미확정은 저장하지 않고 계산한다
    status: 초안 → 검토중 → 승인 (FQA 와 동일) · level: Low-Code | Full-Code (FQA 와 같은 관리 수준, 단방향)
-   재사용: 로그인 같은 공통 절차는 케이스로 만들고 다른 케이스의 preCase(전제조건)로 지정한다 (FQA 와 동일)
+   재사용: 케이스는 스위트에 순서대로 넣어 재사용한다 — 케이스는 스위트를 모른다 (suiteLogic.js)
    baseBuild: 생성 기준 앱 버전 */
 const P = "id=com.example.shop:id/";
 export const INIT_MQA_CASES = [
-  { id: "TC-001", name: "로그인", systemId: 1, suiteId: 1, tags: "smoke", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
-    pre: "", preCase: "", acctRole: "일반", lastDry: { at: "10:12", build: "3.2.0", env: "스테이징", result: "통과" },
+  { id: "TC-001", name: "로그인", systemId: 1, tags: "smoke", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "", lastDry: { at: "10:12", build: "3.2.0", env: "스테이징", result: "통과" },
     proc: [{ t: "하단 마이 탭을 누른다", e: "" }, { t: "아이디와 비밀번호를 입력한다", e: "" }, { t: "로그인 버튼을 누른다", e: "\"로그아웃\"이 보인다" }],
     steps: [
       { id: "s101", n: 1, act: "탭", loc: "accessibility_id=마이 탭" },
@@ -83,16 +93,16 @@ export const INIT_MQA_CASES = [
       { id: "s104", n: 3, act: "탭", loc: P + "btn_login" },
       { id: "s105", n: 3, act: "화면 확인", val: "로그아웃" },
     ] },
-  { id: "TC-002", name: "상품 검색 결과 확인", systemId: 1, suiteId: 2, tags: "smoke,regression", status: "검토중", origin: "TC 임포트", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
-    pre: "", preCase: "",
+  { id: "TC-002", name: "상품 검색 결과 확인", systemId: 1, tags: "smoke,regression", status: "검토중", origin: "TC 임포트", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "",
     proc: [{ t: "검색창을 누른다", e: "" }, { t: "\"립밤\"을 입력한다", e: "\"수분 립밤\"이 보인다" }],
     steps: [
       { id: "s201", n: 1, act: "탭", loc: P + "search_bar" },
       { id: "s202", n: 2, act: "입력", loc: P + "search_bar", val: "립밤" },
       { id: "s203", n: 2, act: "화면 확인", val: "수분 립밤" },
     ] },
-  { id: "TC-003", name: "장바구니 담기", systemId: 1, suiteId: 3, tags: "regression", status: "초안", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
-    pre: "", preCase: "TC-001", acctRole: "일반",
+  { id: "TC-003", name: "장바구니 담기", systemId: 1, tags: "regression", status: "초안", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "",
     proc: [{ t: "검색창을 누른다", e: "" }, { t: "\"립밤\"을 입력한다", e: "결과 목록이 뜬다" }, { t: "두 번째 상품을 연다", e: "" }, { t: "장바구니 담기를 누른다", e: "담기 완료 안내가 뜬다" }],
     steps: [
       { id: "s301", n: 1, act: "탭", loc: P + "search_bar" },
@@ -102,27 +112,23 @@ export const INIT_MQA_CASES = [
       { id: "s305", n: 4, act: "탭", loc: P + "btn_add_cart" },
       { id: "s306", n: 4, act: "화면 확인", val: "장바구니에 담았습니다" },
     ] },
-  { id: "TC-004", name: "로그인 후 주문 내역을 연다", systemId: 1, suiteId: 3, tags: "", status: "초안", origin: "TC 임포트", level: "Low-Code", code: "", mismatch: false, baseBuild: "",
-    note: "테스트 관리 도구 CSV에서 가져온 절차입니다. 로그인은 왼쪽 '전제조건'에 로그인 케이스를 지정하세요.",
-    pre: "", preCase: "",
+  { id: "TC-004", name: "로그인 후 주문 내역을 연다", systemId: 1, tags: "", status: "초안", origin: "TC 임포트", level: "Low-Code", code: "", mismatch: false, baseBuild: "",
+    note: "테스트 관리 도구 CSV에서 가져온 절차입니다. 로그인은 절차에 쓰지 말고, 스위트에서 로그인 케이스 뒤에 두세요(주문 내역 스위트).",
+    pre: "",
     proc: [{ t: "로그인한다", e: "" }, { t: "마이 탭을 누른다", e: "" }, { t: "주문 내역을 누른다", e: "\"주문 내역\"이 보인다" }],
     steps: [] },
-  /* 전제조건용 케이스 — 전제조건의 전제조건은 둘 수 없으므로(연쇄 금지) 시작 상태를 혼자 끝까지 만든다: 로그인 + 장바구니 비우기 */
-  { id: "TC-006", name: "로그인 · 빈 장바구니로 시작", systemId: 1, suiteId: 3, tags: "", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
-    pre: "", preCase: "", acctRole: "일반", lastDry: { at: "10:20", build: "3.2.0", env: "스테이징", result: "통과" },
-    proc: [{ t: "하단 마이 탭을 누른다", e: "" }, { t: "아이디와 비밀번호를 입력하고 로그인한다", e: "" }, { t: "장바구니 탭에서 전체 삭제를 누른다", e: "\"장바구니가 비어 있습니다\"가 보인다" }],
+  /* 흐름용 케이스 — 로그인은 하지 않는다. 스위트에서 로그인 케이스 뒤에 둔다 (예전에는 로그인 스텝을 복사해 들고 있었다) */
+  { id: "TC-006", name: "장바구니 비우기", systemId: 1, tags: "", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "", lastDry: { at: "10:20", build: "3.2.0", env: "스테이징", result: "통과" },
+    proc: [{ t: "장바구니 탭에서 전체 삭제를 누른다", e: "\"장바구니가 비어 있습니다\"가 보인다" }],
     steps: [
-      { id: "s601", n: 1, act: "탭", loc: "accessibility_id=마이 탭" },
-      { id: "s602", n: 2, act: "입력", loc: P + "input_id", val: "${계정 ID}" },
-      { id: "s603", n: 2, act: "입력", loc: P + "input_pw", val: "${계정 비밀번호}" },
-      { id: "s604", n: 2, act: "탭", loc: P + "btn_login" },
-      { id: "s605", n: 3, act: "탭", loc: "accessibility_id=장바구니" },
-      { id: "s606", n: 3, act: "탭", loc: P + "btn_cart_clear" },
-      { id: "s607", n: 3, act: "화면 확인", val: "장바구니가 비어 있습니다" },
+      { id: "s605", n: 1, act: "탭", loc: "accessibility_id=장바구니" },
+      { id: "s606", n: 1, act: "탭", loc: P + "btn_cart_clear" },
+      { id: "s607", n: 1, act: "화면 확인", val: "장바구니가 비어 있습니다" },
     ] },
   /* 이전 버전(v3.1.4)에서 만든 케이스 — v3.2.0 에서 '장바구니 담기' 버튼 ID가 바뀌어 디버그 실행이 4번 스텝에서 실패한다 */
-  { id: "TC-007", name: "검색 후 첫 상품 담기", systemId: 1, suiteId: 3, tags: "regression", status: "검토중", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.1.4",
-    pre: "", preCase: "TC-001", acctRole: "일반",
+  { id: "TC-007", name: "검색 후 첫 상품 담기", systemId: 1, tags: "regression", status: "검토중", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.1.4",
+    pre: "",
     proc: [{ t: "검색창에 \"립밤\"을 입력한다", e: "" }, { t: "첫 번째 상품을 연다", e: "" }, { t: "장바구니 담기를 누른다", e: "\"장바구니에 담았습니다\"가 보인다" }],
     steps: [
       { id: "s701", n: 1, act: "탭", loc: P + "search_bar", el: "검색창" },
@@ -133,8 +139,8 @@ export const INIT_MQA_CASES = [
     ] },
   /* 🔑 UI 와 API 가 섞인 케이스 — 화면 토스트는 "프론트가 보여준 것" 까지만 말한다.
      서버에 실제로 담겼는지는 API 로 확인해야 안다. UI 만 보면 조용히 통과한다. */
-  { id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", systemId: 1, suiteId: 3, tags: "regression", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
-    pre: "", preCase: "", acctRole: "일반", lastDry: { at: "10:31", build: "3.2.0", env: "스테이징", result: "통과" },
+  { id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", systemId: 1, tags: "regression", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.2.0",
+    pre: "", lastDry: { at: "10:31", build: "3.2.0", env: "스테이징", result: "통과" },
     proc: [{ t: "상품 상세에서 장바구니 담기를 누른다", e: "\"장바구니에 담았습니다\"가 보인다" }, { t: "서버 장바구니를 조회한다", e: "담긴 상품이 1건이다" }],
     steps: [
       { id: "s801", n: 1, act: "탭", loc: P + "btn_cart_add", el: "장바구니 담기 버튼" },
@@ -143,10 +149,10 @@ export const INIT_MQA_CASES = [
       { id: "s804", n: 2, act: "응답 검증", loc: "상태코드", val: "200" },
       { id: "s805", n: 2, act: "응답 검증", loc: "$.items.length", val: "1" },
     ] },
-  { id: "TC-005", name: "상품 3개 연속 담기", systemId: 1, suiteId: 3, tags: "", status: "초안", origin: "스크립트 임포트", level: "Full-Code", mismatch: false, baseBuild: "",
+  { id: "TC-005", name: "상품 3개 연속 담기", systemId: 1, tags: "", status: "초안", origin: "스크립트 임포트", level: "Full-Code", mismatch: false, baseBuild: "",
     note: "Full-Code로 가져옴 — 반복·조건·변수 대입 포함",
-    pre: "", preCase: "TC-001", acctRole: "일반", proc: [], steps: [],
-    code: "*** Settings ***\nLibrary    AppiumLibrary\nResource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)\nTest Setup    앱 실행\nTest Teardown    Close Application\n\n*** Test Cases ***\n상품 3개 연속 담기\n    FOR    ${i}    IN RANGE    3\n        Click Element    xpath=//android.view.ViewGroup[${i}+1]\n        Click Element    id=com.example.shop:id/btn_add_cart\n        Go Back\n    END" },
+    pre: "", proc: [], steps: [],
+    code: "*** Settings ***\nLibrary    AppiumLibrary\nResource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)\n\n*** Test Cases ***\n상품 3개 연속 담기\n    FOR    ${i}    IN RANGE    3\n        Click Element    xpath=//android.view.ViewGroup[${i}+1]\n        Click Element    id=com.example.shop:id/btn_add_cart\n        Go Back\n    END" },
 ];
 
 /* _sim (목업 전용) — 실제로는 저장하지 않는다. '앱 실행 확인' 이 단말에서 읽어 오는 값을 흉내 내기 위한 것
@@ -172,19 +178,19 @@ INIT_MQA_RUNNERS.push(
     ] },
 );
 /* ── 실행 계획 · 실행 이력 (한 바퀴 확인용 샘플) ──
-   계획은 앱 · 환경 · 버전(빈 값 = 기본 테스트 버전) + 스위트 · 태그 + 실행 단말 1대 + 예약
+   계획은 앱 · 환경 · 버전(buildId — 빈 값 = 최신, 지정하면 그 버전으로 고정) + 스위트 + 실행 단말 1대 + 예약
    이력: v3.1.4 에서 통과 → v3.2.0 으로 올린 뒤 TC-006 이 한 번 대기 시간 초과로 실패(불안정) */
 export const INIT_MQA_PLANS = [
-  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [1, 2, 3], tags: "", devId: "D-3", retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
+  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [2, 3, 7], devId: "D-3", retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
 ];
 const st = (act, name, s, val) => ({ act, name, val: val || "", st: s || "통과", msg: "" });
-const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", preCase: "", steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("화면 확인", "\"로그아웃\"")] });
-const TC6 = (fail) => ({ id: "TC-006", name: "로그인 · 빈 장바구니로 시작", st: fail ? "실패" : "통과", preCase: "", ...(fail ? { failStep: 6, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
-  steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("탭", "장바구니 탭"), fail ? { ...st("탭", "전체 삭제", "실패"), msg: "요소를 찾지 못했습니다" } : st("탭", "전체 삭제"), fail ? st("화면 확인", "\"장바구니가 비어 있습니다\"", "실행 안 함") : st("화면 확인", "\"장바구니가 비어 있습니다\"")] });
+const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("화면 확인", "\"로그아웃\"")] });
+const TC6 = (fail) => ({ id: "TC-006", name: "장바구니 비우기", st: fail ? "실패" : "통과", ...(fail ? { failStep: 2, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
+  steps: [st("탭", "장바구니 탭"), fail ? { ...st("탭", "전체 삭제", "실패"), msg: "요소를 찾지 못했습니다" } : st("탭", "전체 삭제"), fail ? st("화면 확인", "\"장바구니가 비어 있습니다\"", "실행 안 함") : st("화면 확인", "\"장바구니가 비어 있습니다\"")] });
 const RUN = (id, build, at, end, trig, cases) => ({ id, planId: 1, planName: "야간 회귀 · 스테이징", systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, devId: "D-3", device: "Galaxy A54 (Android 14) — 10층 실행 PC", trigger: trig, status: "완료", startedAt: at, endedAt: end, gate: 90, retry: 1, note: "", cases, log: [] });
 /* API 스텝에서 실패한 회차 — 화면은 성공했는데 서버 반영이 안 됐다.
    UI 만 봤으면 '통과' 로 끝났을 실패이고, 원인은 앱이 아니라 백엔드로 간다(judgeOf 참고). */
-const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", st: fail ? "실패" : "통과", preCase: "",
+const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", st: fail ? "실패" : "통과",
   ...(fail ? { failStep: 4, failMsg: "응답 상태코드 500 — 기대 200", retried: 1 } : {}),
   steps: [
     st("탭", "장바구니 담기 버튼"),
@@ -193,9 +199,14 @@ const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반�
     fail ? { ...st("응답 검증", "상태코드", "실패"), msg: "응답 상태코드 500 — 기대 200" } : st("응답 검증", "상태코드"),
     fail ? st("응답 검증", "$.items.length", "실행 안 함") : st("응답 검증", "$.items.length"),
   ] });
+/* 실행 행 = (스위트, 케이스). 계획의 스위트 순서대로 — 실행 불가 스위트는 건너뜀 + 이유로 남는다 */
+const IN = (su, c) => ({ ...c, key: su.id + ":" + c.id, suiteId: su.id, suiteName: su.name, acctRole: su.acctRole });
+const S2 = { id: 2, name: "상품 탐색", acctRole: "" }, S3 = { id: 3, name: "장바구니 비우기", acctRole: "일반" }, S7 = { id: 7, name: "담기 · 서버 반영", acctRole: "일반" };
+const TC2SKIP = () => ({ id: "TC-002", name: "상품 검색 결과 확인", st: "건너뜀", skipWhy: "실행 불가 — 1번 TC-002 승인 전", steps: [] });
+const ROWS = (f6, f8) => [IN(S2, TC2SKIP()), IN(S3, TC1()), IN(S3, TC6(f6)), IN(S7, TC1()), IN(S7, TC8(f8))];
 export const INIT_MQA_RUNS = [
-  RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", [TC1(), TC6(false), TC8(false)]),
+  RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", ROWS(false, false)),
   /* 한 회차에 원인이 둘 — 요소 변경(UI)과 백엔드 결함(API). 담당자가 갈리는 것을 보여준다 */
-  RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", [TC1(), TC6(true), TC8(true)]),
-  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", [TC1(), TC6(false), TC8(false)]),
+  RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", ROWS(true, true)),
+  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", ROWS(false, false)),
 ];

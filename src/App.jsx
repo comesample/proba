@@ -25,6 +25,7 @@ import { DatasetsScreen } from "./common/datasets.jsx";
 import { FQA_SECTIONS, INIT_FQA_CASES, INIT_FQA_SUITES, INIT_FQA_SYSTEMS, INIT_FQA_RUNS, INIT_FQA_PLANS, FQA_HIDDEN } from "./fqa/data.js";
 import { MqaTargetScreen } from "./mqa/targetScreen.jsx";
 import { MqaSuiteScreen } from "./mqa/suiteScreen.jsx";
+import { usesCase as SL_uses } from "./mqa/suiteLogic.js";
 import { MqaDashboardScreen, MqaPlanScreen, MqaRunScreen, MqaHistoryScreen, MqaResultScreen } from "./mqa/flow.jsx";
 import { MqaCasesScreen } from "./mqa/cases.jsx";
 import { MqaDevicesScreen } from "./mqa/devicesScreen.jsx";
@@ -42,7 +43,7 @@ const stampSeeds = (arr) => (arr || []).map((o, i) => { if (o.createdAt) return 
 /* 케이스 시드에 리비전을 채운다 — 현재본도 이력에 들어 있어야 한다(최초 작성 = rev 1).
    TC-055처럼 versions를 직접 정의한 시드는 그 뒤에 현재 rev를 얹는다. */
 /* MQA 케이스의 리비전 보존 필드 — FQA 케이스에는 없어서 undefined 로 남는다 */
-const mqaX = (c) => (c.proc ? { proc: c.proc || [], preCase: c.preCase || "", prodCaution: !!c.prodCaution, pre: c.pre || "", suiteId: c.suiteId != null ? c.suiteId : null } : undefined);
+const mqaX = (c) => (c.proc ? { proc: c.proc || [], prodCaution: !!c.prodCaution, pre: c.pre || "" } : undefined);   // 스위트·시작 상태는 케이스가 아니라 스위트가 가진다
 const seedCases = (arr) => stampSeeds(arr).map((c) => {
   const rev = c.rev || 1;
   const head = { rev, at: c.updatedAt, by: c.updatedBy, note: "", level: c.level, steps: c.steps || [], code: c.code || "", name: c.name, suite: c.suite, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "", x: mqaX(c) };
@@ -151,7 +152,7 @@ export default function App() {
     rev, at: c.updatedAt || auditNow(), by: c.updatedBy || currentUser, note: note || "",
     level: c.level, steps: c.steps || [], code: c.code || "",
     name: c.name, suite: c.suite, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "",
-    x: mqaX(c),   // MQA 전용 필드(자연어 절차·전제조건) — FQA 는 읽지 않는다. 관리 수준·코드는 level·code 로 FQA 와 공유
+    x: mqaX(c),   // MQA 전용 필드(자연어 절차·사전조건 원문) — FQA 는 읽지 않는다. 관리 수준·코드는 level·code 로 FQA 와 공유
   });
   /* 🔑 미저장 변경 보호 — dirty 상태는 각 화면 안에 있고 사이드바는 그것을 모른다.
      화면이 setNavGuard로 등록하고, 모든 이동 경로가 goTo를 거치게 한다.
@@ -268,7 +269,8 @@ export default function App() {
     addMqaCase: (c) => setMqaCases((x) => { const base = withCreate({ rev: 1, ...c }); return [{ ...base, versions: [revSnap(base, 1)] }, ...x]; }),
     updateMqaCase: (id, patch) => setMqaCases((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate(patch) } : c))),
     setMqaCaseStatus: (id, status) => setMqaCases((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate({ status }) } : c))),
-    removeMqaCase: (id) => setMqaCases((x) => x.filter((c) => c.id !== id)),
+    /* 케이스를 지우면 스위트에서도 빠진다 — 지우기 전 확인창이 영향받는 스위트를 알린다 (cases.jsx delCase) */
+    removeMqaCase: (id) => { setMqaCases((x) => x.filter((c) => c.id !== id)); setMqaSuites((x) => x.map((su) => (SL_uses(su, id) ? { ...su, items: (su.items || []).filter((i) => i !== id) } : su))); },
     commitMqaCase: (id, patch, opt) => { const { baseRev, note } = opt || {}; let ok = true; setMqaCases((x) => x.map((c) => { if (c.id !== id) return c; const cur = c.rev || 1; if (baseRev != null && baseRev !== cur) { ok = false; return c; } const next = { ...c, ...withUpdate(patch), rev: cur + 1 }; return { ...next, versions: [revSnap(next, cur + 1, note), ...(c.versions || [])] }; })); return ok; },
     mqaSuites, addMqaSuite: (su) => setMqaSuites((x) => [withCreate(su), ...x]), updateMqaSuite: (id, patch) => setMqaSuites((x) => x.map((su) => (su.id === id ? { ...su, ...withUpdate(patch) } : su))), removeMqaSuite: (id) => setMqaSuites((x) => x.filter((su) => su.id !== id)),
     mqaRunners, mqaWork, setMqaWork: (patch) => setMqaWork((w) => ({ ...w, ...patch })),

@@ -2,7 +2,7 @@
 // MQA 테스트케이스 — FQA 테스트케이스와 같은 뼈대
 //   목록: 검색·필터·[새 TC] / 체크박스 일괄 처리 / 행 클릭 → 오른쪽 미리보기 패널 → 편집(에디터)
 //   생성: 직접 작성(팝업 → 에디터) · TC 임포트(Excel/CSV → 자연어 절차) · 스크립트 임포트(Robot Framework → 스텝) — 결과물 종류로 나눈다
-//   에디터: 좌 속성 열(대상·태그·운영주의·전제조건·복제·변경 이력) / 우 정체 카드 → 모드 전환·디버그 실행 → 스텝 표
+//   에디터: 좌 속성 열(대상·태그·운영주의·포함된 스위트·복제·변경 이력) / 우 정체 카드 → 모드 전환·디버그 실행 → 스텝 표
 // MQA 만의 것
 //   · 자연어 절차 카드 (정본 3단의 첫 단계) + AI로 양식 정리 / AI로 스텝 만들기
 //   · 스텝의 절차 번호 연결 · 확정/미확정 · 요소 집기(기기 화면에서)
@@ -15,6 +15,8 @@ import { Info, XCircle, Sparkles, MousePointerClick, Play, Upload, FileText, Fil
 import { Card, Badge, Btn, Field, Input, Select, Modal, Toast, useToast, PageToolbar, Portal } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
+import * as SL from "./suiteLogic.js";
+import * as BV from "./builds.js";
 import { flatDevices, deviceBlock, devLabel, pickDefault, osName } from "./devices.js";
 import { EnvSelect, DeviceSelect, ReadonlyField, FieldRow, envText } from "./workPickers.jsx";
 
@@ -24,18 +26,18 @@ const LV_K = { "Low-Code": "active", "Full-Code": "warn" };   // FQA 와 같은 
 const TAGS = ["smoke", "regression", "critical"];
 const TAG_DESC = { smoke: "배포 직후 핵심 경로", regression: "전체 회귀", critical: "실패 시 배포 중단" };
 const tagList = (t) => String(t || "").split(/[,\s]+/).filter(Boolean);
-const EDIT_FIELDS = ["name", "suiteId", "tags", "pre", "proc", "steps", "level", "code", "mismatch", "baseBuild", "preCase", "acctRole", "prodCaution"];
+const EDIT_FIELDS = ["name", "tags", "pre", "proc", "steps", "level", "code", "mismatch", "baseBuild", "prodCaution"];
 const DEF = { proc: [], steps: [], level: "Low-Code", mismatch: false, prodCaution: false };
 const pickFields = (c) => Object.fromEntries(EDIT_FIELDS.map((k) => [k, c[k] === undefined || c[k] === null ? (k in DEF ? DEF[k] : "") : c[k]]));
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const numOf = (id) => parseInt(String(id).replace(/\D/g, ""), 10) || 0;
 const nextTcId = (cases, plus = 1) => "TC-" + String(Math.max(0, ...cases.map((c) => numOf(c.id))) + plus).padStart(3, "0");
 const unresolvedOfCase = (c) => (c.level === "Full-Code" ? (String(c.code || "").match(/# \[미확정\]/g) || []).length : L.unresolvedOf(c.steps));
-/* 환경별 기본 테스트 버전 — 디버그 실행·요소 집기·AI 초안의 '생성 기준 빌드' */
-const envBuildObj = (e) => { const a = (e && e.app) || {}; return (a.builds || []).find((x) => x.id === a.defBuild) || null; };
+/* 환경의 최신 버전(빌드 번호 최고) — 가져오기의 기준 버전 · 편집기 작업 버전의 처음 값 (builds.js) */
+const envBuildObj = (e) => BV.latestBuild(e);
 const envBuild = (e) => (envBuildObj(e) || {}).ver || "";
 // apiBase 를 같이 넘긴다 — 디버그 실행에서 API 스텝이 이 값을 본다(없으면 실패)
-const envsOf = (sys) => ((sys && sys.envs) || []).map((e) => ({ env: e.env, build: envBuild(e), buildObj: envBuildObj(e), prod: e.prod, apiBase: e.apiBase || "" }));
+const envsOf = (sys) => ((sys && sys.envs) || []).map((e) => ({ env: e.env, build: envBuild(e), buildObj: envBuildObj(e), builds: BV.buildsOf(e), prod: e.prod, apiBase: e.apiBase || "" }));
 const readText = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result || "")); r.onerror = () => res(""); r.readAsText(f); });
 const taCls = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500";
 const Hdr = ({ icon: Icon, title, desc, badge }) => (
@@ -52,8 +54,10 @@ const TagPicker = ({ value, onChange }) => {
 
 /* ═══════════ 목록 ═══════════ */
 export function MqaCasesScreen() {
-  const { mqaCases = [], mqaSuites = [], mqaSystems = [], addMqaCase, setMqaCaseStatus, removeMqaCase, commitMqaCase, mqaEditTc, setMqaEditTc, goTo, navTick } = useApp();
-  const sn = (id) => ((mqaSuites.find((x) => x.id === id) || {}).name || "");   // 스위트는 ID 로 가리키고 이름은 표시할 때만 찾는다
+  const { mqaCases = [], mqaSuites = [], mqaSystems = [], addMqaCase, setMqaCaseStatus, removeMqaCase, commitMqaCase, updateMqaSuite, mqaEditTc, setMqaEditTc, goTo, navTick } = useApp();
+  /* 케이스는 스위트를 모른다 — 스위트가 케이스를 가리킨다 (한 케이스가 여러 스위트에서 재사용) */
+  const sn = (id) => SL.suiteNamesOf(mqaSuites, id).join(" · ");
+  const suiteById = (id) => mqaSuites.find((x) => x.id === id) || null;
   const editorDirty = useRef(false);
   const [msg, flash] = useToast();
   const [mode, setMode] = useState("목록");          // 목록 | edit | tc | script
@@ -75,9 +79,9 @@ export function MqaCasesScreen() {
   useEffect(() => { if (mqaEditTc) { const id = typeof mqaEditTc === "string" ? mqaEditTc : mqaEditTc.id; const c = mqaCases.find((x) => x.id === id); if (c) { setSel(c); setMode("edit"); } setMqaEditTc(null); } }, [mqaEditTc]);
 
   const sysName = (id) => (mqaSystems.find((s) => s.id === id) || {}).name || "—";
-  const list = mqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || String(c.suiteId) === suiteF) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (sysF === "전체" || String(c.systemId) === sysF) && (c.id + c.name + sn(c.suiteId) + c.tags).toLowerCase().includes(q.toLowerCase()))
+  const list = mqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || (suiteById(+suiteF) && SL.usesCase(suiteById(+suiteF), c.id))) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (sysF === "전체" || String(c.systemId) === sysF) && (c.id + c.name + sn(c.id) + c.tags).toLowerCase().includes(q.toLowerCase()))
     .slice().sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
-  const delCase = (c, after) => { if (!window.confirm(c.id + " 삭제할까요? 되돌릴 수 없습니다.")) return; removeMqaCase(c.id); if (after) after(); flash(c.id + " 삭제됨"); };
+  const delCase = (c, after) => { const us = SL.suitesOfCase(mqaSuites, c.id); if (!window.confirm(c.id + " 삭제할까요? 되돌릴 수 없습니다." + (us.length ? "\n\n이 케이스가 포함된 스위트에서도 빠집니다:\n" + us.map((su) => " · " + su.name + " (" + ((su.items || []).indexOf(c.id) + 1) + "번째)").join("\n") : ""))) return; removeMqaCase(c.id); if (after) after(); flash(c.id + " 삭제됨"); };
   const togglePick = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allPicked = list.length > 0 && list.every((c) => picked.has(c.id));
   const toggleAll = () => setPicked(allPicked ? new Set() : new Set(list.map((c) => c.id)));
@@ -90,13 +94,16 @@ export function MqaCasesScreen() {
     const skip = picked.size - tgt.length;
     flash(tgt.length + "건 " + st + " 처리" + (skip ? " · " + skip + "건은 미확정·스텝 없음으로 제외" : "")); setPicked(new Set());
   };
-  const bulkDel = () => { if (!window.confirm(picked.size + "건을 삭제할까요? 되돌릴 수 없습니다.")) return; picked.forEach((id) => removeMqaCase(id)); flash(picked.size + "건 삭제됨"); setPicked(new Set()); };
+  const bulkDel = () => { const us = mqaSuites.filter((su) => [...picked].some((id) => SL.usesCase(su, id))); if (!window.confirm(picked.size + "건을 삭제할까요? 되돌릴 수 없습니다." + (us.length ? "\n\n스위트 " + us.length + "개(" + us.map((su) => su.name).join(", ") + ")에서도 빠집니다." : ""))) return; picked.forEach((id) => removeMqaCase(id)); flash(picked.size + "건 삭제됨"); setPicked(new Set()); };
+  /* 스위트에 추가 — 끝에 붙인다. 순서는 스위트 화면에서 바꾼다. 케이스 자체는 바뀌지 않는다(리비전 없음) */
   const applySuite = () => {
-    const to = +suiteModal, tgt = pickedCases().filter((c) => c.suiteId !== to);
-    if (!to) { flash("이동할 스위트를 고르세요"); return; }
-    if (!tgt.length) { flash("이미 모두 " + sn(to) + " 입니다"); setSuiteModal(null); return; }
-    tgt.forEach((c) => commitMqaCase(c.id, { suiteId: to }, { note: "일괄 스위트 변경" }));
-    flash(tgt.length + "건 → " + sn(to)); setSuiteModal(null); setPicked(new Set());
+    const su = suiteById(+suiteModal);
+    if (!su) { flash("추가할 스위트를 고르세요"); return; }
+    const all = pickedCases(), ok = all.filter((c) => SL.canJoin(su, c) && !(su.items || []).includes(c.id));
+    const skip = all.length - ok.length;
+    if (!ok.length) { flash("추가할 케이스가 없습니다 — 이미 들어 있거나 다른 앱입니다"); return; }
+    updateMqaSuite(su.id, { items: [...(su.items || []), ...ok.map((c) => c.id)] });
+    flash(ok.length + "건 → " + su.name + " 끝에 추가" + (skip ? " · " + skip + "건 제외(이미 있음·다른 앱)" : "")); setSuiteModal(null); setPicked(new Set());
   };
   const openTagModal = () => { const d = {}; pickedCases().forEach((c) => { d[c.id] = c.tags || ""; }); setTagModal(d); };
   const tagOn = (id, t) => tagList(tagModal[id]).includes(t);
@@ -115,27 +122,27 @@ export function MqaCasesScreen() {
     const name = (blank.name || "").trim();
     if (!name) { flash("TC 이름을 입력하세요"); return; }
     const sys = mqaSystems.find((s) => String(s.id) === String(blank.systemId));
-    const c = { id: nextTcId(mqaCases), origin: "직접 작성", name, systemId: sys ? sys.id : blank.systemId, suiteId: blank.suiteId, tags: "", status: "초안", level: "Low-Code", pre: "", preCase: "", acctRole: "", proc: [], steps: [], code: "", mismatch: false, baseBuild: "", isNew: true };
+    const c = { id: nextTcId(mqaCases), origin: "직접 작성", name, systemId: sys ? sys.id : blank.systemId, tags: "", status: "초안", level: "Low-Code", pre: "", proc: [], steps: [], code: "", mismatch: false, baseBuild: "", isNew: true };
     setBlank(null); setSel(c); setMode("edit");
   };
   /* 가져오기 공통 — 모두 '초안' 으로 들어온다.
      AI 스텝 생성은 단말에서 앱을 조작해야 하므로 가져오기 단계에서는 하지 않는다 — 케이스마다 에디터에서 'AI로 스텝 만들기' */
   const doImport = (items, opt) => {
     const sys = mqaSystems.find((s) => String(s.id) === String(opt.systemId));
-    const byName = Object.fromEntries(mqaSuites.map((s) => [s.name, s.id]));   // 파일의 분류 이름 → 스위트 ID
+    /* 파일의 '분류' 는 받지 않는다 — 스위트는 실행 흐름이라 가져온 뒤 스위트 화면에서 넣는다 (태그는 정해진 목록만 쓴다) */
     const build = envBuild(((sys && sys.envs) || []).find((e) => e.env === "스테이징") || ((sys && sys.envs) || [])[0]);
     items.forEach((it, i) => {
       const steps = it.steps && it.steps.length ? it.steps : [];
-      addMqaCase({ id: nextTcId(mqaCases, i + 1), systemId: sys ? sys.id : opt.systemId, tags: "", status: "초안", pre: "", preCase: "", acctRole: "", proc: [], level: "Low-Code", code: "", mismatch: false, ...it, suite: undefined, suiteId: it.suite && byName[it.suite] ? byName[it.suite] : (opt.suiteId || null), steps, baseBuild: steps.length ? build : "" });
+      addMqaCase({ id: nextTcId(mqaCases, i + 1), systemId: sys ? sys.id : opt.systemId, status: "초안", pre: "", proc: [], level: "Low-Code", code: "", mismatch: false, tags: "", ...it, suite: undefined, steps, baseBuild: steps.length ? build : "" });
     });
     setMode("목록");
     flash(items.length + "건 가져옴 (초안)" + (items.some((it) => !(it.steps || []).length && it.level !== "Full-Code") ? " · 스텝은 각 케이스에서 AI로 만드세요" : ""));
   };
-  const firstSuite = (mqaSuites[0] || {}).id || null;
+  const firstSuite = (mqaSuites[0] || {}).id || null;   // 스위트에 추가 모달의 기본값
   const startAdd = (m) => {
     setAddOpen(false);
     if (!mqaSystems.length) { flash("대상·환경에서 테스트할 앱을 먼저 등록하세요"); return; }
-    if (m === "blank") { setBlank({ name: "", systemId: (mqaSystems[0] || {}).id, suiteId: firstSuite }); return; }
+    if (m === "blank") { setBlank({ name: "", systemId: (mqaSystems[0] || {}).id }); return; }
     setMode(m);
   };
 
@@ -157,7 +164,7 @@ export function MqaCasesScreen() {
         <div style={{ width: 150 }}><Select value={sysF} onChange={(e) => setSysF(e.target.value)}><option value="전체">전체 앱</option>{mqaSystems.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}</Select></div>
         <div style={{ width: 110 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option>전체</option><option>승인</option><option>검토중</option><option>초안</option></Select></div>
         <div className="relative">
-          <Btn kind="primary" icon={Plus} onClick={() => setAddOpen(!addOpen)} disabled={mqaSuites.length === 0} title={mqaSuites.length === 0 ? "스위트를 먼저 만드세요 — 케이스는 스위트에 속해야 계획이 잡습니다" : ""}>새 TC</Btn>
+          <Btn kind="primary" icon={Plus} onClick={() => setAddOpen(!addOpen)}>새 TC</Btn>
           {addOpen && (
             <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border border-slate-300 bg-white py-1 shadow-xl">
               {[["직접 작성", Pencil, "blank", ""], ["TC 임포트", FileText, "tc", ".xlsx · .csv"], ["스크립트 임포트", FileCode, "script", ".robot"]].map(([l, Ic, m, dsc]) => (
@@ -172,20 +179,17 @@ export function MqaCasesScreen() {
           <span className="flex-1 text-sky-700">{picked.size}건 선택됨</span>
           <Btn kind="primary" icon={CheckCircle2} onClick={() => bulkSet("승인")}>선택 승인</Btn>
           <Btn onClick={() => bulkSet("검토중")}>검토중으로</Btn>
-          <Btn icon={Layers} onClick={() => setSuiteModal(firstSuite)}>스위트 변경</Btn>
+          <Btn icon={Layers} onClick={() => setSuiteModal(firstSuite)} disabled={!mqaSuites.length}>스위트에 추가</Btn>
           <Btn icon={Tag} onClick={openTagModal}>태그 지정</Btn>
           <Btn kind="danger" icon={Trash2} onClick={bulkDel}>선택 삭제</Btn>
           <Btn onClick={() => setPicked(new Set())}>선택 해제</Btn>
         </div>
       )}
       {suiteModal !== null && (
-        <Modal title={"스위트 일괄 변경 · " + picked.size + "건"} onClose={() => setSuiteModal(null)}>
+        <Modal title={"스위트에 추가 · " + picked.size + "건"} onClose={() => setSuiteModal(null)}>
           <div className="space-y-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="mb-1.5 text-xs font-semibold text-slate-600">현재 스위트</div>
-              <div className="flex flex-wrap gap-1.5">{Object.entries(pickedCases().reduce((a, c) => { a[sn(c.suiteId) || "—"] = (a[sn(c.suiteId) || "—"] || 0) + 1; return a; }, {})).map(([k, v]) => <span key={k} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600">{k} <span className="text-slate-500">{v}</span></span>)}</div>
-            </div>
-            <Field label="이동할 스위트" hint="선택한 케이스 전부가 이 스위트로 옮겨집니다. 변경 이력에 리비전으로 남습니다."><Select value={String(suiteModal)} onChange={(e) => setSuiteModal(+e.target.value)}>{mqaSuites.map((su) => <option key={su.id} value={String(su.id)}>{su.name}</option>)}</Select></Field>
+            <Field label="추가할 스위트" hint="스위트 끝에 붙습니다. 다른 스위트에서 빠지지 않습니다 — 케이스는 여러 스위트에서 재사용됩니다. 순서는 스위트 화면에서 바꿉니다."><Select value={String(suiteModal)} onChange={(e) => setSuiteModal(+e.target.value)}>{mqaSuites.map((su) => <option key={su.id} value={String(su.id)}>{su.name} · {(su.items || []).length}건</option>)}</Select></Field>
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">승인 전 케이스가 들어가면 스위트 전체가 실행되지 않습니다.</div>
             <div className="flex justify-end gap-2 pt-1"><Btn onClick={() => setSuiteModal(null)}>취소</Btn><Btn kind="primary" onClick={applySuite}>적용</Btn></div>
           </div>
         </Modal>
@@ -198,7 +202,7 @@ export function MqaCasesScreen() {
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-slate-200 bg-slate-50 text-left text-slate-500"><th className="py-2 pl-3 pr-2 font-medium">케이스</th>{TAGS.map((t) => <th key={t} className="w-24 px-2 py-1.5 text-center"><button onClick={() => togCol(t)} title={TAG_DESC[t] + " · 전체 토글"} className={"w-full rounded-full border px-2 py-0.5 text-xs " + (colAll(t) ? "border-sky-600 bg-sky-100 font-semibold text-sky-700" : "border-slate-300 bg-white text-slate-500 hover:bg-slate-100")}>{t}</button></th>)}</tr></thead>
                 <tbody>{pickedCases().map((c) => (
-                  <tr key={c.id} className="border-b border-slate-200"><td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {sn(c.suiteId)}</span></td>{TAGS.map((t) => <td key={t} className="px-2 py-1.5 text-center"><button onClick={() => togTag(c.id, t)} className={"rounded-full border px-2.5 py-0.5 text-xs " + (tagOn(c.id, t) ? "border-sky-600 bg-sky-100 text-sky-700" : "border-slate-200 bg-white text-slate-300 hover:bg-slate-100")}>{tagOn(c.id, t) ? t : "—"}</button></td>)}</tr>
+                  <tr key={c.id} className="border-b border-slate-200"><td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {sn(c.id) || "스위트 없음"}</span></td>{TAGS.map((t) => <td key={t} className="px-2 py-1.5 text-center"><button onClick={() => togTag(c.id, t)} className={"rounded-full border px-2.5 py-0.5 text-xs " + (tagOn(c.id, t) ? "border-sky-600 bg-sky-100 text-sky-700" : "border-slate-200 bg-white text-slate-300 hover:bg-slate-100")}>{tagOn(c.id, t) ? t : "—"}</button></td>)}</tr>
                 ))}</tbody>
               </table>
             </div>
@@ -214,9 +218,7 @@ export function MqaCasesScreen() {
               <tr><td colSpan={10} className="px-4 py-10 text-center">
                 {mqaCases.length === 0 ? (<>
                   <div className="text-sm font-medium text-slate-700">등록된 테스트케이스가 없습니다</div>
-                  {mqaSuites.length === 0
-                    ? <><div className="mt-1.5 text-xs text-amber-600">테스트 스위트를 먼저 만드세요. 케이스는 스위트에 속해야 실행 계획이 잡습니다.</div><Btn className="mt-3" icon={Layers} onClick={() => goTo("mqa-suites")}>테스트 스위트 만들러 가기</Btn></>
-                    : <div className="mt-1.5 text-xs text-slate-500">직접 작성하거나, 기존 TC(Excel · CSV)나 Robot Framework 스크립트를 임포트할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>}
+                  <div className="mt-1.5 text-xs text-slate-500">직접 작성하거나, 기존 TC(Excel · CSV)나 Robot Framework 스크립트를 임포트할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 후 스위트에 넣으세요.</div>
                 </>) : (<>
                   <div className="text-sm text-slate-700">조건에 맞는 케이스가 없습니다</div>
                   <div className="mt-1.5 text-xs text-slate-500">검색어·스위트·태그·앱·상태 필터를 확인하세요.</div>
@@ -230,12 +232,11 @@ export function MqaCasesScreen() {
                   <td className="pl-4" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.has(c.id)} onChange={() => togglePick(c.id)} className="accent-sky-600" /></td>
                   <td className="py-3 pr-4 font-mono text-sky-600">{c.id}</td>
                   <td className="text-slate-800">{c.name}{L.changedProcs(c).length > 0 && <span title={"절차 " + L.changedProcs(c).join(", ") + "번 문장이 바뀌어 스텝 확인이 필요합니다"} className="ml-1.5 text-amber-600">●</span>}</td>
-                  <td className="text-slate-500">{sn(c.suiteId) || "—"}</td>
+                  <td className="max-w-[180px] truncate text-slate-500" title={sn(c.id)}>{sn(c.id) || "—"}</td>
                   <td>{tagList(c.tags).length ? <div className="flex gap-1">{tagList(c.tags).map((t) => <span key={t} className="rounded-full border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{t}</span>)}</div> : <span className="text-xs text-slate-500">-</span>}</td>
-                  {/* 구성 — 어느 앱 · 전제조건 · 미확정 */}
+                  {/* 구성 — 어느 앱 · 미확정 */}
                   <td className="whitespace-nowrap">
                     <Badge kind="info">{sysName(c.systemId)}</Badge>
-                    {c.preCase && <button onClick={(e) => { e.stopPropagation(); const t = mqaCases.find((x) => x.id === c.preCase); if (t) setOpen(t); }} className="ml-1 font-mono text-slate-500 hover:text-sky-600" style={{ fontSize: 10 }} title={"전제조건 " + c.preCase + " — 클릭하면 그 케이스를 봅니다"}>← {c.preCase}</button>}
                     {u > 0 && <span className="ml-1 text-amber-700" style={{ fontSize: 10 }} title="요소가 정해지지 않은 스텝">미확정 {u}</span>}
                   </td>
                   <td><Badge kind={LV_K[c.level] || "active"}>{c.level || "Low-Code"}</Badge></td>
@@ -257,14 +258,14 @@ export function MqaCasesScreen() {
             <div className="h-full w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-5" onClick={(e) => e.stopPropagation()}>
               <div className="mb-4 flex items-center justify-between"><span className="font-mono text-sky-600">{oc.id}</span><button onClick={() => setOpen(null)} className="text-slate-500 hover:text-slate-700"><X size={20} /></button></div>
               <div className="space-y-4 text-sm">
-                <div><div className="text-slate-900">{oc.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5"><Badge kind="info">{sysName(oc.systemId)}</Badge><Badge kind="info">{sn(oc.suiteId) || "스위트 없음"}</Badge><Badge kind={LV_K[oc.level] || "active"}>{oc.level || "Low-Code"}</Badge><Badge kind={ST_K[oc.status]}>{oc.status}</Badge></div></div>
+                <div><div className="text-slate-900">{oc.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5"><Badge kind="info">{sysName(oc.systemId)}</Badge><Badge kind={LV_K[oc.level] || "active"}>{oc.level || "Low-Code"}</Badge><Badge kind={ST_K[oc.status]}>{oc.status}</Badge></div></div>
                 <div className="space-y-0.5 rounded-lg bg-slate-100 p-3 text-xs text-slate-500"><div>생성 <span className="text-slate-700">{oc.createdBy || "—"}</span> · {oc.createdAt || "—"}</div><div>수정 <span className="text-slate-700">{oc.updatedBy || "—"}</span> · {oc.updatedAt || "—"}</div></div>
                 <div><div className="mb-1 text-xs text-slate-500">자연어 절차</div>{(oc.proc || []).length ? <ol className="space-y-0.5 text-xs text-slate-700">{oc.proc.map((p, i) => <li key={i}>{i + 1}. {p.t}{p.e && <span className="text-slate-500"> → {p.e}</span>}</li>)}</ol> : <div className="text-xs text-slate-500">없음</div>}</div>
                 <div><div className="mb-1 text-xs text-slate-500">실행 스텝</div><div className="text-xs text-slate-700">{oc.level === "Full-Code" ? "Full-Code(.robot 원문)로 관리" : (oc.steps || []).length + "개"}{u > 0 && <span className="ml-1.5 text-amber-700">· 미확정 {u}개</span>}{oc.baseBuild && <span className="ml-1.5 text-slate-500">· v{oc.baseBuild} 기준</span>}</div></div>
-                <div><div className="mb-1 text-xs text-slate-500">전제조건</div><div className="text-xs text-slate-700">{oc.preCase ? oc.preCase + " · " + ((mqaCases.find((x) => x.id === oc.preCase) || {}).name || "—") + (oc.acctRole ? " (" + oc.acctRole + " 계정)" : "") : "없음"}</div></div>
+                <div><div className="mb-1 text-xs text-slate-500">포함된 스위트</div>{SL.suitesOfCase(mqaSuites, oc.id).length ? <div className="space-y-0.5 text-xs text-slate-700">{SL.suitesOfCase(mqaSuites, oc.id).map((su) => <div key={su.id}>{su.name} <span className="text-slate-500">· {(su.items || []).indexOf(oc.id) + 1}번째</span></div>)}</div> : <div className="text-xs text-slate-500">없음 — 스위트에 넣어야 실행 계획에서 돕니다</div>}</div>
                 <div><div className="mb-1 text-xs text-slate-500">태그</div>{tagList(oc.tags).length ? <div className="flex flex-wrap gap-1.5">{tagList(oc.tags).map((t) => <span key={t} className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{t}</span>)}</div> : <div className="text-xs text-slate-500">없음</div>}</div>
                 <div><div className="mb-1 text-xs text-slate-500">생성 경로</div><div className="text-xs text-slate-500">{oc.origin || "—"}</div></div>
-                {(() => { const sy = mqaSystems.find((x) => x.id === oc.systemId); const e = sy && ((sy.envs || []).find((x) => x.env === "스테이징") || (sy.envs || [])[0]); const curB = envBuild(e); const ok = !oc.baseBuild || !curB || oc.baseBuild === curB || (oc.lastDry && oc.lastDry.build === curB && oc.lastDry.result === "통과"); return ok ? null : <div className="flex items-start gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle size={13} className="mt-0.5 shrink-0" />기준 앱 v{oc.baseBuild} · 현재 {e.env} 앱 v{curB} — 요소가 바뀌었을 수 있습니다. 디버그 실행으로 확인한 뒤 승인하세요.</div>; })()}
+                {BV.verifiedVers(oc).length > 0 && <div><div className="mb-1 text-xs text-slate-500">확인된 앱 버전</div><div className="text-xs text-slate-700">{BV.verifiedVers(oc).map((v) => "v" + v).join(" · ")} <span className="text-slate-500">— 만든 버전 · 디버그 또는 정식 실행에서 통과한 버전</span></div></div>}
                 {oc.lastDry && <div><div className="mb-1 text-xs text-slate-500">마지막 디버그 실행</div><div className={"text-xs " + (oc.lastDry.result === "통과" ? "text-emerald-700" : "text-red-700")}>{oc.lastDry.at} · {oc.lastDry.env || ""} 앱 v{oc.lastDry.build} · {oc.lastDry.result}{oc.lastDry.failStep ? " (스텝 " + oc.lastDry.failStep + ")" : ""}</div></div>}
                 <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-3">
                   {oc.status !== "승인"
@@ -285,10 +286,7 @@ export function MqaCasesScreen() {
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5"><span className="flex items-center gap-2 text-sm font-semibold text-slate-900"><Pencil size={15} className="text-sky-600" />직접 작성</span><button onClick={() => setBlank(null)} className="text-slate-500 hover:text-slate-700"><X size={18} /></button></div>
             <div className="space-y-3.5 px-5 py-4">
               <Field label="TC 이름"><Input value={blank.name} onChange={(e) => setBlank({ ...blank, name: e.target.value })} placeholder="예: 장바구니에 상품 담기" /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="대상 (앱)"><Select value={blank.systemId} onChange={(e) => setBlank({ ...blank, systemId: e.target.value })}>{mqaSystems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
-                <Field label="스위트"><Select value={String(blank.suiteId)} onChange={(e) => setBlank({ ...blank, suiteId: +e.target.value })}>{mqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field>
-              </div>
+              <Field label="대상 (앱)"><Select value={blank.systemId} onChange={(e) => setBlank({ ...blank, systemId: e.target.value })}>{mqaSystems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field>
               <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">자연어 절차로 시작합니다. 기존 Robot Framework 원문은 <span className="text-slate-800">스크립트 임포트</span>로 들여오세요.</div>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3.5"><Btn onClick={() => setBlank(null)}>취소</Btn><Btn kind="primary" icon={Code2} onClick={createBlank}>에디터 열기</Btn></div>
@@ -335,7 +333,7 @@ const ValInput = ({ value, onChange, vars }) => {
 
 /* ═══════════ 에디터 ═══════════ */
 export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
-  const { addMqaCase, commitMqaCase, updateMqaCase, mqaCases = [], mqaSystems = [], mqaSuites = [], mqaRunners = [], lockMqaDevice, releaseMqaDevice, setNavGuard, mqaWork = {}, setMqaWork, setMqaCaseStatus, variables = [] } = useApp();
+  const { addMqaCase, commitMqaCase, updateMqaCase, mqaCases = [], mqaSystems = [], mqaSuites = [], mqaRunners = [], goTo, lockMqaDevice, releaseMqaDevice, setNavGuard, mqaWork = {}, setMqaWork, setMqaCaseStatus, variables = [] } = useApp();
   const [msg, flash] = useToast();
   const [d, setD] = useState(() => clone(pickFields(tc)));
   const [gen, setGen] = useState(false);       // AI 생성 진행 창
@@ -375,10 +373,16 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
   const envs = envsOf(sys);
   /* 작업 조건 — 마지막 선택을 이어받는다. 이 앱에 그 환경이 없으면 스테이징 → 첫 환경 순 */
   const [dbgEnv, setDbgEnvRaw] = useState(() => (envs.find((e) => e.env === mqaWork.env) || envs.find((e) => e.env === "스테이징") || envs[0] || {}).env || "");
-  const setDbgEnv = (v) => { setDbgEnvRaw(v); setMqaWork({ env: v }); };
-  const dbg = envs.find((e) => e.env === dbgEnv) || envs[0] || null;
+  const setDbgEnv = (v) => { if (sessionRef.current) endSession(true); setDbgEnvRaw(v); setWbIdRaw(""); setMqaWork({ env: v }); };
+  /* 작업 버전 — 고른 환경의 버전 목록에서 고른다. 처음엔 최신. 케이스에 저장하지 않는다 */
+  const [wbId, setWbIdRaw] = useState("");
+  const dbg0 = envs.find((e) => e.env === dbgEnv) || envs[0] || null;
+  const wb = dbg0 ? (wbId && dbg0.builds.find((b) => b.id === wbId)) || dbg0.builds[0] || null : null;
+  const dbg = dbg0 ? { ...dbg0, build: wb ? wb.ver : "", buildObj: wb } : null;   // 아래는 모두 '고른 버전' 을 본다
   const build = dbg ? dbg.build : "";
   const buildObj = dbg ? dbg.buildObj : null;
+  /* 버전·환경을 바꾸면 단말의 앱 화면이 달라진다 — 편집 세션을 끊는다 */
+  const setWbId = (v) => { if (sessionRef.current) endSession(true); setWbIdRaw(v); };
   const devs = flatDevices(mqaRunners);
   const [devId, setDevIdRaw] = useState(() => (devs.some((x) => x.id === mqaWork.devId) ? mqaWork.devId : (pickDefault(devs, buildObj) || {}).id || ""));
   const setDevId = (v) => { if (sessionRef.current) endSession(true); setDevIdRaw(v); setMqaWork({ devId: v }); };
@@ -429,16 +433,17 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
   const orphan = hasProc ? d.steps.filter((s) => !(s.n >= 1 && s.n <= d.proc.length)) : [];
   const changedN = hasProc ? d.proc.map((p, k) => (L.procChanged(p, stepsOf(k + 1).length > 0) ? k + 1 : 0)).filter(Boolean) : [];
 
-  /* 전제조건 후보 — 같은 앱의 승인된 스텝 케이스 (FQA 와 같은 규칙: 초안을 전제로 쓰면 실행이 불안정해진다) */
-  const preOpts = mqaCases.filter((c) => c.id !== tc.id && c.systemId === tc.systemId && c.status === "승인" && c.level !== "Full-Code" && !c.preCase);
-  const roleOpts = [...new Set(((sys && sys.envs) || []).flatMap((e) => (e.accts || []).map((a) => a.role)).filter(Boolean))];
+  /* 이 케이스가 포함된 스위트 — 시작 상태(로그인 등)와 계정 역할은 스위트가 정한다 */
+  const usedIn = isNew ? [] : SL.suitesOfCase(mqaSuites, tc.id);
   const usesAcct = (d.steps || []).some((s) => /\$\{계정/.test(String(s.val || "")));
 
   /* 저장 = 새 리비전. 저장하면 검토중으로 — 미확정이 남거나 스텝이 없으면 초안으로 남는다 */
   const target = unresolved > 0 || synErr > 0 || (!isFull && !d.steps.length) || (isFull && !String(d.code || "").trim()) ? "초안" : "검토중";
   const save = () => {
     if (!d.name.trim()) { flash("TC 이름을 입력하세요"); return; }
-    if (tc.status === "승인" && !window.confirm("승인된 케이스를 수정하면 " + target + "(으)로 바뀌고, 다시 승인받기 전까지 실행 계획에서 빠집니다.\n\n저장할까요?")) return;
+    /* 🔑 재사용의 대가 — 한 케이스를 고치면 그 케이스가 포함된 스위트가 함께 영향을 받는다. 다시 승인하기 전까지 그 스위트는 통째로 멈춘다 */
+    const hit = usedIn.length ? "\n\n이 케이스가 포함된 스위트 " + usedIn.length + "개는 다시 승인하기 전까지 실행되지 않습니다:\n" + usedIn.map((su) => " · " + su.name).join("\n") : "";
+    if (tc.status === "승인" && !window.confirm("승인된 케이스를 수정하면 " + target + "(으)로 바뀌고, 다시 승인받기 전까지 실행 계획에서 빠집니다." + hit + "\n\n저장할까요?")) return;
     const c = L.compactProc(d.proc, d.steps);
     const patch = { ...d, proc: c.proc, steps: c.steps, mismatch: false, status: target };
     if (isNew) { const { isNew: _n, ...rest } = tc; addMqaCase({ ...rest, ...patch }); }
@@ -446,7 +451,6 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
     flash((target === "초안" ? "초안으로 저장" : "저장 · 검토 요청됨 (검토중)") + (target === "초안" && unresolved ? " — 미확정 " + unresolved + "개를 채우면 검토중으로 저장됩니다" : target === "초안" && synErr ? " — 문법 오류를 고치면 검토중으로 저장됩니다" : ""));
   };
   /* AI로 스텝 만들기 — 단말에서 앱을 조작하며 만든다 (진행 창). 절차가 없으면 열지 않는다 */
-  const preOk = !d.preCase || preOpts.some((c) => c.id === d.preCase);
   const runAi = () => {
     if (!cleanProc(d.proc).length) { setShowProc(true); if (!d.proc.length) addRow(null); flash("자연어 절차를 입력한 뒤 다시 'AI로 스텝 만들기'를 누르세요"); return; }
     if (sessionRef.current) endSession(true);
@@ -458,12 +462,18 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
     set({ level: "Full-Code", code: L.toRobot({ ...tc, ...d }) });
   };
   /* 디버그 실행 — 편집 중인 내용으로 이 환경에서 한 번. 실행 이력·품질 게이트에 집계되지 않는다 */
-  const runBlock = !dbg ? "대상·환경에 환경이 없습니다" : !build ? dbgEnv + " 환경에 앱 설치 파일이 없습니다" : unresolved ? "미확정 " + unresolved + "개를 먼저 채우세요" : synErr ? "스크립트 문법 오류 " + synErr + "개를 먼저 고치세요" : !isFull && !d.steps.length ? "실행할 스텝이 없습니다" : !preOk ? "전제조건 케이스가 승인 상태가 아닙니다" : deviceBlock(devForCheck, buildObj);
+  const runBlock = !dbg ? "대상·환경에 환경이 없습니다" : !build ? dbgEnv + " 환경에 앱 설치 파일이 없습니다" : unresolved ? "미확정 " + unresolved + "개를 먼저 채우세요" : synErr ? "스크립트 문법 오류 " + synErr + "개를 먼저 고치세요" : !isFull && !d.steps.length ? "실행할 스텝이 없습니다" : deviceBlock(devForCheck, buildObj);
   /* 기준 버전 — 케이스를 만든(요소를 집은) 앱 버전과 지금 작업 환경의 앱 버전이 다르면 로케이터가 바뀌었을 수 있다.
      그 버전에서 디버그 실행이 통과했으면 확인된 것으로 본다 */
-  const verified = !d.baseBuild || !build || d.baseBuild === build || !!(tc.lastDry && tc.lastDry.build === build && tc.lastDry.result === "통과");
-  const runOne = () => {
+  const verified = BV.isVerified({ ...tc, baseBuild: d.baseBuild }, build);   // 만든 버전 · 디버그 통과 · 정식 실행 통과 (builds.js)
+  /* 🔑 스위트 문맥 — 스위트 안에서 앞 케이스가 만든 상태(로그인 등)에서 시작하는 케이스는 혼자 돌리면 실패한다.
+     앞 단계를 먼저 돌리고 이어서 이 케이스를 돈다. 기본은 앞 단계가 있는 첫 스위트. 앞 단계가 실패하면 이 케이스는 돌지 않고, 결과도 남기지 않는다 */
+  const preOpts = usedIn.filter((su) => (su.items || []).indexOf(tc.id) > 0);
+  const [preSuId, setPreSuId] = useState(() => (preOpts[0] ? preOpts[0].id : 0));
+  const preCasesOf = (suId) => { const su = preOpts.find((x) => x.id === suId); return su ? su.items.slice(0, su.items.indexOf(tc.id)).map((id) => mqaCases.find((c) => c.id === id)).filter(Boolean) : []; };
+  const runOne = (suId = preSuId) => {
     if (runBlock) { flash(runBlock); return; }
+    setPreSuId(suId);
     if (sessionRef.current) endSession(true);
     lockMqaDevice(dev.id, "디버그 실행 " + tc.id); held.current = dev.id;
     const rows = isFull
@@ -473,7 +483,11 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
       // API 스텝은 loc 이 경로다 — 요소로 풀면 "위치로 지정한 요소" 가 되어 무엇을 쳤는지 사라진다
       : d.steps.map((x, i) => { const a = L.ACT[x.act] || { needs: [] };
           return { i, id: x.id, act: x.act, name: a.api ? [x.loc, x.val].filter(Boolean).join(" = ") : a.needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build, dbg) }; });
-    const pre = d.preCase ? [{ pre: true, act: "전제조건 " + d.preCase, name: ((mqaCases.find((x) => x.id === d.preCase) || {}).name || "") + (d.acctRole ? " · " + d.acctRole + " 계정" : ""), res: { st: "ok", msg: "" } }] : [];
+    /* 앞 단계 — 저장된 내용으로 돈다 (편집 중인 것은 이 케이스뿐) */
+    const pre = preCasesOf(suId).flatMap((c) => [{ head: true, pre: true, preId: c.id, act: c.id, name: c.name, res: { st: "ok", msg: "" } },
+      ...(c.level === "Full-Code" ? [{ pre: true, preId: c.id, act: "스크립트", name: "Full-Code", res: { st: "na", msg: "" } }]
+        : (c.steps || []).map((x) => { const a = L.ACT[x.act] || { needs: [] }; return { pre: true, preId: c.id, act: x.act, name: a.api ? [x.loc, x.val].filter(Boolean).join(" = ") : a.needs.includes("loc") ? L.elName(x) : "", val: x.val || "", loc: x.loc || "", res: L.simulateStep(x, build, dbg) }; }))]);
+    if (pre.length) pre.push({ head: true, act: tc.id, name: d.name || tc.name, res: { st: "ok", msg: "" } });
     const all = [...pre, ...rows];
     const failAt = all.findIndex((r) => r.res.st === "fail");
     setRunRes({ steps: all.map((r) => ({ ...r, st: "wait" })), done: false, fail: null });
@@ -485,7 +499,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
       const fail = failAt >= 0 ? all[failAt] : null;
       setRunRes((r) => r && { ...r, done: true, at, fail, steps: r.steps.map((x, j) => (failAt >= 0 && j > failAt ? { ...x, st: "skip" } : x)) });
       releaseMqaDevice(held.current); held.current = null;
-      if (!isNew) updateMqaCase(tc.id, { lastDry: { at, build, env: dbgEnv, device: dev.model, result: isFull ? "평가 안 함" : fail ? "실패" : "통과", ...(fail && !fail.pre ? { failStep: fail.i + 1 } : {}) } });
+      if (!isNew && !(fail && fail.pre)) updateMqaCase(tc.id, { ...(!isFull && !fail ? { verifiedOn: BV.withVerified(tc, build) } : {}), lastDry: { at, build, env: dbgEnv, device: dev.model, result: isFull ? "평가 안 함" : fail ? "실패" : "통과", ...(fail && !fail.pre ? { failStep: fail.i + 1 } : {}) } });
     }, 350 * (last + 1) + 250);
   };
   /* 검토 — 에디터에서 바로 승인 · 반려한다 (목록으로 돌아가 서랍을 열지 않아도 되게)
@@ -495,8 +509,8 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
   const approve = () => {
     if (approveWhy) { flash(approveWhy); return; }
     if (changedN.length && !window.confirm("절차 " + changedN.join(", ") + "번 문장이 바뀌었는데 스텝은 확인되지 않았습니다.\n\n그래도 승인할까요?")) return;
-    if (!verified && !window.confirm("작업 환경 앱 v" + build + "에서 아직 디버그 실행으로 확인하지 않았습니다 (기준 v" + d.baseBuild + ").\n요소를 못 찾아 실행이 실패할 수 있습니다.\n\n그래도 승인할까요?")) return;
-    setMqaCaseStatus(tc.id, "승인"); flash(tc.id + " 승인 — 실행 계획에 들어갈 수 있습니다");
+    if (!verified && !window.confirm("작업 버전 v" + build + "에서 아직 확인되지 않았습니다 (만든 버전 v" + d.baseBuild + ").\n요소를 못 찾아 실행이 실패할 수 있습니다.\n\n그래도 승인할까요?")) return;
+    setMqaCaseStatus(tc.id, "승인"); flash(tc.id + " 승인" + (usedIn.length ? " — 포함된 스위트 " + usedIn.length + "개에서 실행됩니다" : " — 스위트에 넣어야 실행 계획에서 돕니다"));
   };
   const reject = () => { setMqaCaseStatus(tc.id, "초안"); flash(tc.id + " 반려 — 초안으로 돌렸습니다"); };
   const unapprove = () => { setMqaCaseStatus(tc.id, "검토중"); flash(tc.id + " 검토중으로 — 실행 계획에서 빠집니다"); };
@@ -546,7 +560,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
   };
   const restore = (v) => {
     const x = v.x || {};
-    set({ name: v.name, suiteId: x.suiteId != null ? x.suiteId : d.suiteId, tags: v.tags || "", acctRole: v.acctRole || "", steps: clone(v.steps || []), proc: clone(x.proc || []), level: v.level || "Low-Code", code: v.code || "", preCase: x.preCase || "", prodCaution: !!x.prodCaution, pre: x.pre || "" });
+    set({ name: v.name, tags: v.tags || "", steps: clone(v.steps || []), proc: clone(x.proc || []), level: v.level || "Low-Code", code: v.code || "", prodCaution: !!x.prodCaution, pre: x.pre || "" });
     setShowProc((x.proc || []).length > 0);
     setQa(null); flash("rev " + v.rev + " 내용으로 되돌림 — 저장하면 rev " + (curRev + 1) + "이 됩니다");
   };
@@ -563,7 +577,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
             : <span className="text-slate-500">저장됨 · rev {curRev}</span>}
         </div>
         {!isFull && <Btn icon={Sparkles} onClick={runAi} title="단말에서 앱을 조작하며 자연어 절차를 스텝으로 만듭니다 (스테이징 전용)">AI로 스텝 만들기</Btn>}
-        <Btn icon={Play} disabled={!!runBlock} title={runBlock || "편집 중인 내용으로 이 환경에서 한 번 실행 — 실행 이력·품질 게이트에 집계되지 않습니다"} onClick={runOne}>디버그 실행</Btn>
+        <Btn icon={Play} disabled={!!runBlock} title={runBlock || "편집 중인 내용으로 이 환경에서 한 번 실행 — 실행 이력·품질 게이트에 집계되지 않습니다"} onClick={() => runOne()}>디버그 실행</Btn>
         <Btn kind="primary" icon={Save} disabled={!dirty} onClick={save} title={target === "초안" ? (unresolved ? "미확정이 남아 초안으로 저장됩니다" : synErr ? "문법 오류가 있어 초안으로 저장됩니다" : "스텝이 없어 초안으로 저장됩니다") : "저장하면 검토중이 되어 검토자가 승인할 수 있습니다" + (tc.status === "승인" ? " — 승인이 풀립니다" : "")}>{dirty ? (target === "초안" ? "초안 저장" : "저장 · 검토 요청") : "저장됨"}</Btn>
         {!isNew && tc.status === "검토중" && <>
           <span className="mx-0.5 h-5 w-px bg-slate-200" />
@@ -595,26 +609,16 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
             <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={!!d.prodCaution} onChange={(e) => set({ prodCaution: e.target.checked })} className="accent-amber-500" /><span className="text-sm text-slate-800">운영주의</span></label>
             <div className="mt-1.5 text-xs text-slate-500">주문·결제 등 데이터 변경 — 운영 환경 테스트 시 주의</div>
           </Card>
-          {/* 전제조건 — 로그인처럼 '들어가기 위한 절차' 는 케이스로 만들고 여기서 가리킨다 (FQA 와 동일) */}
+          {/* 포함된 스위트 — 옛 '전제조건' 자리. 시작 상태(로그인)와 계정 역할은 스위트가 정한다 */}
           <Card className="p-3">
-            <div className="mb-2 text-xs font-semibold text-slate-500">전제조건</div>
-            <Select value={d.preCase} onChange={(e) => set({ preCase: e.target.value })}>
-              <option value="">없음 (비로그인 흐름 · 로그인 자체 검증)</option>
-              {preOpts.map((c) => <option key={c.id} value={c.id}>{c.id} · {c.name}</option>)}
-              {d.preCase && !preOpts.some((c) => c.id === d.preCase) && <option value={d.preCase}>{d.preCase} (승인 안 됨)</option>}
-            </Select>
-            {(d.preCase || usesAcct) && (
-              <div className="mt-2">
-                <Select value={d.acctRole} onChange={(e) => set({ acctRole: e.target.value })}><option value="">기본 (풀의 첫 계정)</option>{roleOpts.map((r) => <option key={r}>{r}</option>)}</Select>
-                <div className="mt-1.5 text-xs text-slate-500">{d.preCase
-                  ? <>이 역할의 계정으로 <span className="font-mono text-sky-600">{d.preCase}</span>을 먼저 수행한 상태에서 시작합니다. 스텝에 로그인을 쓰지 않습니다.</>
-                  : <>스텝이 계정 변수를 사용합니다 — 이 역할의 계정이 <span className="font-mono text-sky-600">{"${계정 ID}"}</span>·<span className="font-mono text-sky-600">{"${계정 비밀번호}"}</span>에 주입됩니다.</>}</div>
-              </div>
-            )}
-            <div className="mt-1.5 text-xs text-slate-500">같은 앱의 승인된 스텝 케이스만 고를 수 있습니다.</div>
-            {d.preCase && !preOpts.some((c) => c.id === d.preCase) && <div className="mt-1 text-xs text-amber-600">지정한 전제조건 케이스가 승인 상태가 아닙니다 — 실행이 막힙니다.</div>}
+            <div className="mb-2 text-xs font-semibold text-slate-500">포함된 스위트</div>
+            {usedIn.length ? <div className="space-y-1">{usedIn.map((su) => (
+              <div key={su.id} className="text-xs text-slate-700">{su.name} <span className="text-slate-500">· {(su.items || []).indexOf(tc.id) + 1}번째{(su.items || []).indexOf(tc.id) > 0 ? " · 앞: " + su.items[(su.items || []).indexOf(tc.id) - 1] : ""}</span></div>
+            ))}</div> : <div className="text-xs text-slate-500">아직 없습니다 — 승인 후 스위트에 넣어야 실행 계획에서 돕니다.</div>}
+            <button onClick={() => goTo("mqa-suites")} className="mt-2 text-xs text-sky-600 hover:text-sky-700">스위트에서 편집 →</button>
+            {usesAcct && <div className="mt-2 text-xs text-slate-500">스텝이 계정 변수(<span className="font-mono text-sky-600">{"${계정 ID}"}</span>)를 씁니다 — 어느 역할의 계정인지는 스위트가 정합니다. 디버그 실행은 작업 환경의 첫 계정을 씁니다.</div>}
           </Card>
-          {d.pre && <Card className="p-3"><div className="mb-1 text-xs font-semibold text-slate-500">사전조건 (가져온 원문)</div><div className="text-xs text-slate-600">{d.pre}</div><div className="mt-1 text-xs text-slate-500">로그인 상태라면 위 전제조건에 로그인 케이스를 지정하세요.</div></Card>}
+          {d.pre && <Card className="p-3"><div className="mb-1 text-xs font-semibold text-slate-500">사전조건 (가져온 원문)</div><div className="text-xs text-slate-600">{d.pre}</div><div className="mt-1 text-xs text-slate-500">로그인 상태에서 시작해야 한다면, 이 케이스를 넣는 스위트에서 앞 순서에 로그인 케이스를 두세요.</div></Card>}
         </div>
 
         {/* ── 우: 정체 · 모드·디버그 · 절차 · 스텝 ── */}
@@ -630,12 +634,12 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
           </div>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-slate-200 pt-3">
             <FieldRow label="대상 앱"><ReadonlyField value={(sys ? sys.name : "—") + " · Android"} title="대상 앱은 케이스를 만들 때 정해지며 바꿀 수 없습니다 — 로케이터가 앱마다 다르기 때문입니다" /></FieldRow>
-            <FieldRow label="스위트"><Select value={String(d.suiteId)} onChange={(e) => set({ suiteId: +e.target.value })}>{mqaSuites.map((sx) => <option key={sx.id} value={String(sx.id)}>{sx.name}</option>)}</Select></FieldRow>
-            <FieldRow label="작업 환경"><EnvSelect envs={envs} value={dbgEnv} onChange={setDbgEnv} /></FieldRow>
+            <FieldRow label="포함된 스위트"><ReadonlyField value={usedIn.length ? usedIn.map((su) => su.name).join(" · ") : "없음"} title="케이스는 스위트를 모릅니다 — 스위트 화면에서 넣고 순서를 정합니다" /></FieldRow>
+            <FieldRow label="작업 환경 · 버전"><div className="flex gap-2"><div className="min-w-0 flex-1"><EnvSelect envs={envs} value={dbgEnv} onChange={setDbgEnv} /></div><div className="w-40 shrink-0"><Select value={wb ? wb.id : ""} onChange={(e) => setWbId(e.target.value)} disabled={!dbg0 || !dbg0.builds.length}>{dbg0 && dbg0.builds.length ? dbg0.builds.map((b, i) => <option key={b.id} value={b.id}>v{b.ver}{i === 0 ? " · 최신" : ""}{BV.verifiedVers({ ...tc, baseBuild: d.baseBuild }).includes(b.ver) ? " ✓" : ""}</option>) : <option value="">앱 파일 없음</option>}</Select></div></div></FieldRow>
             <FieldRow label="작업 단말"><DeviceSelect devs={devs} value={devId} onChange={setDevId} build={buildObj} /></FieldRow>
           </div>
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500"><Info size={12} className="shrink-0" />작업 환경 · 단말은 케이스에 저장하지 않습니다 — AI로 스텝 만들기 · 요소 집기 · 디버그 실행에 씁니다{d.baseBuild ? " · 이 케이스는 앱 v" + d.baseBuild + " 기준으로 만들어졌습니다" : ""}</div>
-          {!verified && <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle size={14} className="mt-0.5 shrink-0" /><span>이 케이스는 <b className="font-medium">앱 v{d.baseBuild}</b> 기준인데, 작업 환경의 앱은 <b className="font-medium">v{build}</b>입니다. 화면이 바뀌어 요소를 못 찾을 수 있으니 디버그 실행으로 확인하세요. 통과하면 이 안내는 사라집니다.</span></div>}
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500"><Info size={12} className="shrink-0" />작업 환경 · 버전 · 단말은 케이스에 저장하지 않습니다 — AI로 스텝 만들기 · 요소 집기 · 디버그 실행에 씁니다{d.baseBuild ? " · 만든 버전 v" + d.baseBuild + " · ✓ = 확인된 버전" : ""}</div>
+          {!verified && <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle size={14} className="mt-0.5 shrink-0" /><span>작업 버전 <b className="font-medium">v{build}</b>에서는 아직 확인되지 않았습니다 (만든 버전 v{d.baseBuild}). 화면이 달라 요소를 못 찾을 수 있으니 디버그 실행으로 확인하세요. 통과하면 이 버전이 확인된 버전에 더해집니다.</span></div>}
           {session && <div className="mt-2 flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800"><RefreshCw size={13} className="shrink-0" /><span className="flex-1">편집 세션 — <b className="font-medium">{dev ? devLabel(dev) : ""}</b> 점유 중 · {session.at >= 0 ? "스텝 " + (session.at + 1) + "까지 실행된 화면" : "앱을 다시 실행해야 하는 상태"} · 10분 동안 쓰지 않으면 자동 반납</span><button onClick={() => endSession(false)} className="shrink-0 font-medium text-sky-900">세션 종료</button></div>}
           </Card>
 
@@ -664,7 +668,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
               ))}
               <div className="flex items-center justify-between pt-1">
                 <button onClick={() => addRow(null)} className="text-xs text-sky-600">+ 절차 추가</button>
-                <span className="text-xs text-slate-500">Enter로 다음 절차 · 로그인은 절차에 쓰지 말고 왼쪽 <span className="text-slate-700">전제조건</span>으로 지정</span>
+                <span className="text-xs text-slate-500">Enter로 다음 절차 · 로그인은 절차에 쓰지 말고 <span className="text-slate-700">스위트</span>에서 앞에 두기</span>
               </div>
             </div>
           </Card>
@@ -778,9 +782,14 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
             <div className="space-y-3 p-5">
               {qa === "run" && runRes && (<>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{dbg ? envText(dbg) : dbgEnv}</Badge><span>{dev ? devLabel(dev) : "—"}</span><span className="text-slate-500">· 집계되지 않음</span></div>
-                {!verified && <div className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">기준 앱 v{d.baseBuild} → 실행 앱 v{build} — 버전이 달라 요소를 못 찾을 수 있습니다</div>}
+                {preOpts.length > 0 && <div className="flex items-center gap-2 text-xs text-slate-600"><span className="shrink-0">시작 상태</span>
+                  <div className="min-w-0 flex-1"><Select value={String(preSuId)} onChange={(e) => setPreSuId(+e.target.value)}><option value="0">이 케이스만</option>{preOpts.map((su) => <option key={su.id} value={String(su.id)}>{su.name} — 앞 {su.items.indexOf(tc.id)}건 먼저 ({su.items.slice(0, su.items.indexOf(tc.id)).join(", ")})</option>)}</Select></div>
+                  <Btn icon={Play} disabled={!runRes.done} onClick={() => runOne(preSuId)}>다시 실행</Btn></div>}
+                {!verified && <div className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">v{build}에서는 처음 확인합니다 (만든 버전 v{d.baseBuild}) — 화면이 달라 요소를 못 찾을 수 있습니다</div>}
                 <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200">
-                  {runRes.steps.map((x, i) => (
+                  {runRes.steps.map((x, i) => x.head ? (
+                    <div key={i} className="border-b border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600"><span className="font-mono text-sky-600">{x.act}</span> {x.name}{x.pre ? <span className="font-normal text-slate-500"> · 앞 단계</span> : ""}</div>
+                  ) : (
                     <div key={i} className={"border-b border-slate-200 px-3 py-1.5 text-xs last:border-0 " + (x.st === "fail" ? "bg-red-50" : "")}>
                       <div className="flex items-center gap-2">
                         {x.st === "ok" ? <CheckCircle2 size={13} className="text-emerald-600" /> : x.st === "warn" ? <AlertTriangle size={13} className="text-amber-600" /> : x.st === "fail" ? <XCircle size={13} className="text-red-600" /> : x.st === "skip" || x.st === "na" ? <span className="h-[13px] w-[13px] rounded-full border border-slate-300" /> : <RefreshCw size={13} className="animate-spin text-slate-400" />}
@@ -800,7 +809,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                   <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-3">
                     <div className="flex h-24 w-14 shrink-0 flex-col items-center justify-center rounded-md border border-slate-300 bg-white text-slate-400" title="실패한 순간의 화면"><Smartphone size={14} /><span className="mt-1 text-[10px]">실패 화면</span></div>
                     <div className="min-w-0 flex-1 space-y-1 text-xs">
-                      <div className="text-sm font-medium text-red-800">{runRes.fail.pre ? "전제조건에서 실패" : "스텝 " + (runRes.fail.i + 1) + " · " + runRes.fail.act + (runRes.fail.name ? " · " + runRes.fail.name : "") + " 에서 실패"}</div>
+                      <div className="text-sm font-medium text-red-800">{runRes.fail.pre ? "앞 단계 " + runRes.fail.preId + " 에서 실패 — 이 케이스는 실행하지 않았습니다" : "스텝 " + (runRes.fail.i + 1) + " · " + runRes.fail.act + (runRes.fail.name ? " · " + runRes.fail.name : "") + " 에서 실패"}</div>
                       <div className="text-red-700">{runRes.fail.res.msg}</div>
                       {runRes.fail.loc && <div className="truncate font-mono text-slate-500" title={runRes.fail.loc}>{runRes.fail.loc}</div>}
                       <div className="text-slate-500">{runRes.at} · 이후 스텝은 실행하지 않았습니다</div>
@@ -823,11 +832,10 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
                     {(() => { const v = versions.find((x) => x.rev === verSel); if (!v) return <div className="py-12 text-center text-slate-500">리비전을 선택하세요.</div>; const x = v.x || {}; return (
                       <div className="space-y-1.5">
                         <div className="flex justify-between"><span className="text-slate-500">이름</span><span className="text-slate-800">{v.name}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">스위트 · 태그</span><span className="text-slate-800">{((mqaSuites.find((x) => x.id === (v.x || {}).suiteId) || {}).name) || v.suite || "—"} · {v.tags || "—"}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">태그</span><span className="text-slate-800">{v.tags || "—"}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">관리</span><span className="text-slate-800">{v.level || "Low-Code"}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">자연어 절차</span><span className="text-slate-800">{(x.proc || []).length}줄</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">실행 스텝</span><span className="text-slate-800">{(v.steps || []).length}개 · 미확정 {L.unresolvedOf(v.steps)}</span></div>
-                        <div className="flex justify-between"><span className="text-slate-500">전제조건</span><span className="text-slate-800">{x.preCase || "없음"}</span></div>
                         {v.rev !== curRev && <Btn className="mt-2 w-full" icon={History} onClick={() => restore(v)}>이 리비전으로 되돌리기</Btn>}
                       </div>
                     ); })()}
@@ -855,13 +863,13 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
         <Modal title="화면 준비" onClose={() => {}}>
           <div className="space-y-2 text-sm">
             <div className="text-slate-700">스텝 {prep.idx + 1}의 요소를 고르려면 그 직전 화면이 필요합니다.</div>
-            <div className="flex items-center gap-2 text-xs text-slate-600"><RefreshCw size={13} className="animate-spin text-sky-600" />{prep.launch ? "앱 실행" + (d.preCase ? " · 전제조건 " + d.preCase + " 수행" : "") + (prep.need ? " → " : "") : ""}{prep.need ? "스텝 " + (prep.from + 1) + (prep.need > 1 ? "~" + prep.idx : "") + " 실행 (" + prep.done + "/" + prep.need + ")" : ""}</div>
+            <div className="flex items-center gap-2 text-xs text-slate-600"><RefreshCw size={13} className="animate-spin text-sky-600" />{prep.launch ? "앱 실행" + (prep.need ? " → " : "") : ""}{prep.need ? "스텝 " + (prep.from + 1) + (prep.need > 1 ? "~" + prep.idx : "") + " 실행 (" + prep.done + "/" + prep.need + ")" : ""}</div>
             <div className="text-xs text-slate-500">{dev ? devLabel(dev) : ""} · 편집 세션 동안 화면을 이어 쓰므로 다음 요소 집기는 더 빠릅니다.</div>
           </div>
         </Modal>
       )}
       {pick && <PickModal step={d.steps.find((s) => s.id === pick)} ctx={pickCtx} build={build} device={dev} onPick={onPick} onClose={() => { setPick(null); setFocusStep(null); }} />}
-      {gen && <GenModal tc={tc} d={{ ...d, proc: L.compactProc(d.proc, []).proc }} sys={sys} env={dbg} dev={dev} preOk={preOk} preName={(mqaCases.find((x) => x.id === d.preCase) || {}).name || ""} onApply={applyGen} onClose={() => setGen(false)} />}
+      {gen && <GenModal tc={tc} d={{ ...d, proc: L.compactProc(d.proc, []).proc }} sys={sys} env={dbg} dev={dev} onApply={applyGen} onClose={() => setGen(false)} />}
       <Toast msg={msg} />
     </div>
   );
@@ -869,7 +877,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
 
 /* ═══════════ AI로 스텝 만들기 — 진행 창 ═══════════
    러너가 단말에서 앱을 조작하며 절차 한 줄씩 스텝을 만든다 (Confluence 'AI 활용 저작' 1~12 단계)
-   · 시작 전 사전 조건: 절차 · 비운영 환경 · 앱 설치 파일 · 단말(deviceBlock) · 전제조건 승인
+   · 시작 전 사전 조건: 절차 · 비운영 환경 · 앱 설치 파일 · 단말(deviceBlock)
    · 단말은 시작할 때 점유하고, 끝나거나 멈추거나 화면을 떠날 때 반납한다 (1단말 1작업)
    · AI가 요소를 특정하지 못한 스텝은 '확인 필요' — 사용자가 후보·화면에서 고르면 이어서 진행
    · 결과는 스텝 표에 '반영' 할 뿐 저장하지 않는다 — 저장·검토·승인은 에디터의 원래 흐름을 탄다
@@ -882,7 +890,7 @@ const AI_SEND = [
   { k: "보내지 않음", c: "text-emerald-700", v: "화면 캡처 이미지 · 계정과 변수의 값 (이름만) · 앱 설치 파일" },
 ];
 const unitText = (u) => u.act + (u.loc ? " · " + u.loc : "") + (u.val ? " · \"" + u.val + "\"" : "");
-function GenModal({ tc, d, env, dev, preOk, preName, onApply, onClose }) {
+function GenModal({ tc, d, env, dev, onApply, onClose }) {
   const { lockMqaDevice, releaseMqaDevice } = useApp();
   const [phase, setPhase] = useState("setup");   // setup | run | done | stopped
   const envName = env ? env.env : "";
@@ -902,7 +910,6 @@ function GenModal({ tc, d, env, dev, preOk, preName, onApply, onClose }) {
     { label: "자연어 절차 " + d.proc.length + "줄", ok: d.proc.length > 0, fix: "절차를 먼저 쓰세요" },
     { label: "작업 환경 " + (env ? envText(env) : "없음"), ok: !!env && !env.prod && !!buildObj, fix: !env ? "대상·환경에 환경을 등록하세요" : env.prod ? "운영 환경에서는 만들 수 없습니다 — 앱을 실제로 조작해 데이터가 생깁니다. 에디터 상단에서 작업 환경을 바꾸세요" : "대상·환경에서 이 환경의 앱 설치 파일을 올리세요" },
     { label: "작업 단말 " + (dev ? devLabel(dev) : "없음"), ok: !devBlock, fix: devBlock + (dev ? " — 에디터 상단에서 작업 단말을 바꾸세요" : "") },
-    ...(d.preCase ? [{ label: "전제조건 " + d.preCase + (preName ? " · " + preName : ""), ok: preOk, fix: "전제조건 케이스가 승인 상태여야 합니다" }] : []),
   ];
   const blocked = checks.find((c) => !c.ok);
   const start = () => {
@@ -910,7 +917,7 @@ function GenModal({ tc, d, env, dev, preOk, preName, onApply, onClose }) {
     if (d.steps.length && !window.confirm("지금 스텝을 새로 만든 스텝으로 바꿉니다. 계속할까요?")) return;
     lockMqaDevice(dev.id, "AI 생성 " + tc.id); held.current = dev.id;
     setUnits(L.draftSteps(d.proc).map((s) => ({ ...s, gs: "대기" })));
-    const pr = [{ label: "앱 v" + buildObj.ver + " 설치 · 데이터 초기화 · 실행", gs: "진행" }, ...(d.preCase ? [{ label: "전제조건 " + d.preCase + " 수행" + (d.acctRole ? " (" + d.acctRole + " 계정)" : ""), gs: "대기" }] : [])];
+    const pr = [{ label: "앱 v" + buildObj.ver + " 설치 · 데이터 초기화 · 실행", gs: "진행" }];   // 스위트 앞 케이스 먼저 실행은 U5
     setPrep(pr); setPhase("run");
     let t = 700;
     pr.forEach((_, i) => { later(() => setPrep((x) => x.map((p, j) => (j === i ? { ...p, gs: "완료" } : j === i + 1 ? { ...p, gs: "진행" } : p))), t); t += 700; });
@@ -923,7 +930,6 @@ function GenModal({ tc, d, env, dev, preOk, preName, onApply, onClose }) {
     setUnits((x) => x.map((u, i) => (i === cur ? { ...u, gs: "진행" } : u)));
     const u = units[cur];
     later(() => {
-      if (d.preCase && /로그인 절차/.test(u.why || "")) { setUnits((x) => x.map((v, i) => (i === cur ? { ...v, gs: "건너뜀", why: "전제조건에서 이미 로그인 — 스텝을 만들지 않음" } : v))); setCur(cur + 1); return; }
       if (L.stateOf(u) === "확정") { setUnits((x) => x.map((v, i) => (i === cur ? { ...v, gs: "완료", why: "" } : v))); setCur(cur + 1); return; }
       setUnits((x) => x.map((v, i) => (i === cur ? { ...v, gs: "확인 필요" } : v))); setAsk(cur);
     }, 650);
@@ -1101,12 +1107,11 @@ function ImportTarget({ opt, setOpt }) {
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
       <div className="w-44"><Field label="대상 (앱)"><Select value={opt.systemId} onChange={(e) => setOpt({ ...opt, systemId: e.target.value })}>{mqaSystems.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></Field></div>
-      <div className="w-44"><Field label="스위트 (파일에 없을 때)"><Select value={opt.suiteId ? String(opt.suiteId) : ""} onChange={(e) => setOpt({ ...opt, suiteId: e.target.value ? +e.target.value : null })}><option value="">미지정</option>{mqaSuites.map((s) => <option key={s.id} value={String(s.id)}>{s.name}</option>)}</Select></Field></div>
       <div className="mb-2 text-xs text-slate-500">스텝은 가져온 뒤 각 케이스에서 <span className="text-slate-700">AI로 스텝 만들기</span>로 만듭니다 (단말 필요)</div>
     </div>
   );
 }
-const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", suiteId: null, aiAfter: ai }); };
+const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", aiAfter: ai }); };
 function FilePick({ accept, multiple, onFiles, onSample, hint }) {
   const ref = useRef(null);
   return (
@@ -1217,7 +1222,7 @@ export function RobotImport({ onImport, onCancel }) {
       const base = { name: t.name, tags: t.tags.join(","), origin: "스크립트 임포트", proc: [], note: notes.join(" · ") };
       if (!reasons.length) return { ...base, steps, level: "Low-Code" };
       const used = parsed.keywords.filter((k) => t.lines.some((tk) => tk[0] === k.name));
-      const script = ["*** Settings ***", "Library    AppiumLibrary", "Resource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)", "Test Setup    앱 실행", "Test Teardown    Close Application", "", "*** Test Cases ***", ...t.raw, ...(used.length ? ["", "*** Keywords ***", ...used.flatMap((k) => k.raw)] : [])].join("\n");
+      const script = ["*** Settings ***", "Library    AppiumLibrary", "Resource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)", "", "*** Test Cases ***", ...t.raw, ...(used.length ? ["", "*** Keywords ***", ...used.flatMap((k) => k.raw)] : [])].join("\n");
       return { ...base, steps: [], level: "Full-Code", code: script, note: "Full-Code로 가져옴 — " + reasons.join(" · ") };
     });
     onImport(items, opt);
