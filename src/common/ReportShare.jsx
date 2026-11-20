@@ -1,5 +1,5 @@
 // ============================================================
-// 리포트 공유 · 자동 알림 — 공통 (AI 품질 · 기능 QA · 기능 QA(앱) 공용)
+// 리포트 공유 · 자동 알림 — 공통 (AI 응답 품질 · 웹 기능 · 앱 기능 공용)
 //   채널(Slack · Teams · Email)과 발송 조건은 공통 '리포트 · 알림' 설정(reportCfg)을 그대로 쓴다 — 도메인에 따로 두지 않는다
 //   발송한 것은 모두 공통 발송 이력(reportHist)에 남는다
 //   메시지 앞머리로 도메인을 구분한다 — 한 채널에 여러 도메인 알림이 섞여도 알아볼 수 있게
@@ -9,7 +9,7 @@ import { Share2 } from "lucide-react";
 import { Btn } from "./ui.jsx";
 import { useApp } from "./context.js";
 
-export const DOMAIN_TAG = { LQA: "[AI 품질]", FQA: "[기능 QA]", MQA: "[기능 QA(앱)]" };
+export const DOMAIN_TAG = { LQA: "[AI 응답 품질]", FQA: "[웹 기능]", MQA: "[앱 기능]" };
 const CH = [["slack", "Slack"], ["teams", "Teams"], ["email", "Email"]];
 const hhmm = () => new Date().toTimeString().slice(0, 5);
 

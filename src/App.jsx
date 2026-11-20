@@ -30,7 +30,7 @@ import { MqaDashboardScreen, MqaPlanScreen, MqaRunScreen, MqaHistoryScreen, MqaR
 import { MqaCasesScreen } from "./mqa/cases.jsx";
 import { MqaDevicesScreen } from "./mqa/devicesScreen.jsx";
 import { MQA_SECTIONS, INIT_MQA_CASES, INIT_MQA_SUITES, INIT_MQA_SYSTEMS, INIT_MQA_RUNNERS, INIT_MQA_RUNS, INIT_MQA_PLANS, MQA_HIDDEN } from "./mqa/data.js";
-import { NQA_SECTIONS, NQA_SUBTYPES, INIT_NQA_SYSTEMS, INIT_NQA_SCENARIOS, INIT_NQA_RUNS } from "./nqa/data.js";
+import { NQA_SECTIONS, INIT_NQA_SYSTEMS, INIT_NQA_SCENARIOS, INIT_NQA_RUNS } from "./nqa/data.js";
 import { NqaDashboardScreen, NqaTargetScreen, NqaScenarioScreen, NqaRunScreen, NqaHistoryScreen } from "./nqa/screens.jsx";
 import { PQA_SECTIONS, INIT_PERF_APPS, INIT_PERF_SCENARIOS, INIT_PERF_PLANS, INIT_PERF_RUNS } from "./pqa/data.js";
 import { PqaTargetScreen, PqaScenarioScreen, PqaPlanScreen, PqaRunScreen, PqaHistoryScreen, PqaTrendScreen, PqaDashboardScreen } from "./pqa/screens.jsx";
@@ -57,7 +57,7 @@ export default function App() {
   const [reportCfg, setReportCfg] = useState({ ch: { slack: true, teams: false, email: true }, cond: "fail", scope: "통합 (전체 도메인)", rsched: { on: true, freq: "weekly", time: "09:00", dow: 1, dom: 1 } });
   /* 발송 이력 — 모든 도메인이 같은 이력에 남긴다 (리포트 · 알림 화면 · MQA 회귀 리포트 공유 · 자동 알림) */
   const [reportHist, setReportHist] = useState([
-    { t: "14:36", ch: "Slack", txt: "[AI 품질] 결제/환불 상담 평가 완료 — PASS율 79% (▲)", ok: true },
+    { t: "14:36", ch: "Slack", txt: "[AI 응답 품질] 결제/환불 상담 평가 완료 — PASS율 79% (▲)", ok: true },
     { t: "09:25", ch: "Email", txt: "주간 품질 리포트 발송 (수신 6명)", ok: true },
   ]);
   const [toasts, setToasts] = useState([]);
@@ -128,8 +128,7 @@ export default function App() {
   const [roleMenu, setRoleMenu] = useState(false);   // 사람 아이콘 하위 드롭다운 열림
   const [space, setSpace] = useState("product");
   const [domain, setDomain] = useState("LQA");
-  const [nqaWs, setNqaWs] = useState(null);   // 성능 QA 워크스페이스: null(미선택) / perf(앱 성능) / load(부하) — 드롭다운에서 고를 때 확정
-  const [nqaMenu, setNqaMenu] = useState(false);   // '성능 QA' 상단 버튼 하위 드롭다운 열림
+  const [nqaWs, setNqaWs] = useState(null);   // NQA 워크스페이스: null(미선택) / perf(앱 성능) / load(부하) — 상단 버튼을 고를 때 확정
   const [tenants, setTenants] = useState(INIT_TENANTS);
   const [tenantId, setTenantId] = useState("t1");
   const [users, setUsers] = useState(INIT_USERS);
@@ -180,6 +179,7 @@ export default function App() {
        LQA 도 FQA 와 같은 규약(지속 state)을 쓴다. 한쪽만 고치면 그 도메인 알림이 빈 화면을 연다. */
     if (n.to.run) {
       if (n.to.domain === "LQA") { setLqaResultRun(n.to.run); setLqaResultFrom("history"); }
+      else if (n.to.domain === "MQA") { setMqaResultRun(n.to.run); setMqaResultFrom("mqa-history"); }
       else { setFqaResultRun(n.to.run); setFqaResultFrom("fqa-history"); }
     }
     if (n.to.select) setPendingSelect(n.to.select);                                  // 결함 · 챗봇 · 계획
@@ -309,7 +309,12 @@ export default function App() {
     setModelStatus: (id, status) => setModels((x) => x.map((m) => (m.id === id ? { ...m, status } : m))),
   };
   const ALL_SECTIONS = [...SECTIONS, ...FQA_SECTIONS, ...MQA_SECTIONS, ...NQA_SECTIONS, ...PQA_SECTIONS, ...COMMON_SECTIONS];
-  const nqaViewIds = new Set(NQA_SECTIONS.flatMap((s) => s.items.map((i) => i.id)));   // 성능 QA(부하) 전용 화면 id
+  const nqaViewIds = new Set(NQA_SECTIONS.flatMap((s) => s.items.map((i) => i.id)));   // 부하 전용 화면 id
+  /* 앱 성능 · 부하는 같은 NQA 도메인의 두 워크스페이스 — 지금 화면으로 정한다.
+     알림 · 데이터셋 이동처럼 상단 버튼을 거치지 않고 들어와도 상단 강조 · 사이드바가 맞게 */
+  const viewWs = nqaViewIds.has(view) ? "load" : String(view).startsWith("perf-") ? "perf" : null;
+  const ws = viewWs || nqaWs;
+  useEffect(() => { if (viewWs && viewWs !== nqaWs) setNqaWs(viewWs); }, [viewWs]);   // 공통 화면(변수 등)으로 넘어가도 유지
   const cur = [...ALL_SECTIONS.flatMap((s) => s.items), ...FQA_HIDDEN, ...MQA_HIDDEN, ...LQA_HIDDEN, MEMBERS_ITEM].find((n) => n.id === view) || NAV[0];
   const curSection = ((ALL_SECTIONS.find((s) => s.items.some((i) => i.id === view)) || {}).group) || (FQA_HIDDEN.find((i) => i.id === view) || {}).group || (MQA_HIDDEN.find((i) => i.id === view) || {}).group || (LQA_HIDDEN.find((i) => i.id === view) || {}).group;
   const tenantName = (tenants.find((t) => t.id === tenantId) || {}).name;
@@ -327,24 +332,15 @@ export default function App() {
           <div className="flex items-center gap-2 shrink-0"><div className="w-7 h-7 rounded-lg bg-sky-700 flex items-center justify-center"><svg width="16" height="16" viewBox="0 0 48 48" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M24 8 V24" /><path d="M8 24 H40" /><path d="M24 24 L14 40 H34 Z" /></svg></div><span className="font-bold text-slate-800">PROBA</span><span className="text-slate-500" style={{ fontSize: 10 }}>Prove every release</span></div>
           <div className="flex items-center gap-3 text-sm shrink-0">
               <div className="flex items-center gap-1 border-r border-slate-400/40 pr-3">
-                {DOMAINS.map((d) => d.id === "NQA" ? (
-                  <div key={d.id} className="relative shrink-0">
-                    <button onClick={() => setNqaMenu((v) => !v)} className={"rounded-lg px-3 py-1.5 text-sm font-semibold " + (domain === "NQA" ? "bg-white text-sky-700 shadow-sm" : nqaMenu ? "bg-slate-200 text-slate-800" : "text-slate-600 hover:bg-slate-200")}>{d.label}</button>
-                    {nqaMenu && (
-                      <div className="absolute left-0 top-full z-30 mt-1 w-24 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                        {NQA_SUBTYPES.map((s) => { const on = domain === "NQA" && nqaWs === s.id; return s.ready ? (
-                          <button key={s.id} onClick={() => { if (!goTo(s.id === "load" ? "nqa-dashboard" : "perf-dashboard")) return; setDomain("NQA"); setNqaWs(s.id); setNqaMenu(false); }} className={"flex w-full items-center px-3 py-1.5 text-sm " + (on ? "bg-sky-50 text-sky-700 font-semibold" : "text-slate-600 hover:bg-slate-100")}>{s.label}</button>
-                        ) : (
-                          <button key={s.id} disabled title="향후 확장 예정" className="flex w-full cursor-not-allowed items-center px-3 py-1.5 text-sm text-slate-300">{s.label}</button>
-                        ); })}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <button key={d.id} onClick={() => { if (!d.ready) { toast(d.label + "는 준비 중입니다 (확장 예정)", "info"); return; } if (!goTo(d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return; setDomain(d.id); setNqaMenu(false); }} className={"shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold " + (domain === d.id ? "bg-white text-sky-700 shadow-sm" : d.ready ? "text-slate-600 hover:bg-slate-200" : "text-slate-500")}>
+                {DOMAINS.map((d) => { const on = d.ws ? domain === "NQA" && ws === d.ws : domain === d.id; return (
+                  <button key={d.id + (d.ws || "")} onClick={() => {
+                    if (!d.ready) { toast(d.label + "는 준비 중입니다 (확장 예정)", "info"); return; }
+                    if (!goTo(d.ws === "load" ? "nqa-dashboard" : d.ws === "perf" ? "perf-dashboard" : d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return;
+                    setDomain(d.id); if (d.ws) setNqaWs(d.ws);
+                  }} className={"shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold " + (on ? "bg-white text-sky-700 shadow-sm" : d.ready ? "text-slate-600 hover:bg-slate-200" : "text-slate-500")}>
                     {d.label}
                   </button>
-                ))}
+                ); })}
               </div>
               <div className="flex items-center gap-1.5" title="테넌트(조직)"><Building2 size={13} className="text-slate-500" />{role === "admin" ? <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); toast("테넌트 전환: " + ((tenants.find((t) => t.id === e.target.value) || {}).name), "info"); }} className="bg-white border border-slate-400 rounded-lg px-2.5 py-1.5 text-slate-700 text-xs">{tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select> : /* 🔑 Super Admin 만 조직을 전환한다. 나머지는 자기 조직 하나뿐이라 고를 게 없다.
                        전환 상자와 같은 테두리를 두면 누를 수 있는 것처럼 보인다 — 글자만 남긴다. */
@@ -383,7 +379,7 @@ export default function App() {
         <div className="flex flex-1 min-h-0">
           <aside className="w-60 shrink-0 border-r border-slate-400/40 bg-slate-300 flex flex-col">
             <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
-              {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? (nqaWs === "load" ? NQA_SECTIONS : PQA_SECTIONS) : SECTIONS), ...COMMON_SECTIONS].map((sec) => (
+              {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? (ws === "load" ? NQA_SECTIONS : PQA_SECTIONS) : SECTIONS), ...COMMON_SECTIONS].map((sec) => (
                 <div key={sec.group}>
                   <div className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">{sec.group}</div>
                   <div className="space-y-1">
