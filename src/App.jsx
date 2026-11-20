@@ -329,19 +329,16 @@ export default function App() {
       <div className="flex flex-col flex-1 min-w-0">
         {/* ── 상단 앱바 (로고 · 검증 영역 · 전역 컨트롤) ── */}
         <div className="flex items-center justify-between gap-4 px-5 h-14 shrink-0 border-b border-slate-400/40 bg-slate-300">
-          <div className="flex items-center gap-2 shrink-0"><div className="w-7 h-7 rounded-lg bg-sky-700 flex items-center justify-center"><svg width="16" height="16" viewBox="0 0 48 48" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M24 8 V24" /><path d="M8 24 H40" /><path d="M24 24 L14 40 H34 Z" /></svg></div><span className="font-bold text-slate-800">PROBA</span><span className="text-slate-500" style={{ fontSize: 10 }}>Prove every release</span></div>
+          <div className="flex items-center gap-2 shrink-0"><div className="w-7 h-7 rounded-lg bg-sky-700 flex items-center justify-center"><svg width="16" height="16" viewBox="0 0 48 48" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M24 8 V24" /><path d="M8 24 H40" /><path d="M24 24 L14 40 H34 Z" /></svg></div><span className="font-bold text-slate-800">PROBA</span><span className="text-slate-500" style={{ fontSize: 10 }}>Prove every release</span>
+            {/* 테스트 도메인 — 선택 상자. 앱 성능 · 부하는 NQA 도메인의 두 워크스페이스(ws) */}
+            <select value={domain === "NQA" ? "NQA" + (ws || "perf") : domain} title="테스트 도메인"
+              onChange={(e) => { const d = DOMAINS.find((x) => x.id + (x.ws || "") === e.target.value); if (!d) return;
+                if (!goTo(d.ws === "load" ? "nqa-dashboard" : d.ws === "perf" ? "perf-dashboard" : d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return;
+                setDomain(d.id); if (d.ws) setNqaWs(d.ws); }}
+              className="ml-4 w-40 rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800">
+              {DOMAINS.map((d) => <option key={d.id + (d.ws || "")} value={d.id + (d.ws || "")} disabled={!d.ready}>{d.label}</option>)}
+            </select></div>
           <div className="flex items-center gap-3 text-sm shrink-0">
-              <div className="flex items-center gap-1 border-r border-slate-400/40 pr-3">
-                {DOMAINS.map((d) => { const on = d.ws ? domain === "NQA" && ws === d.ws : domain === d.id; return (
-                  <button key={d.id + (d.ws || "")} onClick={() => {
-                    if (!d.ready) { toast(d.label + "는 준비 중입니다 (확장 예정)", "info"); return; }
-                    if (!goTo(d.ws === "load" ? "nqa-dashboard" : d.ws === "perf" ? "perf-dashboard" : d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return;
-                    setDomain(d.id); if (d.ws) setNqaWs(d.ws);
-                  }} className={"shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold " + (on ? "bg-white text-sky-700 shadow-sm" : d.ready ? "text-slate-600 hover:bg-slate-200" : "text-slate-500")}>
-                    {d.label}
-                  </button>
-                ); })}
-              </div>
               <div className="flex items-center gap-1.5" title="테넌트(조직)"><Building2 size={13} className="text-slate-500" />{role === "admin" ? <select value={tenantId} onChange={(e) => { setTenantId(e.target.value); toast("테넌트 전환: " + ((tenants.find((t) => t.id === e.target.value) || {}).name), "info"); }} className="bg-white border border-slate-400 rounded-lg px-2.5 py-1.5 text-slate-700 text-xs">{tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select> : /* 🔑 Super Admin 만 조직을 전환한다. 나머지는 자기 조직 하나뿐이라 고를 게 없다.
                        전환 상자와 같은 테두리를 두면 누를 수 있는 것처럼 보인다 — 글자만 남긴다. */
                   <span className="py-1.5 text-xs font-medium text-slate-700">{tenantName}</span>}</div>
@@ -381,8 +378,8 @@ export default function App() {
             <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
               {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? (ws === "load" ? NQA_SECTIONS : PQA_SECTIONS) : SECTIONS), ...COMMON_SECTIONS].map((sec) => (
                 <div key={sec.group}>
-                  <div className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">{sec.group}</div>
-                  <div className="space-y-1">
+                  <div className="px-2 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">{sec.group}</div>
+                  <div className="space-y-1 pl-3">
                     {sec.items.map((n) => { const Icon = n.icon; const on = view === n.id; return (
                       <button key={n.id} onClick={() => { if (goTo(n.id)) setNavTick((t) => t + 1); }} className={"w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm " + (on ? "bg-white text-sky-700 font-semibold shadow-sm" : "text-slate-700 hover:bg-slate-200 hover:text-slate-900")}><Icon size={16} />{n.label}</button>
                     ); })}
@@ -391,8 +388,8 @@ export default function App() {
               ))}
               {role === "tadmin" && (
                 <div>
-                  <div className="px-3 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">관리</div>
-                  <div className="space-y-1">
+                  <div className="px-2 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-600">관리</div>
+                  <div className="space-y-1 pl-3">
                     <button onClick={() => setView("members")} className={"w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm " + (view === "members" ? "bg-white text-sky-700 font-semibold shadow-sm" : "text-slate-700 hover:bg-slate-200 hover:text-slate-900")}><UserCog size={16} />조직 관리</button>
                   </div>
                 </div>
