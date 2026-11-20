@@ -549,7 +549,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
     if (!s) return;
     bumpIdle();
     if (s.act === "화면 확인") { if (!el.text) { flash("이 요소에는 글자가 없습니다 — 다른 요소를 고르세요"); return; } updStep(s.id, { val: el.text }); }
-    else { updStep(s.id, { loc: L.recommendLoc(el).loc, el: el.label }); setRaw((r) => ({ ...r, [s.id]: false })); }
+    else { updStep(s.id, { loc: L.recommendLoc(el).loc, el: el.label, ex: L.elSnap(el) }); setRaw((r) => ({ ...r, [s.id]: false })); }
     set({ baseBuild: build });
     setPick(null); flash("요소를 채웠습니다");
   };
@@ -937,7 +937,7 @@ function GenModal({ tc, d, env, dev, onApply, onClose }) {
   const answer = (el) => {
     const u = units[ask];
     if (u.act === "화면 확인" && !el.text) return;
-    const patch = u.act === "화면 확인" ? { val: el.text } : { loc: L.recommendLoc(el).loc };
+    const patch = u.act === "화면 확인" ? { val: el.text } : { loc: L.recommendLoc(el).loc, el: el.label, ex: L.elSnap(el) };
     setUnits((x) => x.map((v, i) => (i === ask ? { ...v, ...patch, gs: "완료", why: "", by: "사용자 선택" } : v)));
     const next = ask + 1; setAsk(null); setPick(false); setCur(next);
   };

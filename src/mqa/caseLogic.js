@@ -216,6 +216,27 @@ export const elName = (s) => {
   return l ? "위치로 지정한 요소" : "";
 };
 
+/* ── 로케이터 보정 제안 (자가 치유 · 제안형) ─────────────────
+   스텝을 만들 때(요소 집기 · AI 생성) 로케이터와 함께 요소의 특징(ex)을 기억한다 — 화면에는 보이지 않는다.
+   정식 실행에서 '요소 변경' 으로 실패하면, 실패 순간의 화면 구조에서 같은 요소를 다시 찾는다.
+   🔴 판정은 뒤집지 않는다(실패는 실패) · 실행 중 자동 적용하지 않는다 · 후보가 딱 하나일 때만 제안한다
+      (애매할 때 고르면 엉뚱한 요소를 누르고도 통과 — 조용히 틀린 결과가 된다) */
+export const elSnap = (e) => (e ? { text: e.text || "", cls: e.cls || "", acc: e.acc || "", id: e.id || "" } : null);
+export const healFor = (step, build) => {
+  if (!step || !step.loc || !["탭", "입력", "요소 확인", "요소 없음 확인"].includes(step.act)) return null;
+  const screen = elementsFor(build);
+  if (screen.some((e) => recommendLoc(e).loc === step.loc)) return null;          // 요소가 있다 — 로케이터 문제가 아니다
+  const was = step.ex || elSnap(elOfLoc(step.loc));                               // 실 구현은 ex 만 쓴다 (목업 시드는 로케이터로 유도)
+  if (!was) return null;
+  const same = (e) => e.cls === was.cls && ((was.text && e.text === was.text) || (was.acc && e.acc === was.acc));
+  const hits = screen.filter(same);
+  if (hits.length !== 1) return null;
+  const e = hits[0], to = recommendLoc(e);
+  if (to.loc === step.loc) return null;
+  const by = [was.text && e.text === was.text ? "같은 문구 '" + e.text + "'" : "", was.acc && e.acc === was.acc ? "같은 접근성 ID" : "", "같은 종류(" + e.cls + ")"].filter(Boolean).join(" · ");
+  return { step: elName(step), from: step.loc, to: to.loc, kind: to.kind, why: by + " — 로케이터만 바뀌었습니다", ex: elSnap(e) };
+};
+
 /* ── 실행 흉내 (목업) — 샘플 화면에 있는 요소 · 문구면 통과, 없으면 그 스텝에서 실패하고 멈춘다
    실 구현: 러너가 RF 로 실행하고 output.xml 에서 스텝별 결과 · 오류 · 스크린샷을 돌려준다 */
 const KNOWN_TEXTS = () => new Set(SCREEN_ELEMENTS.map((e) => e.text).filter(Boolean));
@@ -287,7 +308,7 @@ export const draftSteps = (proc) => {
     else if (/확인|보인다|표시/.test(t)) s = { act: "화면 확인", val: q, why: q ? "" : "확인할 문구를 특정하지 못함" };
     else s = { act: "탭", loc: "", why: "동작을 판단하지 못함 — 절차를 더 구체적으로 쓰거나 직접 고르세요" };
     if (s.act === "탭" && isField(s.loc)) lastField = s.loc;
-    out.push({ id: sid(), n, src: t, ...s, ...(s.loc && elOfLoc(s.loc) ? { el: elOfLoc(s.loc).label } : {}) });
+    out.push({ id: sid(), n, src: t, ...s, ...(s.loc && elOfLoc(s.loc) ? { el: elOfLoc(s.loc).label, ex: elSnap(elOfLoc(s.loc)) } : {}) });
     if (p.e) {
       const v = quoted(p.e) || (/담기 완료|담았/.test(p.e) ? "장바구니에 담았습니다" : "");
       out.push({ id: sid(), n, src: p.e, act: "화면 확인", val: v, why: v ? "" : "기대 결과에서 확인할 문구를 특정하지 못함" });

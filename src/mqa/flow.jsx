@@ -193,6 +193,13 @@ export function startRun(args) {
       const j = judgeOf(cur, rc, api.mqaRuns || [], (api.mqaCases || []).find((x) => x.id === rc.id));
       if (j) rc.cause = j;
     });
+    /* 로케이터 보정 제안 — '요소 변경' 일 때만, 실행한 그 케이스(리비전)의 실패 스텝으로 계산해 함께 박는다 (L.healFor) */
+    cur.cases.forEach((rc, i) => {
+      const c = plans[i] && plans[i].c;
+      if (rc.st !== "실패" || !rc.cause || rc.cause.cause !== "요소 변경" || !c || c.level === "Full-Code") return;
+      const h = L.healFor((c.steps || [])[rc.failStep - 1], build.ver);
+      if (h) rc.heal = { ...h, stepNo: rc.failStep, rev: c.rev || 1, st: "검토 대기" };
+    });
     /* 정식 실행에서 통과한 버전은 '확인된 버전' 이 된다 — 디버그로 다시 확인하라고 하지 않는다 (builds.js) */
     cur.cases.filter((rc) => rc.st === "통과").forEach((rc) => { const c = (api.mqaCases || []).find((x) => x.id === rc.id); if (c && !BV.isVerified(c, build.ver)) api.updateMqaCase(rc.id, { verifiedOn: BV.withVerified(c, build.ver) }); });
     api.releaseMqaDevice(dev.id);
@@ -703,6 +710,16 @@ function ResultDetail({ runId, back, backLabel, nav }) {
   const openCase = (c) => { app.setMqaEditTc(c.id); app.goTo("mqa-cases"); };
   const judged = run.judged || {};
   const confirm = (c, kind) => { app.updateMqaRun(run.id, { judged: { ...judged, [c.id]: kind } }); flash(c.id + " 원인 확정 — " + kind); };
+  /* 로케이터 보정 제안 — 승인하면 케이스의 그 로케이터를 바꾸고 이력을 남긴다. 승인 상태는 유지(보정 승인 자체가 검토).
+     판정은 바꾸지 않는다 — 고친 뒤 '이 스위트 다시 실행' 으로 확인한다 */
+  const setHealSt = (rc, st) => app.updateMqaRun(run.id, { cases: run.cases.map((x) => ((x.key || x.id) === (rc.key || rc.id) ? { ...x, heal: { ...x.heal, st } } : x)) });
+  const approveHeal = (rc) => {
+    const c = tcNow(rc.id), h = rc.heal;
+    const hit = c && c.level !== "Full-Code" ? (c.steps || []).filter((x) => x.loc === h.from).length : 0;
+    if (!hit) { setHealSt(rc, "적용 실패"); flash("케이스에 " + h.from + " 를 쓰는 스텝이 없습니다 — 이미 고쳤을 수 있습니다"); return; }
+    app.commitMqaCase(rc.id, { steps: c.steps.map((x) => (x.loc === h.from ? { ...x, loc: h.to, ex: h.ex } : x)) }, { note: "보정 승인 — " + h.from + " → " + h.to });
+    setHealSt(rc, "승인됨"); flash(rc.id + " 로케이터 반영 (" + hit + "개 스텝) — 이 스위트를 다시 실행해 확인하세요");
+  };
   const addDefect = (c) => { const no = "BUG-" + (1200 + Object.keys(run.defects || {}).length + 1); app.updateMqaRun(run.id, { defects: { ...(run.defects || {}), [c.id]: no } }); flash(no + " 결함 초안 생성 — 실패 화면 · 로그 첨부 (목업)"); };
   const mc = mergedCases(run), mFail = mc.filter((c) => c.st === "실패").length;
   const SUM = [["통과", mc.filter((c) => c.st === "통과").length, "text-emerald-600"], ["실패", mFail, mFail ? "text-red-600" : "text-slate-400"], ["건너뜀", mc.filter((c) => c.st === "건너뜀").length, "text-slate-500"], ["소요", durOfRun(run), "text-slate-900"]];
@@ -736,7 +753,7 @@ function ResultDetail({ runId, back, backLabel, nav }) {
             <button onClick={() => setOpen(c.key || c.id)} className={"w-full border-b border-slate-100 px-4 py-2 text-left text-xs " + (oc && (oc.key || oc.id) === (c.key || c.id) ? "bg-sky-50" : "hover:bg-slate-50")}>
               <div className="flex items-center gap-2"><span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-800">{c.name}</span><Badge kind={CASE_K[c.st]}>{c.st}</Badge></div>
               {c.skipWhy && <div className="mt-0.5 truncate pl-16 text-slate-400" title={c.skipWhy}>{c.skipWhy}</div>}
-              {jc && <div className="mt-1 pl-16"><Badge kind={JUDGE_K[judged[c.id] || jc.kind]}>{judged[c.id] || jc.kind}</Badge>{!judged[c.id] && <span className="ml-1 text-slate-400">{jc.by} 제안</span>}{(run.defects || {})[c.id] && <span className="ml-1 font-mono text-red-700">{run.defects[c.id]}</span>}</div>}
+              {jc && <div className="mt-1 pl-16"><Badge kind={JUDGE_K[judged[c.id] || jc.kind]}>{judged[c.id] || jc.kind}</Badge>{!judged[c.id] && <span className="ml-1 text-slate-400">{jc.by} 제안</span>}{(run.defects || {})[c.id] && <span className="ml-1 font-mono text-red-700">{run.defects[c.id]}</span>}{c.heal && c.heal.st === "검토 대기" && <span className="ml-1 text-sky-700">· 보정 제안</span>}</div>}
             </button>
             </Fragment>
           ); })}
@@ -765,6 +782,17 @@ function ResultDetail({ runId, back, backLabel, nav }) {
                     {(jk || j.kind) === "앱 결함 의심" && ((run.defects || {})[oc.id] ? <span className="text-red-700">결함 {run.defects[oc.id]} 등록됨</span> : <Btn icon={FileText} onClick={() => addDefect(oc)}>결함 등록 (근거 첨부)</Btn>)}
                     {(jk || j.kind) === "환경 문제" && <Btn icon={RefreshCw} onClick={() => rerun([oc])}>이 스위트 다시 실행</Btn>}
                   </div>
+                </div>
+              )}
+              {/* 로케이터 보정 제안 — 판정은 그대로, 제안만 덧붙인다 */}
+              {oc.heal && (
+                <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2.5 text-xs">
+                  <div className="flex items-center gap-2"><span className="font-semibold text-sky-800">로케이터 보정 제안</span><span className="text-slate-500">스텝 {oc.heal.stepNo} · {oc.heal.step}</span>
+                    <Badge kind={oc.heal.st === "승인됨" ? "pass" : oc.heal.st === "검토 대기" ? "warn" : "draft"}>{oc.heal.st}</Badge></div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono"><span className="text-red-700 line-through">{oc.heal.from}</span><span className="text-slate-500">→</span><span className="text-emerald-700">{oc.heal.to}</span><span className="font-sans text-slate-500">({oc.heal.kind})</span></div>
+                  <div className="mt-1 text-slate-600">{oc.heal.why}</div>
+                  {oc.heal.st === "검토 대기" && <div className="mt-2 flex flex-wrap gap-2"><Btn kind="primary" icon={CheckCircle2} onClick={() => approveHeal(oc)}>승인 · 반영</Btn><Btn icon={Code2} onClick={() => { setHealSt(oc, "직접 수정"); openCase(oc); }}>요소 다시 집기</Btn></div>}
+                  {oc.heal.st === "승인됨" && <div className="mt-2"><Btn icon={RefreshCw} onClick={() => rerun([oc])}>이 스위트 다시 실행</Btn></div>}
                 </div>
               )}
               <div className="space-y-0.5">{oc.steps.map((x, i) => (
@@ -902,6 +930,8 @@ function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems
     ? (summ["개선"] ? "퇴행 없음 — 개선 " + summ["개선"] + "건, " + B.id + "는 " + A.id + "보다 나아졌습니다" : "퇴행 없음 — 두 실행의 품질이 같습니다")
     : G.map((g) => "퇴행 " + g.ids.length + "건은 " + g.cause + (g.kind === "테스트 문제" ? " 때문 — 앱 결함이 아닌 테스트 보정 대상" : g.kind === "앱 결함 의심" ? " — 앱 결함 의심, 결함 등록 권장" : g.kind === "환경 문제" ? " — 환경 문제로 보임" : " — 원인 확인 필요")).join(" · ") + (devDiff ? " (단말이 달라 단말 영향도 확인 필요)" : "");
   const recs = [];
+  const healN = (B.cases || []).filter((x) => x.heal && x.heal.st === "검토 대기").length;
+  if (healN) recs.push("로케이터 보정 제안 " + healN + "건 검토 · 승인 (" + B.id + " 결과 상세)");
   if (G.some((g) => g.cause === "요소 변경")) recs.push("요소 다시 집기 → 실패한 스위트 다시 실행 (" + G.filter((g) => g.cause === "요소 변경").flatMap((g) => g.ids).join(", ") + ")");
   if (G.some((g) => /대기 부족/.test(g.cause))) recs.push("대기 시간 보정 후 반복 실행으로 재확인 (" + G.filter((g) => /대기 부족/.test(g.cause)).flatMap((g) => g.ids).join(", ") + ")");
   if (judg.some((x) => x.kind === "앱 결함 의심")) recs.push("앱 결함 의심 건은 실패 화면 · 로그를 첨부해 결함 등록");

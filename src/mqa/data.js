@@ -72,7 +72,7 @@ export const INIT_MQA_SUITES = [
   { id: 7, name: "담기 · 서버 반영", desc: "로그인 → 담기 → 서버 장바구니 확인", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-008"] },
   /* 승인 전 케이스가 있어 실행할 수 없는 스위트 — 계획에 넣으면 이유가 보인다 */
   { id: 4, name: "주문 내역", desc: "로그인 → 주문 내역", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-004"] },
-  { id: 5, name: "검색 후 담기", desc: "로그인 → 검색 → 담기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-003", "TC-007"] },
+  { id: 5, name: "검색 후 담기", desc: "로그인 → 검색 → 담기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-007"] },
   /* Full-Code 도 본문만 — 앱 열기·닫기는 스위트가 하므로 Low-Code 뒤에 이어 붙일 수 있다 */
   { id: 6, name: "연속 담기", desc: "로그인 → 가져온 스크립트로 3개 연속 담기", systemId: 1, acctRole: "일반", items: ["TC-001", "TC-005"] },
 ];
@@ -126,8 +126,9 @@ export const INIT_MQA_CASES = [
       { id: "s606", n: 1, act: "탭", loc: P + "btn_cart_clear" },
       { id: "s607", n: 1, act: "화면 확인", val: "장바구니가 비어 있습니다" },
     ] },
-  /* 이전 버전(v3.1.4)에서 만든 케이스 — v3.2.0 에서 '장바구니 담기' 버튼 ID가 바뀌어 디버그 실행이 4번 스텝에서 실패한다 */
-  { id: "TC-007", name: "검색 후 첫 상품 담기", systemId: 1, tags: "regression", status: "검토중", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.1.4",
+  /* 이전 버전(v3.1.4)에서 만든 케이스 — v3.2.0 에서 '장바구니 담기' 버튼 ID가 바뀌어 4번 스텝에서 실패한다
+     정식 실행(계획 '야간 회귀')에서는 원인 '요소 변경' + 로케이터 보정 제안(btn_cart_add → btn_add_cart)이 뜬다 */
+  { id: "TC-007", name: "검색 후 첫 상품 담기", systemId: 1, tags: "regression", status: "승인", origin: "직접 작성", level: "Low-Code", code: "", mismatch: false, baseBuild: "3.1.4",
     pre: "",
     proc: [{ t: "검색창에 \"립밤\"을 입력한다", e: "" }, { t: "첫 번째 상품을 연다", e: "" }, { t: "장바구니 담기를 누른다", e: "\"장바구니에 담았습니다\"가 보인다" }],
     steps: [
@@ -143,7 +144,7 @@ export const INIT_MQA_CASES = [
     pre: "", lastDry: { at: "10:31", build: "3.2.0", env: "스테이징", result: "통과" },
     proc: [{ t: "상품 상세에서 장바구니 담기를 누른다", e: "\"장바구니에 담았습니다\"가 보인다" }, { t: "서버 장바구니를 조회한다", e: "담긴 상품이 1건이다" }],
     steps: [
-      { id: "s801", n: 1, act: "탭", loc: P + "btn_cart_add", el: "장바구니 담기 버튼" },
+      { id: "s801", n: 1, act: "탭", loc: P + "btn_add_cart", el: "장바구니 담기 버튼" },
       { id: "s802", n: 1, act: "화면 확인", val: "장바구니에 담았습니다" },
       { id: "s803", n: 2, act: "요청", loc: "GET /v1/cart", save: "cnt = $.items.length" },
       { id: "s804", n: 2, act: "응답 검증", loc: "상태코드", val: "200" },
@@ -181,7 +182,7 @@ INIT_MQA_RUNNERS.push(
    계획은 앱 · 환경 · 버전(buildId — 빈 값 = 최신, 지정하면 그 버전으로 고정) + 스위트 + 실행 단말 1대 + 예약
    이력: v3.1.4 에서 통과 → v3.2.0 으로 올린 뒤 TC-006 이 한 번 대기 시간 초과로 실패(불안정) */
 export const INIT_MQA_PLANS = [
-  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [2, 3, 7], devId: "D-3", retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
+  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [2, 3, 7, 5], devId: "D-3", retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
 ];
 const st = (act, name, s, val) => ({ act, name, val: val || "", st: s || "통과", msg: "" });
 const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("화면 확인", "\"로그아웃\"")] });
