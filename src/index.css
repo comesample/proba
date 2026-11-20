@@ -4,6 +4,17 @@
 
 html, body, #root { height: 100%; margin: 0; }
 
+/* 글꼴 — 실서비스와 같은 Wanted Sans (src/assets/fonts, 실서비스에서 복사). 자간도 실서비스 값
+   🔑 public/ 에 두고 "/fonts/…" 로 부르면 안 된다 — vite base 가 "/proba/" 라 주소가 어긋나 404 가 난다. 상대 경로로 두면 빌드가 경로를 맞춰 준다 */
+@font-face { font-family: "Wanted Sans"; src: url("./assets/fonts/WantedSans-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Wanted Sans"; src: url("./assets/fonts/WantedSans-Medium.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Wanted Sans"; src: url("./assets/fonts/WantedSans-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Wanted Sans"; src: url("./assets/fonts/WantedSans-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+body { font-family: "Wanted Sans", "Malgun Gothic", system-ui, sans-serif; color: #333333; }
+* { letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+/* 음수 자간 탓에 마지막 글자가 상자 밖으로 삐져나와 truncate에 깎인다 — 그만큼 오른쪽 여백을 둔다 (실서비스와 같은 처리) */
+.truncate { padding-inline-end: 0.1em; }
+
 /* ============================================================
    폼 컨트롤 톤 (2026-08-11)
    브라우저 기본 컨트롤은 라이트 테마와 따로 논다.

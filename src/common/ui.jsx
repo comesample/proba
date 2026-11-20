@@ -35,16 +35,13 @@ export const SEL_IDLE = "hover:border-slate-300 hover:bg-slate-50";
 export const SEL_ROW  = "bg-sky-100 hover:bg-sky-100";
 
 
+/* 상태 배지 — 실서비스 배지(components/ui/badge.tsx)와 같은 모양: 옅은 채움 + 진한 테두리 + 검은 글자
+   통과 = 파랑 · 실패 = 빨강 · 경고 = 주황 · 정보 = 회색 · 진행/선택 = 청록 · 초안 = 연한 회색 */
 export function Badge({ kind = "info", children }) {
-  const light = {
-    pass: "bg-emerald-100 text-emerald-700", fail: "bg-red-100 text-red-700",
-    warn: "bg-amber-100 text-amber-700", info: "bg-slate-200 text-slate-700",
-    active: "bg-sky-100 text-sky-700", draft: "bg-slate-200 text-slate-600",
-    crit: "bg-red-100 text-red-700", major: "bg-amber-100 text-amber-700", minor: "bg-slate-200 text-slate-700",
-    live: "bg-red-100 text-red-700",
-  };
-  const m = light;
-  return <span className={"px-2 py-0.5 rounded text-xs font-semibold " + (m[kind] || m.info)}>{children}</span>;
+  const blue = "border-st-blue-line bg-st-blue/20 text-ink", red = "border-st-red-line bg-st-red/20 text-ink", amber = "border-st-amber-line bg-st-amber/20 text-ink";
+  const gray = "border-st-gray-line bg-st-gray text-ink", teal = "border-st-teal-line bg-st-teal-soft text-st-teal-ink", neutral = "border-hairline bg-canvas text-subtle";
+  const m = { pass: blue, fail: red, warn: amber, info: gray, active: teal, draft: neutral, crit: red, major: amber, minor: gray, live: red };
+  return <span className={"inline-flex h-5 items-center whitespace-nowrap rounded-md border px-2 text-xs font-medium " + (m[kind] || m.info)}>{children}</span>;
 }
 
 export function ScoreBar({ label, value, color }) {
@@ -57,7 +54,7 @@ export function ScoreBar({ label, value, color }) {
 }
 
 export function Card({ children, className = "" }) {
-  const base = "rounded-xl border border-slate-200 bg-white shadow-sm ";
+  const base = "rounded-xl border border-hairline bg-white ";   // 실서비스 카드: 흰 판 · 모서리 12px · 그림자 없음
   return <div className={base + className}>{children}</div>;
 }
 
@@ -67,32 +64,33 @@ export function Field({ label, children, hint }) {
 
 export function Btn({ kind = "ghost", icon: Icon, children, onClick, disabled, title, className = "" }) {
   const light = {
-    primary: "bg-sky-700 hover:bg-sky-800 text-white",
-    ghost: "bg-white hover:bg-slate-50 text-slate-700 border border-slate-300",
-    danger: "bg-red-600 hover:bg-red-700 text-white",
-    soft: "bg-slate-100 hover:bg-slate-200 text-slate-700",
+    /* 실서비스 버튼: 주 버튼 = 남색(navy) · 보조 = 흰 바탕 + 입력칸 테두리(cancel) */
+    primary: "bg-navy hover:bg-navy/90 text-white border border-transparent",
+    ghost: "bg-white hover:bg-canvas text-ink border border-edge",
+    danger: "bg-[#cb0e0e] hover:bg-[#cb0e0e]/90 text-white border border-transparent",
+    soft: "bg-slate-100 hover:bg-slate-200 text-ink border border-transparent",
   };
   const m = light;
   return (
-    <button onClick={onClick} disabled={disabled} title={title} className={"inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold px-3 py-2 disabled:opacity-40 disabled:cursor-not-allowed " + (m[kind] || m.ghost) + " " + className}>
+    <button onClick={onClick} disabled={disabled} title={title} className={"inline-flex h-9 items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium px-3 disabled:opacity-40 disabled:cursor-not-allowed " + (m[kind] || m.ghost) + " " + className}>
       {Icon && <Icon size={15} />}{children}
     </button>
   );
 }
 
 export function Input(props) {
-  const base = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 ";
+  const base = "w-full bg-white border border-edge rounded-lg px-3 py-2 text-sm text-ink placeholder-slate-400 outline-none focus:border-brand read-only:bg-canvas read-only:text-subtle ";
   return <input {...props} className={base + (props.className || "")} />;
 }
 
 export function Select({ children, ...p }) {
-  const base = "w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500";
+  const base = "w-full bg-white border border-edge rounded-lg px-3 py-2 text-sm text-ink outline-none focus:border-brand";
   return <select {...p} className={base}>{children}</select>;
 }
 
 export function Toggle({ on, onClick, disabled }) {
   return (
-    <button onClick={disabled ? undefined : onClick} disabled={disabled} className={"w-9 h-5 rounded-full p-0.5 " + (on ? "bg-sky-600" : "bg-slate-300") + (disabled ? " opacity-50 cursor-not-allowed" : "")}>
+    <button onClick={disabled ? undefined : onClick} disabled={disabled} className={"w-9 h-5 rounded-full p-0.5 " + (on ? "bg-brand" : "bg-slate-300") + (disabled ? " opacity-50 cursor-not-allowed" : "")}>
       <span className="block w-4 h-4 rounded-full bg-white" style={{ transform: on ? "translateX(16px)" : "translateX(0px)", transition: "transform .15s" }} />
     </button>
   );

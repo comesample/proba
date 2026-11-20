@@ -8,8 +8,9 @@
       이었다 — 이름과 실체가 어긋나면 "teal 계열이니 teal-600 을 써도 되겠지" 같은 오용이 생긴다. */
 export const C = {
   ok: "#059669", err: "#dc2626", warn: "#d97706",
-  sky: "#0ea5e9", skyDark: "#0284c7", skyFill: "#bae6fd", skyBg: "#e0f2fe",
-  blue: "#2563eb", grid: "#e2e8f0", axis: "#94a3b8", surface: "#ffffff", ink: "#334155",
+  /* 실서비스 톤 (2026-11-20) — 차트 주색은 실서비스 대시보드 지표 파랑(#4A63D0), 진한 쪽은 남색 */
+  sky: "#4a63d0", skyDark: "#263360", skyFill: "#c3cbf0", skyBg: "#e4eaf5",
+  blue: "#0088ff", grid: "#e8e8e8", axis: "#aaaaaa", surface: "#ffffff", ink: "#333333",
 };
 
 /* Recharts 툴팁 공통 스타일 — 화면마다 인라인으로 적던 것을 모았다.
@@ -26,7 +27,7 @@ export const TOOLTIP = { background: C.surface, border: "1px solid " + C.grid, b
 /* 순서: 900 → 700 → 500 → 300 → 800 → 400.
    계열이 2~4개일 때가 대부분이므로 앞쪽 네 개가 명도 폭을 최대로 벌리도록 배치했다.
    900·800·700 처럼 인접 단계를 앞에 몰면 선 세 개가 거의 같은 색으로 보인다. */
-export const SERIES = ["#0c4a6e", "#0369a1", "#0ea5e9", "#7dd3fc", "#075985", "#38bdf8"];
+export const SERIES = ["#161d3b", "#263360", "#4a63d0", "#9aa9e6", "#1e2850", "#7085dd"];   // 실서비스 남색 → 지표 파랑 명도 단계
 
 // 판정(PASS/FAIL/WARN) → Badge kind
 export const vKind = (v) => (v === "PASS" ? "pass" : v === "FAIL" ? "fail" : "warn");
