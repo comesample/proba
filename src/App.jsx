@@ -332,7 +332,7 @@ export default function App() {
         {space === "product" && (<>
         {/* ── 좌측 메뉴 ── */}
         <aside className="flex w-56 shrink-0 flex-col text-white/70">
-          <div className="shrink-0 py-2 pl-4"><img src={logoUrl} alt="PROBA" className="h-12 w-auto" /></div>
+          <div className="flex shrink-0 items-center gap-2 py-2 pl-4"><img src={logoUrl} alt="PROBA" className="h-12 w-auto" /><span className="rounded-md border border-amber-300/60 bg-amber-300/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200">목업</span></div>
           <nav className="min-h-0 flex-1 overflow-y-auto pb-4 pr-3">
             {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? (ws === "load" ? NQA_SECTIONS : PQA_SECTIONS) : SECTIONS), ...COMMON_SECTIONS, ...(role === "tadmin" ? [{ group: "관리", items: [MEMBERS_ITEM] }] : [])].map((sec) => (
               <div key={sec.group} className="mb-1 pl-4">

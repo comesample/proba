@@ -14,6 +14,8 @@ body { font-family: "Wanted Sans", "Malgun Gothic", system-ui, sans-serif; color
 * { letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
 /* 음수 자간 탓에 마지막 글자가 상자 밖으로 삐져나와 truncate에 깎인다 — 그만큼 오른쪽 여백을 둔다 (실서비스와 같은 처리) */
 .truncate { padding-inline-end: 0.1em; }
+/* 코드는 자간을 좁히지 않는다 — 고정폭 글꼴은 글자 폭이 맞아야 줄이 정렬된다(.robot · Playwright 코드 미리보기) */
+.font-mono, .font-mono *, pre, code, kbd, samp { letter-spacing: 0; }
 
 /* ============================================================
    폼 컨트롤 톤 (2026-08-11)
@@ -53,7 +55,7 @@ input[type="range"]::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 9999px;
   background: linear-gradient(to right,
-    #0284c7 0 var(--fill, 0%), #e2e8f0 var(--fill, 0%) 100%);
+    #00c3d0 0 var(--fill, 0%), #eae9ed var(--fill, 0%) 100%);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -63,32 +65,32 @@ input[type="range"]::-webkit-slider-thumb {
   margin-top: -4px;
   border-radius: 9999px;
   background: #fff;
-  border: 2px solid #0284c7;
+  border: 2px solid #00c3d0;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
 }
 input[type="range"]::-moz-range-track {
-  height: 6px; border-radius: 9999px; background: #e2e8f0;
+  height: 6px; border-radius: 9999px; background: #eae9ed;
 }
 input[type="range"]::-moz-range-progress {
-  height: 6px; border-radius: 9999px; background: #0284c7;
+  height: 6px; border-radius: 9999px; background: #00c3d0;
 }
 input[type="range"]::-moz-range-thumb {
   width: 14px; height: 14px; border-radius: 9999px;
-  background: #fff; border: 2px solid #0284c7;
+  background: #fff; border: 2px solid #00c3d0;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
 }
 input[type="range"]:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.25);
 }
-input[type="range"]:disabled::-webkit-slider-runnable-track { background: #e2e8f0; }
-input[type="range"]:disabled::-webkit-slider-thumb { border-color: #94a3b8; }
+input[type="range"]:disabled::-webkit-slider-runnable-track { background: #eae9ed; }
+input[type="range"]:disabled::-webkit-slider-thumb { border-color: #aaaaaa; }
 
 /* ── 체크박스 · 라디오 ───────────────────────────────────────
    크롬 기본 파랑(#0b57d0)이 화면의 sky 계열과 어긋난다.
    개별 accent-* 유틸리티가 붙은 곳은 그쪽이 우선한다. */
 input[type="checkbox"]:not([class*="accent-"]),
 input[type="radio"]:not([class*="accent-"]) {
-  accent-color: #0284c7;
+  accent-color: #00c3d0;
 }
 input[type="checkbox"], input[type="radio"] { width: 15px; height: 15px; cursor: pointer; }
 input[type="checkbox"]:disabled, input[type="radio"]:disabled { cursor: not-allowed; }
