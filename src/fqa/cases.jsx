@@ -5,12 +5,13 @@ import { Badge, Btn, Card, Field, Input, Modal, PageToolbar, Portal, Select, Toa
 import { useApp } from "../common/context.js";
 import { FqaApiImportScreen } from "./apiImportScreen.jsx";
 import { FqaEditorScreen } from "./editor.jsx";
-import { SURF_K, TAGS, TAG_DESC, nextTcId, suiteNm, surfacesOf, tagList } from "./logic.js";
+import { SURF_K, TAGS, TAG_DESC, nextTcId, surfacesOf, tagList } from "./logic.js";
+import * as SL from "./suiteLogic.js";
 import { FqaRecordScreen } from "./recordScreen.jsx";
 import { stepsToCode } from "./stepLogic.js";
 /* ═══════════ 9. 테스트케이스 (통합 저장소) ═══════════ */
 export function FqaCasesScreen() {
-  const { fqaCases, fqaSuites, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick } = useApp();
+  const { fqaCases, fqaSuites, updateFqaSuite, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick } = useApp();
   const editorDirty = useRef(false);
   /* 좌측 메뉴 '테스트케이스' 재클릭 → 목록으로 (미저장 확인은 goTo 가 이미 했다). 처음 마운트 때는 무시 */
   const tick0 = useRef(navTick);
@@ -19,7 +20,7 @@ export function FqaCasesScreen() {
   const [msg, flash] = useToast();
   const [mode, setMode] = useState(() => (fqaEditTc && fqaCases.some((x) => x.id === fqaEditTc)) ? "edit" : "목록");
   const [addOpen, setAddOpen] = useState(false);
-  const [blank, setBlank] = useState(null);   // 직접 작성 모달 { name, suite }
+  const [blank, setBlank] = useState(null);   // 직접 작성 모달 { name, level }
   const [newPlat, setNewPlat] = useState("Web");
   const [q, setQ] = useState("");
   const [stf, setStf] = useState("전체");
@@ -35,9 +36,10 @@ export function FqaCasesScreen() {
   const lvK2 = { "Low-Code": "active", "Full-Code": "warn" };
   const lvLabel = (c) => c.level;
   // 수정 최신순 — 방금 만들거나 고친 케이스가 위로. (updatedAt 없는 시드는 뒤로)
-  const list = fqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || c.suiteId === suiteF) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (platF === "전체" || surfacesOf(c) === platF) && (c.id + c.name + suiteNm(fqaSuites, c.suiteId) + c.tags).toLowerCase().includes(q.toLowerCase()))
+  const list = fqaCases.filter((c) => (stf === "전체" || c.status === stf) && (suiteF === "전체" || SL.suitesOfCase(fqaSuites, c.id).some((su) => su.id === suiteF)) && (tagF === "전체" || tagList(c.tags).includes(tagF)) && (platF === "전체" || surfacesOf(c) === platF) && (c.id + c.name + SL.suiteNamesOf(fqaSuites, c.id).join(" ") + c.tags).toLowerCase().includes(q.toLowerCase()))
     .slice().sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
-  const delCase = (c, after) => { if (!window.confirm(c.id + " 삭제할까요? 되돌릴 수 없습니다.")) return; removeFqaCase(c.id); if (after) after(); flash(c.id + " 삭제됨"); };
+  const inSuites = (id) => SL.suiteNamesOf(fqaSuites, id);
+  const delCase = (c, after) => { if (!window.confirm(c.id + " 삭제할까요? 되돌릴 수 없습니다." + (inSuites(c.id).length ? "\n\n이 케이스가 포함된 스위트에서도 빠집니다:\n" + inSuites(c.id).map((n) => " · " + n).join("\n") : ""))) return; removeFqaCase(c.id); if (after) after(); flash(c.id + " 삭제됨"); };
   const togglePick = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allPicked = list.length > 0 && list.every((c) => picked.has(c.id));
   const toggleAll = () => { if (allPicked) setPicked(new Set()); else setPicked(new Set(list.map((c) => c.id))); };
@@ -48,15 +50,17 @@ export function FqaCasesScreen() {
         updateFqaCase 로 조용히 바꾸면 케이스 변경 이력에 흔적이 남지 않는다 — commitFqaCase 로 리비전을 남긴다.
      🔑 스위트가 틀리면 실행 계획이 그 케이스를 아예 잡지 않는다(실패가 아니라 누락). 그래서 되돌릴 길이 있어야 한다. */
   const pickedCases = () => fqaCases.filter((c) => picked.has(c.id));
-  const [suiteModal, setSuiteModal] = useState(null);   // 일괄 스위트 변경: 이동할 스위트명
+  const [suiteModal, setSuiteModal] = useState(null);   // 스위트에 추가: 추가할 스위트 ID
   const [tagModal, setTagModal] = useState(null);       // 일괄 태그: { [caseId]: "tag,tag" } 초안
   const openSuiteModal = () => setSuiteModal((fqaSuites[0] || {}).id || 0);
+  /* 스위트에 추가 — 끝에 붙인다. 순서는 스위트 화면에서 바꾼다. 다른 스위트에서 빠지지 않는다(케이스는 재사용) */
   const applySuite = () => {
-    const to = suiteModal, tgt = pickedCases().filter((c) => c.suiteId !== to);
-    if (!to) { flash("이동할 스위트를 고르세요"); return; }
-    if (!tgt.length) { flash("이미 모두 " + suiteNm(fqaSuites, to) + " 입니다"); setSuiteModal(null); return; }
-    tgt.forEach((c) => commitFqaCase(c.id, { suiteId: to }, { note: "일괄 스위트 변경" }));
-    flash(tgt.length + "건 → " + suiteNm(fqaSuites, to)); setSuiteModal(null); setPicked(new Set());
+    const su = fqaSuites.find((x) => x.id === suiteModal);
+    if (!su) { setSuiteModal(null); return; }
+    const tgt = pickedCases().filter((c) => !(su.items || []).includes(c.id));
+    if (!tgt.length) { flash("이미 모두 " + su.name + "에 들어 있습니다"); setSuiteModal(null); return; }
+    updateFqaSuite(su.id, { items: [...(su.items || []), ...tgt.map((c) => c.id)] });
+    flash(tgt.length + "건 → " + su.name + " 끝에 추가" + (tgt.some((c) => c.status !== "승인") ? " · 승인 전 케이스가 있어 그 스위트는 승인할 때까지 실행되지 않습니다" : "")); setSuiteModal(null); setPicked(new Set());
   };
   const openTagModal = () => { const d = {}; pickedCases().forEach((c) => { d[c.id] = c.tags || ""; }); setTagModal(d); };
   const tagOn = (id, t) => tagList(tagModal[id]).includes(t);
@@ -78,7 +82,7 @@ export function FqaCasesScreen() {
     const name = (blank.name || "").trim();
     if (!name) { flash("TC 이름을 입력하세요"); return; }
     // 목록에 넣지 않는다 — 다른 경로처럼 첫 저장 때 생성된다(열기만 하고 안 쓰면 남지 않음)
-    const c = { id: nextTcId(fqaCases), origin: "직접 작성", name, suiteId: blank.suite, tags: "", status: "초안", level: blank.level, dataset: "-", steps: [] };
+    const c = { id: nextTcId(fqaCases), origin: "직접 작성", name, tags: "", status: "초안", level: blank.level, dataset: "-", steps: [] };
     if (blank.level === "Full-Code") c.code = stepsToCode([], c);   // 주입 계약이 담긴 골격
     setBlank(null); setSel(c); setMode("edit");
   };
@@ -98,12 +102,12 @@ export function FqaCasesScreen() {
         <div style={{ width: 110 }}><Select value={platF} onChange={(e) => setPlatF(e.target.value)}><option>전체</option><option>웹</option><option>API</option><option>웹+API</option></Select></div>
         <div style={{ width: 110 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option>전체</option><option>승인</option><option>검토중</option><option>초안</option></Select></div>
         <div className="relative">
-          <Btn kind="primary" icon={Plus} onClick={() => setAddOpen(!addOpen)} disabled={fqaSuites.length === 0} title={fqaSuites.length === 0 ? "스위트를 먼저 만드세요 — 케이스는 스위트에 속해야 계획이 잡습니다" : ""}>새 TC</Btn>
+          <Btn kind="primary" icon={Plus} onClick={() => setAddOpen(!addOpen)} >새 TC</Btn>
           {addOpen && (
             <div className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-slate-300 bg-white py-1 shadow-xl">
               {/* 모든 경로는 '실행 가능한 스텝'을 만든다 — 스텝 없는 TC는 만들지 않는다 */}
               {[["직접 작성", Pencil, "빈 케이스", true], ["레코딩 (웹)", Video, "레코딩", true], ["API 임포트", FileText, "api-import", true]].map(([l, Ic, m, ok]) => (
-                <button key={l} disabled={!ok} onClick={() => { if (!ok) return; setAddOpen(false); if (m === "빈 케이스") { setBlank({ name: "", suite: (fqaSuites[0] || {}).id || 0, level: "Low-Code" }); return; } setMode(m); }} className={"flex w-full items-center gap-2 px-3 py-2 text-sm " + (ok ? "text-slate-800 hover:bg-slate-100" : "cursor-not-allowed text-slate-500")}><Ic size={14} className={ok ? "text-sky-600" : "text-slate-400"} />{l}{!ok && <span className="ml-auto text-slate-500" style={{ fontSize: 10 }}>준비 중</span>}</button>
+                <button key={l} disabled={!ok} onClick={() => { if (!ok) return; setAddOpen(false); if (m === "빈 케이스") { setBlank({ name: "", level: "Low-Code" }); return; } setMode(m); }} className={"flex w-full items-center gap-2 px-3 py-2 text-sm " + (ok ? "text-slate-800 hover:bg-slate-100" : "cursor-not-allowed text-slate-500")}><Ic size={14} className={ok ? "text-sky-600" : "text-slate-400"} />{l}{!ok && <span className="ml-auto text-slate-500" style={{ fontSize: 10 }}>준비 중</span>}</button>
               ))}
             </div>
           )}
@@ -114,7 +118,7 @@ export function FqaCasesScreen() {
           <span className="flex-1 text-sky-700">{picked.size}건 선택됨</span>
           <Btn kind="primary" icon={CheckCircle2} onClick={() => bulkSet("승인")}>선택 승인</Btn>
           <Btn onClick={() => bulkSet("검토중")}>검토중으로</Btn>
-          <Btn icon={Layers} onClick={openSuiteModal}>스위트 변경</Btn>
+          <Btn icon={Layers} onClick={openSuiteModal}>스위트에 추가</Btn>
           <Btn icon={Tag} onClick={openTagModal}>태그 지정</Btn>
           <Btn kind="danger" icon={Trash2} onClick={bulkDel}>선택 삭제</Btn>
           <Btn onClick={() => setPicked(new Set())}>선택 해제</Btn>
@@ -122,19 +126,12 @@ export function FqaCasesScreen() {
       )}
       {/* ── 일괄 스위트 변경 ── 선택분이 여러 스위트에 흩어져 있을 수 있으니 현재 분포를 먼저 보여준다 */}
       {suiteModal !== null && (
-        <Modal title={"스위트 일괄 변경 · " + picked.size + "건"} onClose={() => setSuiteModal(null)}>
+        <Modal title={"스위트에 추가 · " + picked.size + "건"} onClose={() => setSuiteModal(null)}>
           <div className="space-y-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-              <div className="mb-1.5 text-xs font-semibold text-slate-600">현재 스위트</div>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(pickedCases().reduce((a, c) => { a[suiteNm(fqaSuites, c.suiteId)] = (a[suiteNm(fqaSuites, c.suiteId)] || 0) + 1; return a; }, {})).map(([k, v]) => (
-                  <span key={k} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600">{k} <span className="text-slate-500">{v}</span></span>
-                ))}
-              </div>
-            </div>
-            <Field label="이동할 스위트" hint="선택한 케이스 전부가 이 스위트로 옮겨집니다. 변경 이력에 리비전으로 남습니다.">
-              <Select value={String(suiteModal)} onChange={(e) => setSuiteModal(+e.target.value)}>{fqaSuites.map((su) => <option key={su.id} value={String(su.id)}>{su.name}</option>)}</Select>
+            <Field label="추가할 스위트" hint="고른 순서대로 스위트 끝에 붙습니다. 다른 스위트에서 빠지지 않습니다 — 케이스는 여러 스위트에서 재사용됩니다. 순서는 스위트 화면에서 바꿉니다.">
+              <Select value={String(suiteModal)} onChange={(e) => setSuiteModal(+e.target.value)}>{fqaSuites.map((su) => <option key={su.id} value={String(su.id)}>{su.name} · {(su.items || []).length}건</option>)}</Select>
             </Field>
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">승인 전 케이스가 들어가면 스위트 전체가 실행되지 않습니다.</div>
             <div className="flex justify-end gap-2 pt-1"><Btn onClick={() => setSuiteModal(null)}>취소</Btn><Btn kind="primary" onClick={applySuite}>적용</Btn></div>
           </div>
         </Modal>
@@ -159,7 +156,7 @@ export function FqaCasesScreen() {
                 <tbody>
                   {pickedCases().map((c) => (
                     <tr key={c.id} className="border-b border-slate-200">
-                      <td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {suiteNm(fqaSuites, c.suiteId)}</span></td>
+                      <td className="py-1.5 pl-3 pr-2"><span className="font-mono text-xs text-slate-500">{c.id}</span> <span className="text-slate-700">{c.name}</span> <span className="text-xs text-slate-500">· {inSuites(c.id).join(", ") || "스위트 없음"}</span></td>
                       {TAGS.map((t) => (
                         <td key={t} className="px-2 py-1.5 text-center">
                           <button onClick={() => togTag(c.id, t)} className={"rounded-full border px-2.5 py-0.5 text-xs " + (tagOn(c.id, t) ? "border-sky-600 bg-sky-100 text-sky-700" : "border-slate-200 bg-white text-slate-300 hover:bg-slate-100")}>{tagOn(c.id, t) ? t : "—"}</button>
@@ -184,15 +181,8 @@ export function FqaCasesScreen() {
               <tr><td colSpan={9} className="px-4 py-10 text-center">
                 {fqaCases.length === 0 ? (<>
                   <div className="text-sm font-medium text-slate-700">등록된 테스트케이스가 없습니다</div>
-                  {fqaSuites.length === 0 ? (
-                    /* 스위트가 먼저다 — 케이스는 스위트에 속해야 계획이 잡는다 */
-                    <>
-                      <div className="mt-1.5 text-xs text-amber-600">테스트 스위트를 먼저 만드세요. 케이스는 스위트에 속해야 실행 계획이 잡습니다.</div>
-                      <Btn className="mt-3" icon={Layers} onClick={() => goTo("fqa-suites")}>테스트 스위트 만들러 가기</Btn>
-                    </>
-                  ) : (
-                    <div className="mt-1.5 text-xs text-slate-500">레코딩으로 만들거나 직접 작성할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
-                  )}
+                  <div className="mt-1.5 text-xs text-slate-500">레코딩으로 만들거나 직접 작성할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
+
                 </>) : (<>
                   <div className="text-sm text-slate-700">조건에 맞는 케이스가 없습니다</div>
                   <div className="mt-1.5 text-xs text-slate-500">검색어·스위트·태그·접점·상태 필터를 확인하세요.</div>
@@ -204,9 +194,9 @@ export function FqaCasesScreen() {
                 <td className="pl-4" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={picked.has(c.id)} onChange={() => togglePick(c.id)} className="accent-sky-600" /></td>
                 <td className="py-3 pr-4 font-mono text-sky-600">{c.id}</td>
                 <td className="text-slate-800">{c.name}</td>
-                <td className="text-slate-500">{suiteNm(fqaSuites, c.suiteId)}</td>
+                <td className="text-slate-500">{inSuites(c.id).join(", ") || "—"}</td>
                 <td>{tagList(c.tags).length ? <div className="flex gap-1">{tagList(c.tags).map((t) => <span key={t} className="rounded-full border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{t}</span>)}</div> : <span className="text-xs text-slate-500">-</span>}</td>
-                <td className="whitespace-nowrap">{surfacesOf(c) === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={SURF_K[surfacesOf(c)] || "info"}>{surfacesOf(c)}</Badge>}{c.preCase && <button onClick={(e) => { e.stopPropagation(); const t = list.find((x) => x.id === c.preCase) || fqaCases.find((x) => x.id === c.preCase); if (t) setOpen(t); }} className="ml-1 font-mono text-slate-500 hover:text-sky-600" style={{ fontSize: 10 }} title={"전제조건 " + c.preCase + " — 클릭하면 그 케이스를 봅니다"}>← {c.preCase}</button>}{c.dataset && c.dataset !== "-" && <span className="ml-1 font-mono text-sky-600" style={{ fontSize: 10 }} title={"데이터셋 " + c.dataset}>⛁ {c.dataset}</span>}</td>
+                <td className="whitespace-nowrap">{surfacesOf(c) === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={SURF_K[surfacesOf(c)] || "info"}>{surfacesOf(c)}</Badge>}{c.dataset && c.dataset !== "-" && <span className="ml-1 font-mono text-sky-600" style={{ fontSize: 10 }} title={"데이터셋 " + c.dataset}>⛁ {c.dataset}</span>}</td>
                 <td><Badge kind={lvK2[c.level] || "info"}>{lvLabel(c)}</Badge></td>
                 <td><Badge kind={stK[c.status]}>{c.status}</Badge></td>
                 <td className="pr-2 text-xs text-slate-500 whitespace-nowrap">{c.updatedBy || "—"} · {c.updatedAt || "—"}</td>
@@ -223,7 +213,7 @@ export function FqaCasesScreen() {
           <div className="h-full w-full max-w-md overflow-y-auto border-l border-slate-200 bg-white p-5" onClick={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between"><span className="font-mono text-sky-600">{open.id}</span><button onClick={() => setOpen(null)} className="text-slate-500 hover:text-slate-700"><X size={20} /></button></div>
             <div className="space-y-4 text-sm">
-              <div><div className="text-slate-900">{open.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5">{surfacesOf(open) !== "-" && <Badge kind={SURF_K[surfacesOf(open)] || "info"}>{surfacesOf(open)}</Badge>}<Badge kind="info">{suiteNm(fqaSuites, open.suiteId)}</Badge><Badge kind={lvK2[open.level]}>{lvLabel(open)}</Badge><Badge kind={stK[open.status]}>{open.status}</Badge></div></div>
+              <div><div className="text-slate-900">{open.name}</div><div className="mt-1.5 flex flex-wrap gap-1.5">{surfacesOf(open) !== "-" && <Badge kind={SURF_K[surfacesOf(open)] || "info"}>{surfacesOf(open)}</Badge>}{inSuites(open.id).map((n) => <Badge key={n} kind="info">{n}</Badge>)}<Badge kind={lvK2[open.level]}>{lvLabel(open)}</Badge><Badge kind={stK[open.status]}>{open.status}</Badge></div></div>
               <div className="rounded-lg bg-slate-100 p-3 text-xs text-slate-500 space-y-0.5"><div>생성 <span className="text-slate-700">{open.createdBy || "—"}</span> · {open.createdAt || "—"}</div><div>수정 <span className="text-slate-700">{open.updatedBy || "—"}</span> · {open.updatedAt || "—"}</div></div>
               <div><div className="mb-1 text-xs text-slate-500">태그</div>{tagList(open.tags).length ? <div className="flex flex-wrap gap-1.5">{tagList(open.tags).map((t) => <span key={t} className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-700">{t}</span>)}</div> : <div className="text-xs text-slate-500">없음</div>}</div>
               <div><div className="mb-1 text-xs text-slate-500">데이터셋 (데이터 드리븐)</div><div className="text-xs text-slate-500">{open.dataset && open.dataset !== "-" ? open.dataset : "없음"}</div></div>
@@ -251,7 +241,6 @@ export function FqaCasesScreen() {
             </div>
             <div className="space-y-3.5 px-5 py-4">
               <Field label="TC 이름"><Input value={blank.name} onChange={(e) => setBlank({ ...blank, name: e.target.value })} placeholder="예: 쿠폰 중복 적용 차단" /></Field>
-              <Field label="스위트"><Select value={String(blank.suite)} onChange={(e) => setBlank({ ...blank, suite: +e.target.value })}>{fqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field>
               {/* 외부(VS Code 등)에서 쓰던 스크립트를 그대로 올리는 경로 — 이 경우 Full-Code로 진입한다 */}
               <Field label="작성 방식">
                 <div className="grid grid-cols-2 gap-2">

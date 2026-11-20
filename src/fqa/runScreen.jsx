@@ -4,7 +4,8 @@ import { Play } from "lucide-react";
 import { autoAlert } from "../common/ReportShare.jsx";
 import { Badge, Btn, Card, Modal, PageToolbar, RunTime, SEL_ROW, Select, Toast, nowStamp, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
-import { SURF_K, lastOf, outerChecks, suiteNm, tagMatch } from "./logic.js";
+import { SURF_K, lastOf, outerChecks, suiteNm } from "./logic.js";
+import * as SL from "./suiteLogic.js";
 /* ═══════════ 6. 실행 관리 ═══════════ */
 const RUN_LOG = [
   { lv: "INFO", t: "FRUN-512 시작 · Chromium 1920×1080" },
@@ -65,11 +66,10 @@ export function FqaRunScreen({ nav }) {
   const envRefOf = (plan) => { const sy = (fqaSystems || []).find((s) => s.id === ((plan.targetRef || {}).systemId)); const e = sy ? (sy.envs || []).find((x) => x.env === (plan.targetRef || {}).env) : null; return { sy, e, label: sy ? sy.name + " · " + (plan.targetRef || {}).env : "미지정" }; };
   const surfLabel = (plan) => { const { e } = envRefOf(plan); if (!e) return "-"; const w = !!e.webUrl, a = !!e.apiUrl; return w && a ? "웹+API" : a ? "API" : w ? "웹" : "-"; };
   const planSuiteIds = (plan) => (plan.suiteIds || []);
-  // 실행 대상: 계획이 고른 스위트들의 승인 케이스 (스위트 활성 게이트 없음 — 계획 선택이 유일한 기준)
+  // 실행 대상: 계획이 고른 스위트를 통째로 (실행 불가 스위트는 빠진다 — 계획 화면에 이유 표시)
   const buildTcs = (plan) => {
-    // 스위트(업무 흐름) ∩ 태그(실행 목적) ∩ 승인 — 태그가 비면 스위트 전체
-    const inSuite = (c) => planSuiteIds(plan).includes(c.suiteId) && !c.quarantined && tagMatch(c, plan.tags);
-    const src = fqaCases.filter((c) => inSuite(c) && c.status === "승인");   // 승인 케이스만 실행 — 초안·검토중은 대상 아님(계획 경고와 일치)
+    // 고른 스위트를 통째로 — 실행 불가 스위트(승인 전 케이스 포함)는 빠진다 (suiteLogic)
+    const src = planCasesOf(plan);
     const retry = plan.retry != null ? plan.retry : 0;
     return src.map((c) => {
       const base = lastOf(fqaRuns, c.id) === "FAIL" ? "FAIL" : "PASS";
@@ -83,13 +83,13 @@ export function FqaRunScreen({ nav }) {
      케이스 안(스텝 완성도·save 변수)은 저장 시점에 이미 막혔으므로 여기서 다시 보지 않는다.
      여기가 실행을 막는 유일한 지점이다. 실 구현에서는 서버 API 계층에 둔다 —
      화면 실행 · 정기 스케줄 · CI 웹훅 세 경로가 모두 지나가는 곳은 거기뿐이다. */
-  const planCasesOf = (plan) => fqaCases.filter((c) => planSuiteIds(plan).includes(c.suiteId) && !c.quarantined && tagMatch(c, plan.tags) && c.status === "승인");
-  const precheck = (plan) => { const { e } = envRefOf(plan); return outerChecks(planCasesOf(plan), e, datasets, fqaCases); };
+  const planCasesOf = (plan) => SL.casesOfPlanSuites(plan, fqaCases, fqaSuites).filter((c) => !c.quarantined);
+  const precheck = (plan) => { const { e } = envRefOf(plan); return outerChecks(planCasesOf(plan), e, datasets, SL.planSuites(plan, fqaSuites)); };
   const [pcModal, setPcModal] = useState(null);
   /* 🔴 문제 케이스만 빼고 돌리지 않는다 — 일부만 돈 회차가 품질 게이트를 통과하면
      검증이 사라진 것을 아무도 모른다. 빼는 결정은 사람이 '격리'로 내린다. */
   const quarantine = (list) => { list.forEach((c) => updateFqaCase(c.id, { quarantined: true })); setPcModal(null); flash(list.length + "건 격리됨 — 실행 대상에서 빠집니다. 다시 실행하세요"); };
-  const gatePlan = (plan) => { if (plan.status !== "활성") { flash(plan.name + " — 초안 계획은 실행할 수 없습니다. 계획을 활성화하세요"); return false; } if (!planSuiteIds(plan).length) { flash(plan.name + " — 스위트가 선택되지 않았습니다"); return false; } if (!buildTcs(plan).length) { flash(plan.name + " — 실행할 승인 케이스가 없습니다 (스위트·태그·승인 상태 확인)"); return false; } const pc = precheck(plan); if (pc.length) { setPcModal({ plan, groups: pc }); return false; } return true; };
+  const gatePlan = (plan) => { if (plan.status !== "활성") { flash(plan.name + " — 초안 계획은 실행할 수 없습니다. 계획을 활성화하세요"); return false; } if (!planSuiteIds(plan).length) { flash(plan.name + " — 스위트가 선택되지 않았습니다"); return false; } if (!buildTcs(plan).length) { flash(plan.name + " — 실행할 수 있는 케이스가 없습니다 (스위트의 승인 상태 확인)"); return false; } const pc = precheck(plan); if (pc.length) { setPcModal({ plan, groups: pc }); return false; } return true; };
   // 실행 시점의 대상·환경·빌드 버전을 run에 스탬프 — "이 회귀가 어느 빌드에서 나왔나"를 추적하기 위함
   const stampOf = (plan) => { const { e, label } = envRefOf(plan); return { target: label, ver: (e && e.ver && e.ver !== "-") ? e.ver : "-" }; };
   const [runPlan, setRunPlan] = useState(runnableNames[0] || "");

@@ -6,6 +6,7 @@ import { Badge, Btn, Card, PageToolbar, Select, Toast, useToast } from "../commo
 import { useApp } from "../common/context.js";
 import { C, TOOLTIP } from "../common/theme.js";
 import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, healKey, healUsable, histOf, lastOf } from "./logic.js";
+import * as SL from "./suiteLogic.js";
 /* ═══════════ 8. FQA 대시보드 ═══════════ */
 const barColor = (p) => (p >= 90 ? C.sky : p >= 80 ? C.warn : C.err);
 export function FqaDashboardScreen({ nav }) {
@@ -45,7 +46,7 @@ export function FqaDashboardScreen({ nav }) {
   const topFail = flakyRows.slice().sort((a, b) => b.rate - a.rate).slice(0, 4);
   const openDef = defects.filter((d) => (d.domain || "LQA") === "FQA" && d.status !== "Resolved").length;
   const suiteHealth = fqaSuites.map((su) => {
-    const cs = fqaCases.filter((c) => c.suiteId === su.id);
+    const cs = SL.suiteCases(su, fqaCases);
     const rated = cs.filter((c) => ["PASS", "FAIL", "WARN"].includes(lastOf(fruns, c.id)));
     const pass = rated.length ? Math.round((cs.filter((c) => ["PASS", "WARN"].includes(lastOf(fruns, c.id))).length / rated.length) * 100) : null;
     return { name: su.name, tc: cs.length, pass };

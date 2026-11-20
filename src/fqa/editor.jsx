@@ -7,6 +7,7 @@ import { DatasetPicker } from "../common/DatasetPicker.jsx";
 import { STEP_ACTS } from "./data.js";
 import { SURF_K, envCovers, envOpts, lastOf, nextTcId, refKey, surfacesOf } from "./logic.js";
 import { Hdr, TagPicker, taCls } from "./parts.jsx";
+import * as SL from "./suiteLogic.js";
 import { ASSERTS, DIFF_CLS, DIFF_MARK, DS_MAX_ROWS, LOC_HINT, LOC_PH, LV, REQ_METHODS, VAL_PH, assertDef, fieldDiff, hasBody, isStatusTarget, lcsDiff, parseAssert, reqJoin, reqParts, respCond, simCode, simRun, stepErrors, stepKey, stepText, stepsToCode } from "./stepLogic.js";
 export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const { commitFqaCase, addFqaCase, fqaSuites, fqaCases, fqaRuns, fqaSystems, datasets, debugEnv, setDebugEnv, setNavGuard } = useApp();
@@ -24,36 +25,22 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   // Full-Code 코드는 케이스에 저장된다. 없으면 스텝에서 생성한 것을 초기값으로.
   const initCode = (tc && tc.code) || stepsToCode(initSteps, tc || {});
   const [code, setCode] = useState(initCode);
-  const [suite, setSuite] = useState(tc ? tc.suiteId : ((fqaSuites[0] || {}).id || 0));
   const [name, setName] = useState((tc && tc.name) || "");
   const [tags, setTags] = useState((tc && tc.tags) || "");
   const [dataset, setDataset] = useState(tc ? (tc.dataset && tc.dataset !== "-" ? tc.dataset : "") : "");
-  const [acctRole, setAcctRole] = useState((tc && tc.acctRole) || "");
-  const [preCase, setPreCase] = useState((tc && tc.preCase) || "");
   // 운영주의 — 운영 환경에서 실데이터를 변경/삭제하는 케이스. 태그와 별개 플래그.
   const [prodCaution, setProdCaution] = useState(!!(tc && tc.prodCaution));
-  // 등록된 모든 환경의 계정 역할 (케이스는 역할만 고르고, 실제 계정은 실행 계획의 환경이 주입)
-  const roleOpts = [...new Set((fqaSystems || []).flatMap((sy) => (sy.envs || []).flatMap((e) => (e.accts || []).map((a) => a.role))).filter(Boolean))];
+  /* 이 케이스가 포함된 스위트 — 시작 상태(로그인)와 계정 역할은 스위트가 정한다. 케이스는 스위트를 모른다 */
+  const usedIn = tc ? SL.suitesOfCase(fqaSuites, tc.id) : [];
   // 계정 변수 사용 여부 — Full-Code는 V['계정 ID'] 형태로 나타난다
-  /* 스텝이 계정 변수를 직접 쓰는가 — 로그인 자체를 검증하는 케이스가 여기 해당한다.
-     🔴 문자열 검사라 변수 이름 규칙에 기능이 매달려 있다. 전제조건 로그인을 쓰는 케이스는 이 검사에 안 걸리므로
-     실 구현에서는 값을 구조({ref:"acct"})로 저장해 이름과 무관하게 판별해야 한다. */
   const usesAcct = steps.some((s) => /\$\{계정/.test((s.val || "") + (s.loc || "") + (s.code || ""))) || /계정 (ID|비밀번호)/.test(code || "");
-  /* 전제조건 후보 = 승인된 다른 케이스. 별도 '로그인 프로필' 엔티티를 두지 않는다 —
-     로그인도 케이스이므로 레코딩·리비전·디버그 실행·승인 워크플로가 그대로 따라온다.
-     🔑 전제조건을 가진 케이스는 후보에서 뺀다 — 중첩을 허용하면 순환이 생긴다(1단계만). */
-  const preOpts = (fqaCases || []).filter((c) => c.id !== (tc && tc.id) && c.status === "승인" && !c.preCase
-    // Full-Code 제외 — 전제조건은 globalSetup에서 도는 함수여야 하는데 사용자 코드는 test()로 감싸여 있어 벗길 수 없다
-    && c.level !== "Full-Code"
-    // 데이터셋 제외 — 행마다 로그인한다는 뜻이 되어 성립하지 않는다
-    && (!c.dataset || c.dataset === "-"));
   const [dragIdx, setDragIdx] = useState(null);
   const [codeOpen, setCodeOpen] = useState({});
   const toggleCode = (i) => setCodeOpen((m) => ({ ...m, [i]: !m[i] }));
   const reorder = (from, to) => { setSteps((prev) => { const arr = [...prev]; const [m] = arr.splice(from, 1); arr.splice(to, 0, m); return arr; }); setCodeOpen({}); };
   const vi = LV.indexOf(view);
-  const [snap, setSnap] = useState(() => JSON.stringify({ steps: initSteps, code: initCode, committed: ei, suite: tc ? tc.suiteId : ((fqaSuites[0] || {}).id || 0), name: (tc && tc.name) || "", tags: (tc && tc.tags) || "", dataset: tc ? (tc.dataset && tc.dataset !== "-" ? tc.dataset : "") : "", acctRole: (tc && tc.acctRole) || "", preCase: (tc && tc.preCase) || "", prodCaution: !!(tc && tc.prodCaution) }));
-  const dirty = snap !== JSON.stringify({ steps, code, committed, suite, name, tags, dataset, acctRole, preCase, prodCaution });
+  const [snap, setSnap] = useState(() => JSON.stringify({ steps: initSteps, code: initCode, committed: ei, name: (tc && tc.name) || "", tags: (tc && tc.tags) || "", dataset: tc ? (tc.dataset && tc.dataset !== "-" ? tc.dataset : "") : "", prodCaution: !!(tc && tc.prodCaution) }));
+  const dirty = snap !== JSON.stringify({ steps, code, committed, name, tags, dataset, prodCaution });
   /* 사이드바 이동은 화면 안의 dirty를 모른다 — 전역 가드에 등록하고 떠날 때 해제한다 */
   useEffect(() => { setNavGuard(dirty ? "저장하지 않은 변경이 있습니다. 이동하면 사라집니다.\n\n이동할까요?" : null); return () => setNavGuard(null); }, [dirty]);
   const versions = (tc && tc.versions) || [];
@@ -80,14 +67,6 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
      ※ 실 구현에서는 생성기를 서버가 소유한다(프론트·서버 이중 구현은 반드시 어긋난다). */
   const asCase = () => ({ ...(tc || {}), name: name.trim() || (tc && tc.name) || "", dataset: dataset || "-" });
   const preview = () => stepsToCode(steps, asCase());
-  /* 🔑 이 케이스를 전제조건으로 쓰는 케이스들 — 그러면 생성기가 두 형태를 내야 한다.
-     케이스로 실행: test(...)  /  전제조건으로 실행: globalSetup에서 도는 async 함수.
-     스텝 본문은 같고 껍데기만 다르다. 통으로 test()를 만들면 전제조건으로 못 쓴다(F1). */
-  const usedAsPre = (fqaCases || []).filter((c) => c.preCase === (tc && tc.id));
-  const preForm = () => {
-    const body = stepsToCode(steps, asCase()).split("\n").filter((l) => /^\s{2}/.test(l)).map((l) => l.slice(2)).join("\n");
-    return "// globalSetup — 역할·슬롯 조합마다 1회\nexport async function setup(page, V) {\n" + body + "\n}";
-  };
   const descend = () => {
     if (!window.confirm("Full-Code로 변환하면 스텝 편집은 읽기 전용이 되고, 되돌릴 수 없습니다.\n(변경 이력에서 이전 리비전으로 복원하는 방법만 남습니다)\n\n변환할까요?")) return;
     setCode(preview()); setCommitted(1); setView("Full-Code");
@@ -115,11 +94,11 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const dbg = dbgOpts.find((o) => refKey(o) === refKey(debugEnv)) || dbgOpts[0] || null;
   const dbgEnvRec = (() => { const sy = (fqaSystems || []).find((s) => s.id === (dbg || {}).systemId); return sy ? (sy.envs || []).find((e) => e.env === dbg.env) : null; })();
   const dbgAccts = (dbgEnvRec && dbgEnvRec.accts) || [];
-  const acctOk = !usesAcct || (acctRole ? dbgAccts.some((a) => a.role === acctRole) : dbgAccts.length > 0);
+  const acctOk = !usesAcct || dbgAccts.length > 0;   // 역할은 스위트가 정한다 — 디버그는 풀의 첫 계정 (스위트 문맥 디버그는 B2-3)
   // 디버그 실행 고유 오류 — 환경·계정. 스텝/데이터셋 오류(errs)는 하단 패널이 전담하므로 여기서 문구로 반복하지 않는다.
   const envErr =
     !dbg ? "이 케이스의 접점(" + surf + ")에 맞는 대상·환경이 없습니다"
-    : !acctOk ? (acctRole ? "이 환경에 '" + acctRole + "' 역할의 계정이 없습니다" : "이 환경의 계정 풀이 비어 있습니다")
+    : !acctOk ? "이 환경의 계정 풀이 비어 있습니다"
     : (!isFull && steps.length === 0) ? "스텝이 없습니다"
     : "";
   const runBlocked = !!envErr || errs.length > 0;   // 실행 차단 = 환경 문제 또는 스텝/데이터셋 오류
@@ -133,18 +112,18 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   /* Low-Code는 스텝이 진실 — code를 저장하면 스텝과 어긋난 낡은 코드가 DB에 남는다(실행 시 서버가 스텝에서 생성한다).
      Full-Code는 code가 진실 — 스텝은 참고용으로 그대로 둔다(변환 시점의 흔적). */
   // origin(생성 경로)은 최초 생성 때 정해지고 이후 바뀌지 않는다 — 편집·변환·복제와 무관한 '출생' 정보
-  const body = () => ({ steps, code: isFull ? code : "", level: LV[committed], suiteId: suite, name: name.trim(), tags, dataset: dataset || "-", preCase, acctRole: (preCase || usesAcct) ? acctRole : "", prodCaution, origin: (tc && tc.origin) || "직접 작성" });
+  const body = () => ({ steps, code: isFull ? code : "", level: LV[committed], name: name.trim(), tags, dataset: dataset || "-", prodCaution, origin: (tc && tc.origin) || "직접 작성" });
   /* 저장 = 새 리비전 INSERT. baseRev로 낙관적 잠금 — 그 사이 남이 저장했으면 거부한다. */
   /* 충돌 후 탈출구 — 최신본을 다시 읽어 편집 상태를 갈아끼운다.
      이게 없으면 baseRev가 낡은 채로 남아 다시 저장해도 또 충돌한다(영원히 저장 불가). */
   const reload = () => {
     const c = tc || {};
     setSteps(c.steps || []); setCode(c.code || ""); setCommitted(Math.max(0, LV.indexOf(c.level)));
-    setView(c.level || "Low-Code"); setName(c.name || ""); setTags(c.tags || ""); setSuite(c.suiteId || 0);
-    setDataset(c.dataset && c.dataset !== "-" ? c.dataset : ""); setAcctRole(c.acctRole || ""); setPreCase(c.preCase || ""); setProdCaution(!!c.prodCaution);
+    setView(c.level || "Low-Code"); setName(c.name || ""); setTags(c.tags || "");
+    setDataset(c.dataset && c.dataset !== "-" ? c.dataset : ""); setProdCaution(!!c.prodCaution);
     setStatus(c.status || "검토중");
     baseRev.current = c.rev || 1;
-    setSnap(JSON.stringify({ steps: c.steps || [], code: c.code || "", committed: Math.max(0, LV.indexOf(c.level)), suite: c.suiteId || 0, name: c.name || "", tags: c.tags || "", dataset: c.dataset && c.dataset !== "-" ? c.dataset : "", acctRole: c.acctRole || "", preCase: c.preCase || "", prodCaution: !!c.prodCaution }));
+    setSnap(JSON.stringify({ steps: c.steps || [], code: c.code || "", committed: Math.max(0, LV.indexOf(c.level)), name: c.name || "", tags: c.tags || "", dataset: c.dataset && c.dataset !== "-" ? c.dataset : "", prodCaution: !!c.prodCaution }));
     flash("rev " + (c.rev || 1) + " 최신본을 불러왔습니다");
   };
   /* 저장하면 상태는 검토중으로 수렴한다 — 내용이 바뀌었으니 다시 검토 대상이 된다.
@@ -156,11 +135,13 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
     if (!name.trim()) { flash("TC 이름을 입력하세요"); return false; }
     if (saveErr) { flash(saveErr); return false; }
     const wasApproved = status === "승인";
+    /* 재사용의 대가 — 승인된 케이스를 고치면 그 케이스가 든 스위트는 다시 승인할 때까지 통째로 멈춘다 */
+    if (wasApproved && usedIn.length && !window.confirm("이 케이스가 포함된 스위트 " + usedIn.length + "개는 다시 승인하기 전까지 실행되지 않습니다:\n" + usedIn.map((su) => " · " + su.name).join("\n") + "\n\n저장할까요?")) return false;
     // 아직 목록에 없는 케이스(직접 작성)면 첫 저장 = 생성 → 검토중
     if (!fqaCases.some((c) => c.id === tc.id)) {
       addFqaCase({ id: tc.id, ...body(), status: "검토중" });
       baseRev.current = 1; setStatus("검토중");
-      setSnap(JSON.stringify({ steps, code, committed, suite, name, tags, dataset, acctRole, preCase, prodCaution }));
+      setSnap(JSON.stringify({ steps, code, committed, name, tags, dataset, prodCaution }));
       flash("검토중으로 저장됨");
       return true;
     }
@@ -173,7 +154,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
     }
     baseRev.current = curRev + 1;
     setStatus("검토중");
-    setSnap(JSON.stringify({ steps, code, committed, suite, name, tags, dataset, acctRole, preCase, prodCaution }));
+    setSnap(JSON.stringify({ steps, code, committed, name, tags, dataset, prodCaution }));
     flash(wasApproved ? "rev " + (curRev + 1) + " 저장 · 승인 해제(검토중)" : "rev " + (curRev + 1) + " 검토중으로 저장");
     return true;
   };
@@ -197,7 +178,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
           <Card className="p-3">
             <div className="mb-2 text-xs font-semibold text-slate-500">태그</div>
             <TagPicker value={tags} onChange={setTags} />
-            <div className="mt-1.5 text-xs text-slate-500">실행 계획이 태그로 대상을 고릅니다.</div>
+            <div className="mt-1.5 text-xs text-slate-500">목록 분류 · 검색용입니다.</div>
           </Card>
           {/* 운영주의 — 태그와 별개 플래그. 운영 환경 실행 시 경고(막지 않고 알린다). */}
           <Card className="p-3">
@@ -207,34 +188,14 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
             </label>
             <div className="mt-1.5 text-xs text-slate-500">데이터 변경/삭제 — 운영 환경 테스트 시 주의</div>
           </Card>
-          {/* 🔑 전제조건 — 로그인은 대부분의 케이스에서 '검증 대상'이 아니라 '들어가기 위한 절차'다.
-              스텝으로 넣으면 케이스마다 같은 다섯 줄이 복사되고, 워커마다 로그인해서 계정이 충돌한다(F4).
-              별도 '로그인 프로필' 엔티티를 만들지 않고 케이스를 그대로 가리킨다 —
-              그래야 레코딩·리비전·디버그 실행·승인 워크플로가 공짜로 따라오고, 로그인 자체도 테스트 대상이 된다.
-              로그인을 검증하는 케이스(TC-0031)는 '없음'으로 두고 스텝으로 직접 쓴다. */}
+          {/* 포함된 스위트 — 옛 '전제조건' 자리. 시작 상태(로그인)와 계정 역할은 스위트가 정한다 */}
           <Card className="p-3">
-            <div className="mb-2 text-xs font-semibold text-slate-500">전제조건</div>
-            <Select value={preCase} onChange={(e) => setPreCase(e.target.value)}>
-              <option value="">없음 (비로그인 흐름 · 로그인 자체 검증)</option>
-              {preOpts.map((c) => <option key={c.id} value={c.id}>{c.id} · {c.name}</option>)}
-            </Select>
-            {(preCase || usesAcct) && (
-              <div className="mt-2">
-                <Select value={acctRole} onChange={(e) => setAcctRole(e.target.value)}>
-                  <option value="">기본 (풀의 첫 계정)</option>
-                  {roleOpts.map((r) => <option key={r}>{r}</option>)}
-                </Select>
-                <div className="mt-1.5 text-xs text-slate-500">
-                  {preCase
-                    ? <>이 역할의 계정으로 <span className="font-mono text-sky-600">{preCase}</span>을 먼저 수행한 세션에서 시작합니다. 스텝에 로그인을 쓰지 않습니다.<br />전제조건 수행은 <span className="text-slate-500">집계에 세지 않습니다</span> — 실패하면 이 케이스가 <span className="text-slate-500">전제조건 실패</span>로 기록됩니다.</>
-                    : <>스텝이 계정 변수를 사용합니다 — 이 역할의 계정이 <span className="font-mono text-sky-600">{"${계정 ID}"}</span>·<span className="font-mono text-sky-600">{"${계정 비밀번호}"}</span>에 주입됩니다.</>}
-                </div>
-              </div>
-            )}
-            {/* 승인된 케이스만 후보다 — 초안을 전제로 쓰면 실행이 불안정해진다.
-                전제조건 케이스를 수정하면 승인이 풀리므로 이 케이스도 실행이 막힌다(F9). 그게 의도다. */}
-            <div className="mt-1.5 text-xs text-slate-500">승인된 Low-Code 케이스만 고를 수 있습니다.</div>
-            {preOpts.length === 0 && <div className="mt-1 text-xs text-amber-600">해당하는 케이스가 없습니다.</div>}
+            <div className="mb-2 text-xs font-semibold text-slate-500">포함된 스위트</div>
+            {usedIn.length ? <div className="space-y-1">{usedIn.map((su) => { const k = (su.items || []).indexOf(tc.id); return (
+              <div key={su.id} className="text-xs text-slate-700">{su.name} <span className="text-slate-500">· {k + 1}번째{k > 0 ? " · 앞: " + su.items[k - 1] : ""}{su.acctRole ? " · " + su.acctRole : ""}</span></div>
+            ); })}</div> : <div className="text-xs text-slate-500">없음 — 스위트에 넣어야 실행 계획에서 돕니다</div>}
+            {usesAcct && <div className="mt-2 text-xs text-slate-500">스텝이 계정 변수(<span className="font-mono text-sky-600">{"${계정 ID}"}</span>)를 씁니다 — 어느 역할의 계정인지는 스위트가 정합니다.</div>}
+            <div className="mt-1.5 text-xs text-slate-500">로그인이 필요하면 스위트에서 앞 순서에 로그인 케이스를 두세요.</div>
           </Card>
           {/* 케이스가 행마다 반복 실행된다 — 부하용 대량 데이터셋(NQA 몫)은 고를 수 없다 */}
           <Card className="p-3">
@@ -250,12 +211,9 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
           </Card>
         </div>
         <div className="col-span-9 space-y-3">
-          {/* 케이스의 정체 — ID · 소속 스위트 · 이름 · 리비전 · 상태 */}
+          {/* 케이스의 정체 — ID · 이름 · 리비전 · 상태 */}
           <Card className="flex items-center gap-2 p-3">
             <span className="shrink-0 font-mono text-sm text-sky-600">{tc ? tc.id : ""}</span>
-            <div className="shrink-0" style={{ width: 160 }}>
-              <Select value={String(suite)} onChange={(e) => setSuite(+e.target.value)}>{fqaSuites.map((sx) => <option key={sx.id} value={String(sx.id)}>{sx.name}</option>)}</Select>
-            </div>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="TC 이름" className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-2 py-1 text-sm text-slate-800 outline-none hover:border-slate-300 focus:border-sky-500 focus:bg-slate-100" />
             {/* 관리 수준은 현재 committed 기준 — entry(진입 시점)로 표시하면 변환 후에도 옛 값이 남는다 */}
             <div className="flex shrink-0 items-center gap-2"><span className="font-mono text-xs text-slate-500">rev {curRev}</span><Badge kind={isFull ? "warn" : "active"}>{LV[committed]} 관리</Badge><Badge kind={stEK[status] || "warn"}>{status}</Badge></div>
@@ -429,17 +387,6 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
                 <textarea value={code} onChange={(e) => setCode(e.target.value)} rows={16} className={taCls} style={{ fontFamily: "monospace" }} />
               </div>
             )}
-            {/* 전제조건으로 쓰이는 케이스는 생성기가 두 형태를 낸다 — 껍데기만 다르고 본문은 같다 */}
-            {usedAsPre.length > 0 && view === "Low-Code" && (
-              <div className="border-t border-slate-200 p-3">
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-                  <Badge kind="active">전제조건으로 사용 {usedAsPre.length}건</Badge>
-                  <span className="font-mono text-slate-500">{usedAsPre.slice(0, 4).map((c) => c.id).join(", ")}{usedAsPre.length > 4 && " 외 " + (usedAsPre.length - 4) + "건"}</span>
-                </div>
-                <div className="mb-1.5 text-slate-500" style={{ fontSize: 11 }}>같은 스텝이 <span className="text-slate-500">케이스용 <span className="font-mono">test(...)</span></span> 와 <span className="text-slate-500">전제조건용 <span className="font-mono">async 함수</span></span> 두 형태로 생성됩니다. 실행 시작 시 이 함수로 세션을 만들어 위 케이스들이 재사용합니다.</div>
-                <pre className="max-h-40 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2.5 font-mono text-slate-500" style={{ fontSize: 11 }}>{preForm()}</pre>
-              </div>
-            )}
 
             {errs.length > 0 && (
               <div className="border-t border-amber-200 bg-amber-50 px-4 py-2">
@@ -482,7 +429,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
                     {!verObj || !headObj ? <div className="py-16 text-center text-xs text-slate-500">리비전을 선택하세요.</div> : verObj.rev === curRev ? (
                       <div className="py-16 text-center text-xs text-slate-500">현재 리비전입니다. 이전 리비전을 선택하면 차이가 표시됩니다.</div>
                     ) : (() => {
-                      const fd = fieldDiff(verObj, headObj, fqaSuites);
+                      const fd = fieldDiff(verObj, headObj);
                       const sd = lcsDiff(verObj.steps || [], headObj.steps || [], stepKey).filter((d) => d.t !== "same");
                       const cd = lcsDiff((verObj.code || "").split("\n"), (headObj.code || "").split("\n"), (x) => x);
                       const cdChanged = cd.some((d) => d.t !== "same");
@@ -526,7 +473,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
                               </div>
                             </div>
                           )}
-                          <Btn className="w-full" icon={History} onClick={() => { setSteps(verObj.steps || []); setCode(verObj.code || ""); setCommitted(Math.max(0, LV.indexOf(verObj.level))); setView(verObj.level || "Low-Code"); setName(verObj.name || name); setSuite(verObj.suiteId || suite); setTags(verObj.tags || ""); setDataset(verObj.dataset && verObj.dataset !== "-" ? verObj.dataset : ""); setAcctRole(verObj.acctRole || ""); setQa(null); flash("rev " + verObj.rev + " 내용으로 되돌림 — 저장하면 rev " + (curRev + 1) + "이 됩니다"); }}>이 리비전으로 되돌리기</Btn>
+                          <Btn className="w-full" icon={History} onClick={() => { setSteps(verObj.steps || []); setCode(verObj.code || ""); setCommitted(Math.max(0, LV.indexOf(verObj.level))); setView(verObj.level || "Low-Code"); setName(verObj.name || name); setTags(verObj.tags || ""); setDataset(verObj.dataset && verObj.dataset !== "-" ? verObj.dataset : ""); setQa(null); flash("rev " + verObj.rev + " 내용으로 되돌림 — 저장하면 rev " + (curRev + 1) + "이 됩니다"); }}>이 리비전으로 되돌리기</Btn>
                         </div>
                       );
                     })()}

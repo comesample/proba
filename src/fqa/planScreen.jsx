@@ -4,8 +4,9 @@ import { AlertTriangle, CheckCircle2, ClipboardList, Plus, RefreshCw, Server, X 
 import { Badge, Btn, Card, Field, Input, PageToolbar, Portal, SEL_CARD, SEL_IDLE, Select, Toast, useToast } from "../common/ui.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
 import { useApp } from "../common/context.js";
-import { DEFAULT_SCHED, effWorkers, envCovers, fqaEvents, outerChecks, schedKey, suiteNm, surfacesOf, tagMatch } from "./logic.js";
-import { TG, TagPicker } from "./parts.jsx";
+import { DEFAULT_SCHED, effWorkers, envCovers, fqaEvents, outerChecks, schedKey, suiteNm, surfacesOf } from "./logic.js";
+import { TG } from "./parts.jsx";
+import * as SL from "./suiteLogic.js";
 export function FqaPlanScreen() {
   const { fqaSuites, fqaSystems, fqaCases, fqaRuns, addFqaRun, updateFqaRun, fqaPlans, addFqaPlan, updateFqaPlan, removeFqaPlan, jiraConfig, datasets, setNavGuard, goTo } = useApp();
   const [msg, flash] = useToast();
@@ -16,7 +17,7 @@ export function FqaPlanScreen() {
   const labelOf = (ref) => { const o = targetOpts.find((t) => keyOf(t) === keyOf(ref)); return o ? o.label : "미지정"; };
   const defRef = targetOpts[0] ? { systemId: targetOpts[0].systemId, env: targetOpts[0].env } : { systemId: 0, env: "" };
   const [addOpen, setAddOpen] = useState(false);
-  const [nf, setNf] = useState({ name: "", targetRef: defRef, suites: [], tags: "" });
+  const [nf, setNf] = useState({ name: "", targetRef: defRef, suites: [] });
   const [selId, setSelId] = useState(fqaPlans[0] ? fqaPlans[0].id : null);
   /* 🔴 계획이 0건일 때 가짜 계획(id:0)으로 폼을 렌더하면 안 된다 —
      저장을 눌러도 updateFqaPlan(0, …)이 매칭되지 않아 조용히 무동작이고, 화면은 "저장됨"이라고 말한다.
@@ -26,7 +27,6 @@ export function FqaPlanScreen() {
   const [targetRef, setTargetRef] = useState((sel || {}).targetRef || defRef);
   const [suites, setSuites] = useState((sel || {}).suiteIds || []);
   const toggleSuite = (n) => setSuites((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n]));
-  const [tags, setTags] = useState((sel || {}).tags || "");
   const [brow, setBrow] = useState((sel || {}).brow || ["Chromium"]);
   const [res, setRes] = useState((sel || {}).res || "1920×1080");
   const [workers, setWorkers] = useState((sel || {}).workers || "4");
@@ -42,8 +42,11 @@ export function FqaPlanScreen() {
   const enableJira = (on) => setJira(on ? { override: true, project: jira.project || jgc.project || "", issueType: jira.issueType || jgc.issueType || "Bug", assignee: jira.assignee != null ? jira.assignee : (jgc.assignee || ""), labels: jira.labels != null ? jira.labels : (jgc.labels || ""), titleTpl: jira.titleTpl || jgc.titleTpl || "" } : { override: false });
   const setJf = (patch) => setJira((j) => ({ ...j, ...patch }));
   const toggleB = (b) => setBrow(brow.includes(b) ? brow.filter((x) => x !== b) : [...brow, b]);
-  // 실행 대상 = 스위트 ∩ 태그 ∩ 승인 (실행 화면의 buildTcs와 같은 규칙)
-  const planCases = fqaCases.filter((c) => suites.includes(c.suiteId) && !c.quarantined && tagMatch(c, tags) && c.status === "승인");
+  /* 실행 대상 = 고른 스위트를 통째로 (태그 필터 없음 — 중간 케이스가 빠지면 흐름이 끊긴다)
+     승인 전 · 삭제된 케이스가 든 스위트는 실행 불가 — 아래에 이유를 보여준다 (suiteLogic) */
+  const draftPlan = { suiteIds: suites };
+  const planCases = SL.casesOfPlanSuites(draftPlan, fqaCases, fqaSuites).filter((c) => !c.quarantined);
+  const blockedNotes = SL.planSuiteNotes(draftPlan, fqaSuites, fqaCases).filter((n) => n.block);
   const planTargets = planCases.length;
   // 실행 옵션·접점은 이 계획이 실제로 테스트하는 케이스에서 파생 — 환경이 제공하는 접점이 아니라
   const planSurf = planCases.map((c) => surfacesOf(c));
@@ -54,22 +57,22 @@ export function FqaPlanScreen() {
   /* 실행 요청 시점과 같은 검사를 여기서도 돌린다 — 다만 여기서는 경고일 뿐 막지 않는다.
      목적이 다르다. 여기는 피드백 속도, 실행 요청은 차단. 계획을 다 짜고 나서야 틀린 걸 알면 늦다.
      접점(planLevel)은 아래에 전용 카드가 있으므로 제외한다. */
-  const planWarn = outerChecks(planCases, envOf(targetRef), datasets, fqaCases).filter((g) => !g.planLevel);
+  const planWarn = outerChecks(planCases, envOf(targetRef), datasets, SL.planSuites(draftPlan, fqaSuites)).filter((g) => !g.planLevel);
   /* 워커 슬롯이 곧 계정이다(F4) — 계정보다 워커가 많으면 같은 계정으로 동시 로그인해 세션이 밀린다.
      🔴 실행 '간' 충돌은 여기서 표현하지 못한다 — parallelIndex는 실행 내부 슬롯이라 실행 두 개가
      동시에 돌면 둘 다 슬롯 0을 집는다. 목업은 단일 러너 FIFO라 실행이 하나씩이므로 재현되지 않는다.
      실 구현에서는 '실행 중인 회차 중 같은 대상·환경 + 역할 겹침'을 경고해야 한다(차단 아님). */
-  const wLimit = effWorkers(planCases, envOf(targetRef), workers);
+  const wLimit = effWorkers(SL.planRoles(draftPlan, fqaSuites, fqaCases), envOf(targetRef), workers);
   // 운영주의 — 대상이 운영(prod) 환경인데 실데이터를 건드리는 케이스가 섞였을 때 경고(막지 않음)
   const isProdTarget = !!(envOf(targetRef) || {}).prod;
   const cautionCases = isProdTarget ? planCases.filter((c) => c.prodCaution) : [];
-  const pick = (p) => { setSelId(p.id); setName(p.name); setTargetRef(p.targetRef || defRef); setSuites(p.suiteIds || []); setTags(p.tags); setBrow(p.brow || ["Chromium"]); setRes(p.res || "1920×1080"); setWorkers(p.workers || "4"); setRetry(p.retry != null ? p.retry : 1); setOnfail(p.onfail || "계속 진행"); setVideo(p.video || "녹화 안 함"); setApiTimeout(p.timeout != null ? p.timeout : 30); setGate(p.gate != null ? p.gate : 95); setPlanStatus(p.status || "초안"); setSched(p.schedule || DEFAULT_SCHED); setJira(p.jira || { override: false }); };
-  const saveCfg = () => { const nm = name.trim() || sel.name; updateFqaPlan(sel.id, { name: nm, targetRef, suiteIds: suites, tags, brow, res, workers, retry, onfail, video, timeout: apiTimeout, gate, status: planStatus, jira, schedule: sched, sched: (sched && sched.summary) || "예약 없음" }); flash(nm + " 설정 저장됨"); };
-  const dirty = !sel ? false : JSON.stringify({ name, targetRef, suites, tags, brow, res, workers, retry, onfail, video, timeout: apiTimeout, gate, status: planStatus, jira }) !== JSON.stringify({ name: sel.name, targetRef: sel.targetRef || defRef, suites: sel.suiteIds || [], tags: sel.tags, brow: sel.brow || ["Chromium"], res: sel.res || "1920×1080", workers: sel.workers || "4", retry: sel.retry != null ? sel.retry : 1, onfail: sel.onfail || "계속 진행", video: sel.video || "녹화 안 함", timeout: sel.timeout != null ? sel.timeout : 30, gate: sel.gate != null ? sel.gate : 95, status: sel.status || "초안", jira: sel.jira || { override: false } }) || schedKey(sched) !== schedKey((sel || {}).schedule || DEFAULT_SCHED);
+  const pick = (p) => { setSelId(p.id); setName(p.name); setTargetRef(p.targetRef || defRef); setSuites(p.suiteIds || []); setBrow(p.brow || ["Chromium"]); setRes(p.res || "1920×1080"); setWorkers(p.workers || "4"); setRetry(p.retry != null ? p.retry : 1); setOnfail(p.onfail || "계속 진행"); setVideo(p.video || "녹화 안 함"); setApiTimeout(p.timeout != null ? p.timeout : 30); setGate(p.gate != null ? p.gate : 95); setPlanStatus(p.status || "초안"); setSched(p.schedule || DEFAULT_SCHED); setJira(p.jira || { override: false }); };
+  const saveCfg = () => { const nm = name.trim() || sel.name; updateFqaPlan(sel.id, { name: nm, targetRef, suiteIds: suites, brow, res, workers, retry, onfail, video, timeout: apiTimeout, gate, status: planStatus, jira, schedule: sched, sched: (sched && sched.summary) || "예약 없음" }); flash(nm + " 설정 저장됨"); };
+  const dirty = !sel ? false : JSON.stringify({ name, targetRef, suites, brow, res, workers, retry, onfail, video, timeout: apiTimeout, gate, status: planStatus, jira }) !== JSON.stringify({ name: sel.name, targetRef: sel.targetRef || defRef, suites: sel.suiteIds || [], brow: sel.brow || ["Chromium"], res: sel.res || "1920×1080", workers: sel.workers || "4", retry: sel.retry != null ? sel.retry : 1, onfail: sel.onfail || "계속 진행", video: sel.video || "녹화 안 함", timeout: sel.timeout != null ? sel.timeout : 30, gate: sel.gate != null ? sel.gate : 95, status: sel.status || "초안", jira: sel.jira || { override: false } }) || schedKey(sched) !== schedKey((sel || {}).schedule || DEFAULT_SCHED);
   /* 사이드바 이동은 화면 안의 dirty를 모른다 — 전역 가드에 등록하고 떠날 때 해제한다 */
   useEffect(() => { setNavGuard(dirty ? "저장하지 않은 변경이 있습니다. 이동하면 사라집니다.\n\n이동할까요?" : null); return () => setNavGuard(null); }, [dirty]);
   const choosePlan = (p) => { if (p.id === sel.id) return; if (dirty && !window.confirm("저장하지 않은 변경이 있습니다. 이동하시겠습니까?")) return; pick(p); };
-  const createPlan = () => { const nm = nf.name.trim(); if (!nm) { flash("계획 이름을 입력하세요"); return; } if (!nf.suites.length) { flash("스위트를 1개 이상 선택하세요"); return; } const id = Math.max(0, ...fqaPlans.map((x) => x.id)) + 1; const np = { id, name: nm, targetRef: nf.targetRef, suiteIds: nf.suites, tags: nf.tags, sched: "예약 없음", status: "초안", brow: ["Chromium"], res: "1920×1080", workers: "4", retry: 1, onfail: "계속 진행", video: "녹화 안 함", timeout: 30, gate: 95 }; addFqaPlan(np); pick(np); setAddOpen(false); setNf({ name: "", targetRef: defRef, suites: [], tags: "" }); flash(nm + " 계획 생성 (초안)"); };
+  const createPlan = () => { const nm = nf.name.trim(); if (!nm) { flash("계획 이름을 입력하세요"); return; } if (!nf.suites.length) { flash("스위트를 1개 이상 선택하세요"); return; } const id = Math.max(0, ...fqaPlans.map((x) => x.id)) + 1; const np = { id, name: nm, targetRef: nf.targetRef, suiteIds: nf.suites, sched: "예약 없음", status: "초안", brow: ["Chromium"], res: "1920×1080", workers: "4", retry: 1, onfail: "계속 진행", video: "녹화 안 함", timeout: 30, gate: 95 }; addFqaPlan(np); pick(np); setAddOpen(false); setNf({ name: "", targetRef: defRef, suites: [] }); flash(nm + " 계획 생성 (초안)"); };
   const delPlan = (pl) => { if (!window.confirm(pl.name + " 계획을 삭제할까요?")) return; removeFqaPlan(pl.id); if (selId === pl.id) { const rest = fqaPlans.filter((x) => x.id !== pl.id); setSelId(rest[0] ? rest[0].id : null); } flash(pl.name + " 삭제됨"); };
   /* 빈 상태 — 계획은 대상·승인 케이스가 있어야 의미가 있다. 선행 조건까지 확인해 어디부터 해야 하는지 알린다. */
   if (!sel) {
@@ -136,20 +139,18 @@ export function FqaPlanScreen() {
                   {targetOpts.map((t) => <option key={keyOf(t)} value={keyOf(t)}>{t.label}</option>)}
                 </Select>
               </Field>
-              <Field label="대상 스위트 (다중 선택)" hint="선택한 스위트의 승인 케이스가 실행 대상">
+              <Field label="대상 스위트 (다중 선택)" hint="스위트마다 위에서부터 순서대로 실행합니다">
                 <div className="grid grid-cols-2 gap-2">
                   {fqaSuites.map((x) => (
-                    <button key={x.id} onClick={() => toggleSuite(x.id)} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (suites.includes(x.id) ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name}</button>
+                    <button key={x.id} onClick={() => toggleSuite(x.id)} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (suites.includes(x.id) ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name} <span className="text-slate-500">· {(x.items || []).length}건</span></button>
                   ))}
                 </div>
               </Field>
               {suites.length === 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">⚠ 스위트를 1개 이상 선택하세요.</div>}
-              <Field label="태그 필터" hint="비우면 스위트 전체 · 하나라도 일치하면 대상">
-                <TagPicker value={tags} onChange={setTags} />
-              </Field>
-              {/* 스위트 ∩ 태그 ∩ 승인 — 실제로 몇 건이 돌지 여기서 확인된다 */}
+              {blockedNotes.map((n) => <div key={n.s.id} className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700">{n.s.name} 실행 불가 — {n.block}</div>)}
+              {/* 실제로 몇 건이 돌지 여기서 확인된다 */}
               <div className={"rounded-lg border px-2.5 py-1.5 text-xs " + (planTargets === 0 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-500")}>
-                {planTargets === 0 ? "⚠ 조건에 맞는 승인 케이스가 없습니다 — 실행해도 0건입니다." : <>대상 케이스 <span className="font-semibold text-sky-600">{planTargets}건</span> <span className="text-slate-500">(승인 · 격리 제외)</span></>}
+                {planTargets === 0 ? "⚠ 실행할 수 있는 케이스가 없습니다 — 실행해도 0건입니다." : <>대상 케이스 <span className="font-semibold text-sky-600">{planTargets}건</span> <span className="text-slate-500">(승인 · 격리 제외)</span></>}
               </div>
               {/* 케이스의 접점 ↔ 환경의 접점 — 여기가 어긋나면 실행은 반드시 실패한다 */}
               {uncovered.length > 0 && (
@@ -252,9 +253,6 @@ export function FqaPlanScreen() {
                     <button key={x.id} onClick={() => setNf({ ...nf, suites: nf.suites.includes(x.id) ? nf.suites.filter((s) => s !== x.id) : [...nf.suites, x.id] })} className={"rounded-lg border px-2 py-1.5 text-left text-xs " + (nf.suites.includes(x.id) ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-slate-100 text-slate-700 hover:bg-slate-200")}>{x.name}</button>
                   ))}
                 </div>
-              </Field>
-              <Field label="태그 필터" hint="비우면 스위트 전체">
-                <TagPicker value={nf.tags} onChange={(v) => setNf({ ...nf, tags: v })} />
               </Field>
               <div className="text-xs text-slate-500">생성 시 <span className="text-slate-700">초안</span> 상태로 추가됩니다 — 실행 옵션·스케줄은 상세 설정에서 이어서 정의합니다.</div>
             </div>

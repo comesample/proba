@@ -5,7 +5,8 @@ import { ShareBox } from "../common/ReportShare.jsx";
 import { Badge, Btn, Card, Field, PageToolbar, Portal, SEL_CARD, SEL_ROW, Select, Toast, backTo, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import { C } from "../common/theme.js";
-import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, causeOf, healKey, healNote, healOf, healUsable, histOf, suiteNm, surfacesOf } from "./logic.js";
+import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, causeOf, healKey, healNote, healOf, healUsable, histOf, surfacesOf } from "./logic.js";
+import * as SL from "./suiteLogic.js";
 /* ═══════════ 7. 결과 상세 ═══════════ */
 export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }) {
   const { fqaRuns, defects, addDefect, openModal, fqaPlans, fqaCases, fqaSuites, updateFqaCase, commitFqaCase, setFqaEditTc, jiraConfig, setPendingSelect, goto, healState, setHeal } = useApp();
@@ -170,7 +171,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
           "이 케이스는 불안정하다"고 단정하면 안 된다(화면에 적어 둔 기준과도 어긋난다). */
     const flaky = !persistent && h.length >= 3 && (warns > 0 || (fails > 0 && passes > 0));
     const streak = persistent ? ("최근 " + trail + "회 연속 실패 · " + rate + "% 실패") : (warns > 0 ? ("재시도 통과(flaky) " + warns + "회" + (flips >= 1 ? " · PASS/FAIL 교차 " + flips + "회" : "")) : ("PASS/FAIL 교차 " + flips + "회 · " + rate + "% 실패"));
-    return { heal: healOf(fqaRuns, fqaCases, c.id), cause: causeOf(fqaRuns, c.id), id: c.id, name: c.name, suite: suiteNm(fqaSuites, c.suiteId), runs: h.length, fails, rate, flips, warns, unstable: fails + warns, urate: Math.round(((fails + warns) / h.length) * 100), flaky, persistent, quarantined: !!c.quarantined, streak };
+    return { heal: healOf(fqaRuns, fqaCases, c.id), cause: causeOf(fqaRuns, c.id), id: c.id, name: c.name, suite: SL.suiteNamesOf(fqaSuites, c.id).join(" · ") || "—", runs: h.length, fails, rate, flips, warns, unstable: fails + warns, urate: Math.round(((fails + warns) / h.length) * 100), flaky, persistent, quarantined: !!c.quarantined, streak };
   }).filter((r) => r.flaky || r.persistent);
   const flakyN = FLAKY.filter((r) => r.flaky).length;
   const persistN = FLAKY.filter((r) => r.persistent).length;

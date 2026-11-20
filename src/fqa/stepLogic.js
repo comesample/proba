@@ -1,6 +1,5 @@
 // 원래 fqa/screens.jsx 의 일부를 옮긴 파일 — 내용 · 동작 변경 없음
 import { surfaceOf } from "./data.js";
-import { suiteNm } from "./logic.js";
 
 
 /* ═══════════ 4. 테스트 에디터 ═══════════ */
@@ -139,8 +138,9 @@ function lcsDiff(a, b, key) {
 }
 const stepKey = (s) => [s.act, s.loc, s.val, s.code, s.body, s.headers, s.save].map((x) => x || "").join("│");
 const stepText = (s) => (s.act === "코드 스텝" ? "코드 스텝 · " + (s.code || "").split("\n")[0] : s.act + "  " + (s.loc || "") + (s.val && s.val !== "-" ? "  " + s.val : ""));
-const VER_FIELDS = [["name", "이름"], ["suiteId", "스위트"], ["tags", "태그"], ["dataset", "데이터셋"], ["preCase", "전제조건 케이스"], ["acctRole", "실행 계정 역할"], ["level", "관리 수준"]];
-const fieldDiff = (v, cur, suites) => { const show = (o, k) => (k === "suiteId" ? (o.suiteId ? suiteNm(suites, o.suiteId) : (o.suite || "—")) : String(o[k] || "—")); return VER_FIELDS.map(([k, label]) => ({ k, label, from: show(v, k), to: show(cur, k) })).filter((d) => d.from !== d.to); };
+/* 케이스 속성만 비교한다 — 소속 스위트 · 계정 역할은 스위트가 갖는다(케이스는 스위트를 모른다) */
+const VER_FIELDS = [["name", "이름"], ["tags", "태그"], ["dataset", "데이터셋"], ["level", "관리 수준"]];
+const fieldDiff = (v, cur) => VER_FIELDS.map(([k, label]) => ({ k, label, from: String(v[k] || "—"), to: String(cur[k] || "—") })).filter((d) => d.from !== d.to);
 const DIFF_CLS = { add: "bg-emerald-50 text-emerald-700", del: "bg-red-50 text-red-700", same: "text-slate-500" };
 const DIFF_MARK = { add: "+", del: "−", same: " " };
 

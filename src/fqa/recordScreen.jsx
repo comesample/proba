@@ -54,7 +54,6 @@ export function FqaRecordScreen({ onDone, onEdit }) {
      케이스에는 저장하지 않는다(실행 해상도는 실행 계획이 정함). */
   const [vp, setVp] = useState(REC_VIEWPORTS[0]);
   // 스위트·TC명은 캡처 결과를 보고 등록 시점에 정한다
-  const [suite, setSuite] = useState((fqaSuites[0] || {}).id || 0);
   const [name, setName] = useState("");
   const [phase, setPhase] = useState("setup"); // setup | waiting | recording | done
   const [sid, setSid] = useState("");
@@ -92,7 +91,7 @@ export function FqaRecordScreen({ onDone, onEdit }) {
   /* 캡처 결과는 곧바로 저장하지 않는다 — 에디터로 넘겨 스텝 다듬기·검증·태그를 거친 뒤 저장한다.
      여기서는 케이스를 만들지 않는다(에디터가 첫 저장 때 생성). origin으로 '레코딩 생성'을 남긴다. */
   const openInEditor = () => {
-    const c = { id: nextTcId(fqaCases), origin: "레코딩", name: name || "레코딩 TC", suiteId: suite, tags: "", status: "초안", level: "Low-Code", dataset: "-", steps };
+    const c = { id: nextTcId(fqaCases), origin: "레코딩", name: name || "레코딩 TC", tags: "", status: "초안", level: "Low-Code", dataset: "-", steps };
     onEdit ? onEdit(c) : onDone && onDone("레코딩 완료");
   };
   return (
@@ -194,10 +193,9 @@ export function FqaRecordScreen({ onDone, onEdit }) {
                 ))}
               </div>
             )}
-            {/* 스위트·TC명은 녹화 결과를 보고 정한다. 이후 스텝 다듬기·태그·검증은 에디터에서. */}
+            {/* TC명은 녹화 결과를 보고 정한다. 이후 스텝 다듬기·태그·검증은 에디터에서. 스위트에 넣는 것은 스위트 · 목록 화면에서 */}
             {steps.length > 0 && (
               <div className="flex items-end gap-3 border-t border-slate-200 px-4 py-3">
-                <div className="w-44 shrink-0"><Field label="스위트"><Select value={String(suite)} onChange={(e) => setSuite(+e.target.value)}>{fqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field></div>
                 <div className="min-w-0 flex-1"><Field label="TC 이름"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 로그인 정상 동작" /></Field></div>
                 <Btn icon={Video} onClick={startSession}>다시 녹화</Btn>
                 <Btn kind="primary" icon={Code2} onClick={openInEditor}>에디터에서 다듬기</Btn>

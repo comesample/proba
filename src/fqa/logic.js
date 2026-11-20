@@ -23,7 +23,7 @@ const schedKey = (s) => { s = s || {}; return JSON.stringify([s.mode, s.freq, s.
 const FQA_MEMBERS = ["QA Lead", "김QA", "이QA", "박QA", "미지정"];
 
 /* ───────── 태그 ─────────
-   스위트(업무 흐름)와 직교하는 축 — "이 케이스를 어떤 실행에 포함시킬 것인가".
+   케이스 분류 · 검색용 — 실행 대상은 스위트가 정한다(계획에 태그 필터 없음: 중간 케이스가 빠지면 흐름이 끊긴다).
    고정 3종. 자유 입력을 열면 기능 영역 태그(@login·@payment)가 들어와 스위트와 이중 관리가 된다.
      · 기능 영역 → 스위트
      · 접점(web/api) → surfacesOf()가 파생
@@ -98,32 +98,28 @@ const envCovers = (env, surf) => {
 /* 🔑 '케이스 밖' 조건 검사 — 계획 화면(경고)과 실행 요청(차단)이 같은 함수를 쓴다.
    두 곳에 따로 구현하면 반드시 어긋나고, 어긋난 쪽이 조용히 통과시킨다.
    케이스 안(스텝·변수)은 저장 시점에 이미 막혔으므로 여기서 보지 않는다. */
-const outerChecks = (cs, env, datasets, allCases) => {
+const outerChecks = (cs, env, datasets, suites) => {
   const roles = ((env || {}).accts || []).map((a) => a.role);
   const dsNames = (datasets || []).map((d) => d.name);
-  const byId = (id) => (allCases || []).find((x) => x.id === id);
   const g = [];
   const add = (why, fixLabel, fixView, list, planLevel) => { if (list.length) g.push({ why, fixLabel, fixView, cases: list, planLevel: !!planLevel }); };
   // 접점 ↔ 환경 — 감당 못 하면 그 접점 케이스는 전건 실패한다. 계획 수준 실패이므로 격리로 풀 일이 아니다.
   add("환경이 케이스의 접점을 감당하지 못합니다 — " + (!(env || {}).apiUrl ? "apiUrl 없음" : "webUrl 없음"), "환경 설정", "fqa-targets",
     cs.filter((c) => !envCovers(env, surfacesOf(c))), true);
-  // 계정 역할 — 풀에 역할이 없으면 주입할 값이 없다
-  add("환경 계정 풀에 해당 역할이 없습니다", "환경 설정", "fqa-targets",
-    cs.filter((c) => c.acctRole && !roles.includes(c.acctRole)));
+  // 계정 역할 — 스위트가 정한다. 풀에 역할이 없으면 주입할 값이 없어 그 스위트의 로그인이 실패한다
+  const noRole = (suites || []).filter((s) => s.acctRole && !roles.includes(s.acctRole));
+  add("환경 계정 풀에 스위트의 계정 역할이 없습니다 — " + noRole.map((s) => s.name + "(" + s.acctRole + ")").join(", "), "환경 설정", "fqa-targets",
+    cs.filter((c) => noRole.some((s) => (s.items || []).includes(c.id))));
   // 데이터셋 — 사라졌으면 행이 0개가 되어 테스트가 0개 생성된다(실패도 통과도 아닌 무동작)
   add("참조하는 데이터셋이 없습니다", "데이터셋", "datasets",
     cs.filter((c) => c.dataset && c.dataset !== "-" && !dsNames.includes(c.dataset)));
-  /* 전제조건 케이스 — 사라졌거나 승인이 풀렸으면 로그인 없이 돌아 전건 실패한다.
-     전제조건 케이스를 고치면 승인이 풀리므로(저장 시 검토중) 여기서 걸린다. 그게 의도다. */
-  add("전제조건 케이스가 없거나 승인되지 않았습니다", "테스트케이스", "fqa-cases",
-    cs.filter((c) => c.preCase && (byId(c.preCase) || {}).status !== "승인"));
+  /* 승인 전 · 삭제된 케이스가 든 스위트는 통째로 실행 불가다 — 계획 화면이 스위트별로 이유를 보여준다(suiteLogic.suiteBlock) */
   return g;
 };
 
 /* 실효 워커 — 워커 슬롯이 곧 계정이므로(F4) 워커 수가 역할별 계정 수를 넘을 수 없다.
    넘으면 같은 계정으로 동시 로그인해 세션이 서로를 밀어낸다. 조용히 내리지 않고 원인을 알린다. */
-const effWorkers = (cs, env, setWorkers) => {
-  const used = [...new Set(cs.map((c) => c.acctRole).filter(Boolean))];
+const effWorkers = (used, env, setWorkers) => {   // used = 계획이 쓰는 계정 역할 (스위트에서)
   const accts = ((env || {}).accts || []);
   if (!used.length) return null;
   const cnt = (r) => accts.filter((a) => a.role === r).length;

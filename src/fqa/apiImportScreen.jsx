@@ -8,10 +8,10 @@ import { nextTcId } from "./logic.js";
 import { Hdr, TagPicker } from "./parts.jsx";
 
 export function FqaApiImportScreen({ onDone }) {
-  const { addFqaCase, fqaSuites, fqaCases } = useApp();
+  const { addFqaCase, fqaSuites, updateFqaSuite, fqaCases } = useApp();
   const [msg, flash] = useToast();
   const apiSuites = fqaSuites || [];
-  const [suite, setSuite] = useState((apiSuites[0] && apiSuites[0].id) || 0);
+  const [suite, setSuite] = useState(0);   // 0 = 스위트에 넣지 않음. 고르면 그 스위트 끝에 순서대로 붙인다
   /* 임포트 단위로 공통인 태그(대개 regression)를 여기서 한 번에 건다.
      엔드포인트마다 갈리는 태그(smoke·critical)는 목록의 일괄 태그 지정에서 조정한다 —
      이 화면이 케이스 에디터를 흉내내기 시작하면 끝이 없다. */
@@ -56,7 +56,7 @@ export function FqaApiImportScreen({ onDone }) {
   const runCurl = () => { if (!curlText.trim()) { setErr("cURL을 붙여넣으세요 (또는 아래 '샘플로 시연')"); return; } const r = parseCurl(curlText); if (!r.length) { setErr("cURL을 인식하지 못했습니다 — 'curl '로 시작해야 합니다."); setRows([]); setPhase("done"); return; } setResult(r); };
   const toggle = (k) => setPicked((pv) => { const n = new Set(pv); n.has(k) ? n.delete(k) : n.add(k); return n; });
   // 다건 임포트 → 목록에 '초안'으로 쌓는다. 각 케이스는 목록에서 에디터로 열어 보강한다.
-  const commit = () => { if (!picked.size) { flash("요청을 선택하세요"); return; } const sel = rows.filter((r) => picked.has(r._k)); sel.forEach((ep, i) => addFqaCase({ id: nextTcId(fqaCases, i), origin: "API 임포트", name: ep.name, suiteId: suite, tags, status: "초안", level: "Low-Code", dataset: "-", steps: apiSteps(ep) })); if (onDone) onDone(sel.length + "건 API 케이스 초안 등록 · 목록에서 에디터로 보강하세요"); };
+  const commit = () => { if (!picked.size) { flash("요청을 선택하세요"); return; } const sel = rows.filter((r) => picked.has(r._k)); const ids = sel.map((ep, i) => nextTcId(fqaCases, i)); sel.forEach((ep, i) => addFqaCase({ id: ids[i], origin: "API 임포트", name: ep.name, tags, status: "초안", level: "Low-Code", dataset: "-", steps: apiSteps(ep) })); const su = apiSuites.find((x) => x.id === suite); if (su) updateFqaSuite(su.id, { items: [...(su.items || []), ...ids] }); if (onDone) onDone(sel.length + "건 API 케이스 초안 등록" + (su ? " · " + su.name + " 끝에 추가 (승인 전이라 그 스위트는 승인할 때까지 실행되지 않습니다)" : "") + " · 목록에서 에디터로 보강하세요"); };
   return (
     <>
       <Hdr icon={FileText} title="API 임포트" badge="API" desc="OpenAPI · cURL · HAR → 요청·검증 케이스 골격" />
@@ -89,7 +89,7 @@ export function FqaApiImportScreen({ onDone }) {
             )}
             {/* 모든 탭 공통 보조 링크 — 입력 없이 동작을 확인. 실 개발 시 이 줄만 제거. */}
             <div className="text-center"><button type="button" onClick={loadSample} className="text-xs text-slate-500 underline decoration-dotted hover:text-sky-600">샘플 {src.replace("OpenAPI ", "")}로 시연</button></div>
-            <Field label="등록 스위트"><Select value={String(suite)} onChange={(e) => setSuite(+e.target.value)}>{apiSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field>
+            <Field label="스위트에 추가 (선택)"><Select value={String(suite)} onChange={(e) => setSuite(+e.target.value)}><option value="0">추가 안 함</option>{apiSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></Field>
             <Field label="태그" hint="선택한 요청 전부에 동일하게 붙습니다. 케이스별 조정은 목록에서 합니다."><TagPicker value={tags} onChange={setTags} /></Field>
             {err && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{err}</div>}
             <div className="text-xs text-slate-500">요청+상태 검증 골격을 만듭니다. 본문·검증은 에디터에서 보강합니다.{(src === "cURL" || src === "HAR") && <span className="text-amber-700"> 인증·비밀번호는 <span className="font-mono">${"{…}"}</span>로 마스킹됩니다.</span>}</div>
