@@ -34,3 +34,47 @@ export const casesOfPlanSuites = (p, cases, suites) => {
 export const planSuiteNotes = (p, suites, cases) => planSuites(p, suites).map((s) => ({ s, block: suiteBlock(s, cases) }));
 /* 계획이 쓰는 계정 역할 — 실행 가능한 스위트의 역할만 */
 export const planRoles = (p, suites, cases) => [...new Set(planSuites(p, suites).filter((s) => s.acctRole && !suiteBlock(s, cases)).map((s) => s.acctRole))];
+
+/* ── 실행 단위 — 스위트 순서대로 (스위트, 케이스). 같은 케이스가 두 스위트에 있으면 두 번 돈다
+   🔴 실행 못 하는 것도 '건너뜀 + 이유' 로 남긴다 (F9 — 사라진 것을 통과로 세지 않는다)
+     · 스위트 실행 불가(승인 전 · 삭제됨) → 그 스위트의 케이스 전부 건너뜀
+     · 격리된 케이스 → 그 케이스와 뒤가 건너뜀 (앞 단계 격리)
+   '앞 단계 실패' 건너뜀은 실행 중에 정해진다 (runLogic.buildTcs) */
+export const runItems = (p, cases, suites, onlySuites) => {
+  const out = [];
+  planSuites(p, suites).forEach((s) => {
+    if (onlySuites && !onlySuites.includes(s.id)) return;   // 다시 실행 — 실패한 스위트만 처음부터
+    const base = { suiteId: s.id, suiteName: s.name, acctRole: s.acctRole || "" };
+    const block = suiteBlock(s, cases);
+    const m = byId(cases);
+    let broken = "";
+    (s.items || []).forEach((id) => {
+      const c = m[id] || { id, name: "(삭제된 케이스)" };
+      if (block) { out.push({ ...base, c, skip: "실행 불가 — " + block }); return; }
+      if (!broken && c.quarantined) { out.push({ ...base, c, skip: "격리됨" }); broken = "앞 단계 격리 (" + c.id + ")"; return; }
+      out.push({ ...base, c, ...(broken ? { skip: broken } : {}) });
+    });
+  });
+  return out;
+};
+
+/* ── 결과 합치기 — 한 회차에서 같은 케이스가 여러 번 돌면 하나로 본다 (통과율 · 회귀 · 불안정 · 대시보드 · 알림 공통)
+   실패 > 경고(재시도 통과) > 보정 > 통과 > 건너뜀. 대표 행(원인 · 보정 · 행 결과 · rev)은 그 판정이 나온 첫 행이다 */
+const RANK = { FAIL: 0, WARN: 1, HEAL: 2, PASS: 3, SKIP: 4 };
+export const mergedTcs = (run) => {
+  const by = {}, order = [];
+  ((run && run.tcs) || []).forEach((t) => {
+    const cur = by[t.id];
+    if (!cur) { by[t.id] = t; order.push(t.id); return; }
+    if ((RANK[t.v] != null ? RANK[t.v] : 3) < (RANK[cur.v] != null ? RANK[cur.v] : 3)) by[t.id] = t;
+  });
+  return order.map((id) => by[id]);
+};
+export const mergedTc = (run, id) => mergedTcs(run).find((t) => t.id === id) || null;
+/* 회차 집계 — 건너뜀은 분모에서 빼고 건수만 따로 센다 */
+export const tally = (tcs) => {
+  const m = mergedTcs({ tcs });
+  const n = (v) => m.filter((t) => t.v === v).length;
+  const skip = n("SKIP");
+  return { total: m.length - skip, pass: n("PASS") + n("HEAL"), fail: n("FAIL"), warn: n("WARN"), skip };
+};

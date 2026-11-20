@@ -260,4 +260,49 @@ function stepsToCode(steps, tc) {
   return head + "\ntest('" + id + " " + name + "', async ({ page }) => {\n" + pre + body + "\n});";
 }
 
+/* ── Full-Code 주의 — 브라우저 세션(컨텍스트 · 페이지)은 스위트가 연다. 케이스 코드는 본문만 둔다
+   케이스 안에서 새 브라우저 · 컨텍스트 · 페이지를 열면 앞 케이스의 로그인 상태가 이어지지 않는다. 막지 않고 알린다 */
+const fullCodeWarns = (code) => {
+  const w = [];
+  if (/\b(chromium|firefox|webkit)\.launch\(|\.newContext\(|\.newPage\(/.test(String(code || ""))) w.push("브라우저 세션은 스위트가 엽니다 — 케이스 안에서 새 브라우저 · 컨텍스트 · 페이지를 열면 앞뒤 케이스와 이어지지 않습니다");
+  return w;
+};
+
+/* ── 스위트 내보내기 — <스위트>.spec.ts 한 파일이면 PROBA 밖에서도 npx playwright test 로 돈다
+   · test.describe.serial: 위에서부터 순서대로 돌고, 하나가 실패하면 뒤는 건너뛴다 (PROBA 실행과 같은 규칙)
+   · 페이지 하나를 beforeAll 에서 열어 케이스가 함께 쓴다 — 로그인 상태가 다음 케이스로 이어진다
+   · 케이스는 본문만 옮긴다(테스트 이름 · 본문 · 데이터셋 반복). 케이스마다 블록 { } 으로 감싸 이름이 겹치지 않게 한다
+   · 계정 · 공통 변수는 실행할 때 PROBA_VARS 로 넘긴다 — 파일에 쓰지 않는다. 대상 주소는 playwright.config 의 baseURL */
+const exportSuiteSpec = (suite, cases) => {
+  const m = {}; (cases || []).forEach((c) => { m[c.id] = c; });
+  const list = (suite.items || []).map((id) => m[id]).filter(Boolean);
+  const warns = [];
+  const blocks = list.map((c) => {
+    const src = c.level === "Full-Code" ? String(c.code || "") : stepsToCode(c.steps || [], c);
+    if (c.level === "Full-Code") fullCodeWarns(src).forEach((x) => warns.push(c.id + " — " + x));
+    if (c.status !== "승인") warns.push(c.id + " 이(가) " + c.status + " — PROBA 에서는 이 스위트가 실행되지 않습니다");
+    const body = src.split("\n")
+      .filter((l) => !/^\s*import\s/.test(l) && !/^\s*const V = /.test(l) && !/^\s*\/\/ 실행 계획의 대상·환경에서/.test(l))
+      .join("\n").replace(/async \(\{ page \}\)/g, "async ()").replace(/process\.env\.PROBA_ROWS\b/g, "process.env.PROBA_ROWS_" + c.id.replace(/-/g, "_")).trim();
+    return "  // ── " + c.id + " · " + (c.level || "Low-Code") + (c.dataset && c.dataset !== "-" ? " · 데이터셋 " + c.dataset + " (PROBA_ROWS_" + c.id.replace(/-/g, "_") + " 로 넘긴다)" : "") + "\n  {\n" + body.split("\n").map((l) => "    " + l).join("\n") + "\n  }";
+  });
+  const text = [
+    "// " + suite.name + (suite.desc ? " — " + suite.desc : "") + " · PROBA 에서 내보냄",
+    "// 위에서부터 순서대로 실행하고, 앞이 실패하면 뒤는 건너뜁니다" + (suite.acctRole ? " · 계정 역할 " + suite.acctRole : ""),
+    "import { test, expect, type Page } from '@playwright/test';",
+    "const V = JSON.parse(process.env.PROBA_VARS || '{}');        // 계정 · 공통 변수 — 실행할 때 넘긴다",
+    "",
+    "test.describe.serial('" + String(suite.name).replace(/'/g, "\\'") + "', () => {",
+    "  let page: Page;",
+    "  test.beforeAll(async ({ browser }) => { page = await browser.newPage(); });",
+    "  test.afterAll(async () => { await page.close(); });",
+    "",
+    blocks.join("\n\n"),
+    "});",
+    "",
+  ].join("\n");
+  return { text, warns };
+};
+
+export { fullCodeWarns, exportSuiteSpec };
 export { ASSERTS, DIFF_CLS, DIFF_MARK, DS_MAX_ROWS, LOC_HINT, LOC_PH, LV, REQ_METHODS, VAL_PH, assertDef, fieldDiff, hasBody, isStatusTarget, lcsDiff, parseAssert, reqJoin, reqParts, respCond, simCode, simRun, stepErrors, stepKey, stepText, stepsToCode };

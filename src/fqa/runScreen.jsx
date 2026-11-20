@@ -4,8 +4,9 @@ import { Play } from "lucide-react";
 import { autoAlert } from "../common/ReportShare.jsx";
 import { Badge, Btn, Card, Modal, PageToolbar, RunTime, SEL_ROW, Select, Toast, nowStamp, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
-import { SURF_K, lastOf, outerChecks, suiteNm } from "./logic.js";
+import { SURF_K, outerChecks, suiteNm } from "./logic.js";
 import * as SL from "./suiteLogic.js";
+import * as RL from "./runLogic.js";
 /* ═══════════ 6. 실행 관리 ═══════════ */
 const RUN_LOG = [
   { lv: "INFO", t: "FRUN-512 시작 · Chromium 1920×1080" },
@@ -61,24 +62,12 @@ export function FqaRunScreen({ nav }) {
   const today = nowStamp().slice(0, 10);
   const dateOf = (r) => String((r.endedAt && r.endedAt !== "-") ? r.endedAt : (r.startedAt || "")).slice(0, 10);
   const KPI = [["실행 중", cnt((r) => r.status === "실행 중"), "text-amber-600"], ["대기", cnt((r) => r.status === "대기 중"), "text-slate-900"], ["예약 스케줄", scheduledToday, "text-sky-600"], ["완료", cnt((r) => r.status === "완료" && dateOf(r) === today), "text-emerald-600"], ["오류", cnt((r) => r.status === "오류" && dateOf(r) === today), "text-red-600"]];
-  const nextId = () => "FRUN-" + (fqaRuns.reduce((m, r) => Math.max(m, parseInt((r.id.split("-")[1] || "0"), 10)), 500) + 1);
   // 계획의 대상·환경은 ID 참조 → 접점(웹/API)을 조회해 실행 옵션 표시에 사용
-  const envRefOf = (plan) => { const sy = (fqaSystems || []).find((s) => s.id === ((plan.targetRef || {}).systemId)); const e = sy ? (sy.envs || []).find((x) => x.env === (plan.targetRef || {}).env) : null; return { sy, e, label: sy ? sy.name + " · " + (plan.targetRef || {}).env : "미지정" }; };
+  const envRefOf = (plan) => RL.envRefOf(plan, fqaSystems);
+  const ctx = { cases: fqaCases, suites: fqaSuites, runs: fqaRuns, systems: fqaSystems };
   const surfLabel = (plan) => { const { e } = envRefOf(plan); if (!e) return "-"; const w = !!e.webUrl, a = !!e.apiUrl; return w && a ? "웹+API" : a ? "API" : w ? "웹" : "-"; };
   const planSuiteIds = (plan) => (plan.suiteIds || []);
-  // 실행 대상: 계획이 고른 스위트를 통째로 (실행 불가 스위트는 빠진다 — 계획 화면에 이유 표시)
-  const buildTcs = (plan) => {
-    // 고른 스위트를 통째로 — 실행 불가 스위트(승인 전 케이스 포함)는 빠진다 (suiteLogic)
-    const src = planCasesOf(plan);
-    const retry = plan.retry != null ? plan.retry : 0;
-    return src.map((c) => {
-      const base = lastOf(fqaRuns, c.id) === "FAIL" ? "FAIL" : "PASS";
-      // flaky = 1차 실패 후 재시도로 통과 — 재시도(retry>0)가 있어야 성립. 통과지만 불안정 → WARN.
-      // 보정(heal)은 여기서 만들지 않는다 — 보정은 "실패한 뒤 제안"이라 판정을 바꾸지 않는다.
-      const flaky = retry > 0 && base === "PASS" && Math.random() < 0.18;
-      return { id: c.id, name: c.name, v: flaky ? "WARN" : base, flaky: flaky || undefined, dur: (Math.round((Math.random() * 3 + 0.3) * 10) / 10) + "s" };
-    });
-  };
+  // 실행 대상: 계획이 고른 스위트를 통째로 — 실행 단위 (스위트, 케이스) · 건너뜀 규칙은 runLogic.buildTcs
   /* 🔑 사전 검사 — '케이스 밖' 조건만 본다.
      케이스 안(스텝 완성도·save 변수)은 저장 시점에 이미 막혔으므로 여기서 다시 보지 않는다.
      여기가 실행을 막는 유일한 지점이다. 실 구현에서는 서버 API 계층에 둔다 —
@@ -89,14 +78,12 @@ export function FqaRunScreen({ nav }) {
   /* 🔴 문제 케이스만 빼고 돌리지 않는다 — 일부만 돈 회차가 품질 게이트를 통과하면
      검증이 사라진 것을 아무도 모른다. 빼는 결정은 사람이 '격리'로 내린다. */
   const quarantine = (list) => { list.forEach((c) => updateFqaCase(c.id, { quarantined: true })); setPcModal(null); flash(list.length + "건 격리됨 — 실행 대상에서 빠집니다. 다시 실행하세요"); };
-  const gatePlan = (plan) => { if (plan.status !== "활성") { flash(plan.name + " — 초안 계획은 실행할 수 없습니다. 계획을 활성화하세요"); return false; } if (!planSuiteIds(plan).length) { flash(plan.name + " — 스위트가 선택되지 않았습니다"); return false; } if (!buildTcs(plan).length) { flash(plan.name + " — 실행할 수 있는 케이스가 없습니다 (스위트의 승인 상태 확인)"); return false; } const pc = precheck(plan); if (pc.length) { setPcModal({ plan, groups: pc }); return false; } return true; };
-  // 실행 시점의 대상·환경·빌드 버전을 run에 스탬프 — "이 회귀가 어느 빌드에서 나왔나"를 추적하기 위함
-  const stampOf = (plan) => { const { e, label } = envRefOf(plan); return { target: label, ver: (e && e.ver && e.ver !== "-") ? e.ver : "-" }; };
+  const gatePlan = (plan) => { if (plan.status !== "활성") { flash(plan.name + " — 초안 계획은 실행할 수 없습니다. 계획을 활성화하세요"); return false; } if (!planSuiteIds(plan).length) { flash(plan.name + " — 스위트가 선택되지 않았습니다"); return false; } if (!RL.runnableCount(RL.buildTcs(plan, ctx))) { flash(plan.name + " — 실행할 수 있는 케이스가 없습니다 (스위트의 승인 상태 확인)"); return false; } const pc = precheck(plan); if (pc.length) { setPcModal({ plan, groups: pc }); return false; } return true; };
   const [runPlan, setRunPlan] = useState(runnableNames[0] || "");
   const [selRunId, setSelRunId] = useState(null);
   const selRun = fqaRuns.find((r) => r.id === selRunId && (r.status === "실행 중" || r.status === "대기 중")) || liveRun || rows[0] || null;
   // 실행 = 큐 맨끝에 '대기'로 적재만. 픽업·실행·완료는 아래 큐 프로세서가 담당(앞선 작업이 없어야 실행).
-  const runNow = (plan) => { if (!gatePlan(plan)) return; const tcs = buildTcs(plan); const total = tcs.length; const id = nextId(); const { e } = envRefOf(plan); addFqaRun({ id, planId: plan.id, plan: plan.name, name: plan.name, suite: planSuiteIds(plan).map((x) => suiteNm(fqaSuites, x)).join(" · "), ...stampOf(plan), pw: "1.50.0", brVer: "132.0.6834.83", brow: (e && e.webUrl) ? ((plan.brow && plan.brow[0]) || "Chromium") : "", trig: "수동", by: "QA Engineer", status: "대기 중", prog: 0, progt: "대기", dur: "-", at: "방금 전", gate: plan.gate != null ? plan.gate : 95, total, pass: 0, fail: 0, warn: 0, tcs }); setSelRunId(id); flash(plan.name + " 실행 요청 · " + id + " — 큐 맨끝에 적재"); };
+  const runNow = (plan) => { if (!gatePlan(plan)) return; const run = RL.makeRun(plan, ctx); addFqaRun(run); setSelRunId(run.id); flash(plan.name + " 실행 요청 · " + run.id + " — 큐 맨끝에 적재"); };
   // 큐 프로세서(단일 러너 FIFO) — 러너가 비면(실행 중 0) 대기 큐의 맨앞(가장 오래된)을 픽업해 실행→완료
   const procRef = useRef({});
   useEffect(() => {
@@ -106,21 +93,21 @@ export function FqaRunScreen({ nav }) {
     const next = waiting.reduce((a, b) => (parseInt(a.id.split("-")[1] || "0", 10) <= parseInt(b.id.split("-")[1] || "0", 10) ? a : b));
     if (procRef.current[next.id]) return;
     procRef.current[next.id] = true;
-    const total = next.total || 0;
-    const fail = (next.tcs || []).filter((t) => t.v === "FAIL").length;
-    const warn = (next.tcs || []).filter((t) => t.v === "WARN").length;   // flaky(재시도 통과)
+    /* 집계는 케이스 기준으로 합친다 — 같은 케이스(로그인 등)가 여러 스위트에서 돌아도 1건. 건너뜀은 분모에서 뺀다 (suiteLogic.tally) */
+    const tl = SL.tally(next.tcs || []);
+    const total = tl.total, fail = tl.fail, warn = tl.warn;   // warn = flaky(재시도 통과)
     updateFqaRun(next.id, { status: "실행 중", prog: 12, progt: Math.max(1, Math.round(total * 0.12)) + "/" + total, dur: "0분 03초", startedAt: nowStamp() });
     setTimeout(() => updateFqaRun(next.id, { prog: 42, progt: Math.max(1, Math.round(total * 0.42)) + "/" + total, dur: "0분 06초" }), 3000);
     setTimeout(() => updateFqaRun(next.id, { prog: 74, progt: Math.max(1, Math.round(total * 0.74)) + "/" + total, dur: "0분 10초" }), 6000);
     /* 🔑 실행이 끝났다는 사실은 화면을 보고 있지 않은 사람에게도 가야 한다.
        LQA·NQA 는 보내는데 FQA 만 안 보내고 있었다. 목적지는 그 실행의 결과 화면이다. */
     setTimeout(() => {
-      updateFqaRun(next.id, { status: "완료", prog: 100, progt: total + "/" + total, dur: "0분 " + (12 + total) + "초", endedAt: nowStamp(), pass: total - fail - warn, warn, fail });
+      updateFqaRun(next.id, { status: "완료", prog: 100, progt: total + "/" + total, dur: "0분 " + (12 + total) + "초", endedAt: nowStamp(), total, pass: total - fail - warn, warn, fail, skip: tl.skip });
       if (notify) notify({ icon: "play", text: (next.plan || next.name) + " 완료 — PASS " + (total - fail - warn) + " / FAIL " + fail, to: { domain: "FQA", view: "fqa-result-detail", run: next.id } });
       /* 자동 알림 — 공통 발송 조건. '회귀'는 회귀 비교와 같은 기준: 같은 계획의 직전 완료 실행 대비 판정 하락 */
       const RK = { FAIL: 0, WARN: 1, HEAL: 1, PASS: 2 };
-      const prev = fqaRuns.filter((r) => r.planId === next.planId && r.status === "완료" && r.id !== next.id).sort((x, y) => parseInt(y.id.split("-")[1] || "0", 10) - parseInt(x.id.split("-")[1] || "0", 10))[0];
-      const regN = prev ? (next.tcs || []).filter((t) => { const p = (prev.tcs || []).find((x) => x.id === t.id); return p && RK[t.v] != null && RK[p.v] != null && RK[t.v] < RK[p.v]; }).length : 0;
+      const prev = fqaRuns.filter((r) => r.planId === next.planId && r.status === "완료" && !r.partial && r.id !== next.id).sort((x, y) => parseInt(y.id.split("-")[1] || "0", 10) - parseInt(x.id.split("-")[1] || "0", 10))[0];
+      const regN = prev ? SL.mergedTcs(next).filter((t) => { const p = SL.mergedTc(prev, t.id); return p && RK[t.v] != null && RK[p.v] != null && RK[t.v] < RK[p.v]; }).length : 0;   // 건너뜀은 비교 불가 (RK 에 없음)
       const pr = total ? Math.round(((total - fail - warn) / total) * 1000) / 10 : null;
       autoAlert({ reportCfg, addReportHist, domain: "FQA", hasFail: fail > 0, hasReg: regN > 0,
         text: (next.plan || next.name) + " " + next.id + " 완료 — " + (regN ? "퇴행 " + regN + "건 · " : "") + "실패 " + fail + "건" + (pr != null ? " · PASS " + pr + "%" : "") });
@@ -262,7 +249,7 @@ export function FqaHistoryScreen({ nav }) {
             {hist.map((r) => (
               <tr key={r.id} onClick={() => openRun(r)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
                 <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td>
-                <td className="text-slate-800">{planLabel(r)}{planNow(r) && r.plan && planNow(r) !== r.plan && <span className="ml-1.5 text-xs text-slate-500">· 당시 “{r.plan}”</span>}</td>
+                <td className="text-slate-800">{planLabel(r)}{planNow(r) && r.plan && planNow(r) !== r.plan && <span className="ml-1.5 text-xs text-slate-500">· 당시 “{r.plan}”</span>}{r.partial && <span className="ml-1.5 text-xs text-amber-700">· 부분 ({r.note || "다시 실행"})</span>}</td>
                 <td className="font-mono text-xs text-slate-500">{r.ver && r.ver !== "-" ? r.ver : <span className="text-slate-500">-</span>}</td>
                 <td className="text-xs text-slate-500">{r.target || "-"}</td>
                 <td><Badge kind={tK[r.trig]}>{r.trig}</Badge></td>

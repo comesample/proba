@@ -7,12 +7,13 @@
 //   🔑 편집은 초안(draft)에 모았다가 저장 한 번으로 반영한다
 // ============================================================
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Layers, Plus, Save, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, Download, Layers, Plus, Save, X } from "lucide-react";
 import { Badge, Btn, Card, Field, Input, Modal, PageToolbar, Portal, SearchInput, SEL_CARD, SEL_IDLE, Select, Toast, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import { surfaceOf } from "./data.js";
 import { SURF_K, surfacesOf, tagList } from "./logic.js";
 import * as SL from "./suiteLogic.js";
+import { exportSuiteSpec } from "./stepLogic.js";
 
 const ST_K = { "승인": "pass", "검토중": "warn", "초안": "draft" };
 const META = ["name", "desc", "acctRole", "items"];
@@ -83,6 +84,11 @@ export function FqaSuiteScreen() {
     if (!window.confirm(s.name + " 스위트를 삭제할까요? 케이스는 지워지지 않습니다.")) return;
     removeFqaSuite(s.id); if (sel === s.id) { setSel(null); setDraft(null); } flash("삭제됨");
   };
+  /* 내보내기 — <스위트>.spec.ts 한 파일 (test.describe.serial). 저장한 내용으로 만든다 */
+  const [exp, setExp] = useState(false);
+  const out = exp && selSuite ? exportSuiteSpec(selSuite, fqaCases) : null;
+  const fileName = selSuite ? String(selSuite.name).replace(/[\\/:*?"<>|\s]+/g, "_") + ".spec.ts" : "suite.spec.ts";
+  const download = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([out.text], { type: "text/plain;charset=utf-8" })); a.download = fileName; a.click(); };
   const edit = (id) => { if (dirty && !window.confirm("저장하지 않은 스위트 변경이 있습니다. 케이스 편집으로 이동할까요?")) return; setFqaEditTc(id); goto("fqa-cases"); };
 
   return (
@@ -118,6 +124,7 @@ export function FqaSuiteScreen() {
                 <div className="min-w-0 flex-1"><Input value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="스위트 이름" /></div>
                 {dirty && <span className="shrink-0 text-xs text-amber-700">미저장 변경</span>}
                 {dirty && <Btn onClick={() => setDraft(pickMeta(selSuite))}>되돌리기</Btn>}
+                <Btn icon={Download} onClick={() => setExp(true)} disabled={dirty || !draft.items.length} title={dirty ? "저장한 뒤 내보낼 수 있습니다" : ""}>내보내기</Btn>
                 <Btn kind="primary" icon={Save} onClick={save} disabled={!dirty}>저장</Btn>
               </div>
               <Input value={draft.desc} onChange={(e) => set({ desc: e.target.value })} placeholder="설명 (선택) — 이 흐름이 검증하는 업무" />
@@ -145,6 +152,7 @@ export function FqaSuiteScreen() {
                       {c && (tagList(c.tags).length > 0 || (c.dataset && c.dataset !== "-")) && <div className="mt-0.5 flex flex-wrap gap-1">{tagList(c.tags).map((t) => <span key={t} className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">{t}</span>)}{c.dataset && c.dataset !== "-" && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">데이터셋 {c.dataset}</span>}</div>}
                     </div>
                     {bad && <span className="shrink-0 text-amber-700">{bad}</span>}
+                    {c && c.prodCaution && <span className="shrink-0 text-amber-700" title="운영 환경 계획에 넣으면 경고합니다">운영주의</span>}
                     {c && surfacesOf(c) !== "-" && <Badge kind={SURF_K[surfacesOf(c)] || "info"}>{surfacesOf(c)}</Badge>}
                     {c && <Badge kind={c.level === "Full-Code" ? "warn" : "active"}>{c.level || "Low-Code"}</Badge>}
                     {c && <Badge kind={ST_K[c.status] || "draft"}>{c.status}</Badge>}
@@ -187,6 +195,21 @@ export function FqaSuiteScreen() {
               {addCands.length === 0 && <div className="py-8 text-center text-xs text-slate-500">추가할 수 있는 케이스가 없습니다.</div>}
             </div>
             <div className="flex justify-end gap-2"><Btn onClick={() => setAddOpen(false)}>취소</Btn><Btn kind="primary" icon={Plus} onClick={addPicked} disabled={!picked.length}>{picked.length}건 추가</Btn></div>
+          </div>
+        </Modal>
+      )}
+
+      {/* 내보내기 */}
+      {out && (
+        <Modal title={"내보내기 · " + selSuite.name} onClose={() => setExp(false)}>
+          <div className="space-y-3">
+            <div className="text-xs text-slate-500">Playwright 프로젝트에 넣으면 PROBA 밖에서도 실행됩니다 — <span className="font-mono">npx playwright test {fileName}</span> · 계정은 PROBA_VARS 로 넘깁니다</div>
+            {out.warns.length > 0 && <div className="space-y-0.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{out.warns.map((w) => <div key={w} className="flex gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{w}</div>)}</div>}
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs"><span className="font-mono text-slate-700">{fileName}</span><button onClick={download} className="flex items-center gap-1 text-sky-700 hover:text-sky-900"><Download size={12} />받기</button></div>
+              <pre className="max-h-72 overflow-auto px-3 py-2 font-mono text-[11px] leading-relaxed text-slate-700">{out.text}</pre>
+            </div>
+            <div className="flex justify-end"><Btn onClick={() => setExp(false)}>닫기</Btn></div>
           </div>
         </Modal>
       )}

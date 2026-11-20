@@ -62,7 +62,8 @@ export function FqaPlanScreen() {
      🔴 실행 '간' 충돌은 여기서 표현하지 못한다 — parallelIndex는 실행 내부 슬롯이라 실행 두 개가
      동시에 돌면 둘 다 슬롯 0을 집는다. 목업은 단일 러너 FIFO라 실행이 하나씩이므로 재현되지 않는다.
      실 구현에서는 '실행 중인 회차 중 같은 대상·환경 + 역할 겹침'을 경고해야 한다(차단 아님). */
-  const wLimit = effWorkers(SL.planRoles(draftPlan, fqaSuites, fqaCases), envOf(targetRef), workers);
+  const runnableSuites = SL.planSuites(draftPlan, fqaSuites).filter((x) => !SL.suiteBlock(x, fqaCases));
+  const wLimit = effWorkers(runnableSuites, envOf(targetRef), workers);
   // 운영주의 — 대상이 운영(prod) 환경인데 실데이터를 건드리는 케이스가 섞였을 때 경고(막지 않음)
   const isProdTarget = !!(envOf(targetRef) || {}).prod;
   const cautionCases = isProdTarget ? planCases.filter((c) => c.prodCaution) : [];
@@ -194,7 +195,7 @@ export function FqaPlanScreen() {
               )}
               {surf.api && <Field label="요청 타임아웃(초) · 요청 스텝"><Input type="number" value={apiTimeout} onChange={(e) => setApiTimeout(+e.target.value || 0)} className="w-32" /></Field>}
               <div className="grid grid-cols-2 gap-3">
-                <Field label="병렬 workers"><Select value={workers} onChange={(e) => setWorkers(e.target.value)}><option>1 (순차)</option><option>2</option><option>4</option><option>auto</option></Select>{wLimit && <div className="mt-1 text-amber-600" style={{ fontSize: 11 }}>실효 {wLimit.eff} — <span className="font-mono">{wLimit.role}</span> 역할 계정이 {wLimit.eff}개입니다. <span className="text-amber-600/80">대상·환경의 계정 풀에서 계정을 추가하면</span> 병렬도가 올라갑니다.</div>}</Field>
+                <Field label="병렬 workers" hint="스위트 단위로 동시에 돕니다 — 스위트 안은 항상 순서대로"><Select value={workers} onChange={(e) => setWorkers(e.target.value)}><option>1 (순차)</option><option>2</option><option>4</option><option>auto</option></Select>{wLimit && <div className="mt-1 text-amber-600" style={{ fontSize: 11 }}>실효 {wLimit.eff} — <span className="font-mono">{wLimit.role}</span> 역할 계정이 {wLimit.n}개라 이 역할의 스위트는 동시에 {wLimit.n}개까지만 돕니다. <span className="text-amber-600/80">대상·환경의 계정 풀에서 계정을 추가하면</span> 병렬도가 올라갑니다.</div>}</Field>
                 <Field label="재시도"><Input type="number" value={retry} onChange={(e) => setRetry(+e.target.value || 0)} /></Field>
               </div>
               <div className="flex items-center gap-4">

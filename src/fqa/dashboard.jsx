@@ -28,7 +28,8 @@ export function FqaDashboardScreen({ nav }) {
   const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "오류": "fail" };
   const rate = (r) => (r && r.total ? Math.round((r.pass / r.total) * 1000) / 10 : 0);
   const byDate = (a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || ""));
-  const finished = fruns.filter((r) => r.status === "완료").slice().sort(byDate);
+  // 집계는 전체 실행만 — 부분 실행(실패한 스위트 다시 실행)을 섞으면 실패가 과대 집계된다
+  const finished = fruns.filter((r) => r.status === "완료" && !r.partial).slice().sort(byDate);
   const lastRun = finished[0];
   const recent = fruns.slice().sort(byDate).slice(0, 5);
   const totalTc = fqaCases.length;
@@ -55,20 +56,26 @@ export function FqaDashboardScreen({ nav }) {
   const byDay = {}; finished.forEach((r) => { const d = dOf(r); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return; (byDay[d] = byDay[d] || []).push(rate(r)); });
   const trend = Object.keys(byDay).sort().map((d) => ({ d: d.slice(5).replace("-", "/"), runs: byDay[d].length, pass: Math.round(byDay[d].reduce((a, b) => a + b, 0) / byDay[d].length) }));
   // 브라우저별 = 완료 실행을 '실행 브라우저(run.brow)'로 집계 (웹 실행만; API 실행은 brow 없음)
-  const browMap = {}; finished.filter((r) => r.brow).forEach((r) => (browMap[r.brow] = browMap[r.brow] || []).push(rate(r)));
+  // 한 실행이 여러 브라우저로 돌았으면 브라우저별 행으로 나눠 센다 (행에 brow 가 있다). 옛 실행은 실행 단위 브라우저로
+  const browMap = {}; const pushB = (b, v) => (browMap[b] = browMap[b] || []).push(v);
+  finished.filter((r) => r.brow).forEach((r) => {
+    const bs = [...new Set((r.tcs || []).map((t) => t.brow).filter(Boolean))];
+    if (!bs.length) { pushB(r.brow, rate(r)); return; }
+    bs.forEach((b) => { const t = SL.tally((r.tcs || []).filter((x) => x.brow === b)); pushB(b, t.total ? Math.round((t.pass / t.total) * 1000) / 10 : 0); });
+  });
   const browRows = Object.keys(browMap).sort().map((b) => ({ b, p: Math.round(browMap[b].reduce((a, x) => a + x, 0) / browMap[b].length), runs: browMap[b].length }));
   const planNow = (id) => (fqaPlans.find((p) => p.id === id) || {}).name;
   /* 🔑 보정 제안 지표 — 자가보정이 도움인지 소음인지 판단하는 유일한 신호는 채택률이다.
      제안 건수는 실행에서 파생하고(케이스에 저장하지 않는다), 검토 결과만 healState 에서 읽는다.
      승인률이 낮으면 제안을 늘릴 게 아니라 제안 규칙을 고쳐야 한다는 뜻이다. */
-  const healIds = Array.from(new Set(finished.reduce((a, r) => a.concat((r.tcs || []).filter((t) => healUsable(fqaCases, t)).map(healKey)), [])));
+  const healIds = Array.from(new Set(finished.reduce((a, r) => a.concat(SL.mergedTcs(r).filter((t) => healUsable(fqaCases, t)).map(healKey)), [])));
   const healPend = healIds.filter((k) => !healState[k]).length;
   const healOk = healIds.filter((k) => healState[k] === "승인됨").length;
   /* 🔑 실패 원인 분포 — "무엇을 고칠까" 가 아니라 "어디에 투자할까" 를 답한다.
      로케이터 비중이 낮으면 자가보정은 곁다리다. 이 숫자 없이 정하면 근거가 없다.
      실행에서 파생하므로 기간·계획 필터를 그대로 따른다. */
   const causeCnt = {};
-  finished.forEach((r) => (r.tcs || []).forEach((t) => { if (t.cause) causeCnt[t.cause] = (causeCnt[t.cause] || 0) + 1; }));
+  finished.forEach((r) => SL.mergedTcs(r).forEach((t) => { if (t.cause) causeCnt[t.cause] = (causeCnt[t.cause] || 0) + 1; }));   // 케이스 기준으로 합쳐 센다
   const causeTot = Object.keys(causeCnt).reduce((a, k) => a + causeCnt[k], 0);
   const causeRows = CAUSE_ORDER.filter((k) => causeCnt[k]).map((k) => ({ k, n: causeCnt[k], p: Math.round((causeCnt[k] / causeTot) * 100) }));
   const KPI = [

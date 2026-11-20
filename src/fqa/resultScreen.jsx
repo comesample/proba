@@ -1,5 +1,5 @@
 // 원래 fqa/screens.jsx 의 일부를 옮긴 파일 — 내용 · 동작 변경 없음
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { AlertTriangle, Bug, CheckCircle2, ChevronLeft, Download, FileText, Pencil, RefreshCw, Sparkles, X, XCircle } from "lucide-react";
 import { ShareBox } from "../common/ReportShare.jsx";
 import { Badge, Btn, Card, Field, PageToolbar, Portal, SEL_CARD, SEL_ROW, Select, Toast, backTo, useToast } from "../common/ui.jsx";
@@ -7,9 +7,10 @@ import { useApp } from "../common/context.js";
 import { C } from "../common/theme.js";
 import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, causeOf, healKey, healNote, healOf, healUsable, histOf, surfacesOf } from "./logic.js";
 import * as SL from "./suiteLogic.js";
+import * as RL from "./runLogic.js";
 /* ═══════════ 7. 결과 상세 ═══════════ */
 export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }) {
-  const { fqaRuns, defects, addDefect, openModal, fqaPlans, fqaCases, fqaSuites, updateFqaCase, commitFqaCase, setFqaEditTc, jiraConfig, setPendingSelect, goto, healState, setHeal } = useApp();
+  const { fqaRuns, addFqaRun, fqaSystems, defects, addDefect, openModal, fqaPlans, fqaCases, fqaSuites, updateFqaCase, commitFqaCase, setFqaEditTc, jiraConfig, setPendingSelect, goto, healState, setHeal } = useApp();
   const [msg, flash] = useToast();
   const [filt, setFilt] = useState("전체");
   const [selId, setSelId] = useState(null);
@@ -18,12 +19,10 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   const [etab, setEtab] = useState("스크린샷");
   const [aiOpen, setAiOpen] = useState(false);
   const healSt = (t) => healState[healKey(t)] || "검토 대기";
-  /* 🔑 "다시 실행하세요" 라고 하지 않는다 — 이 화면에는 그 버튼이 없고, 붙여서도 안 된다.
-     계획 전체를 돌리면 승인한 케이스가 아닌 다른 실패에 결과가 묻히고,
-     승인한 케이스만 돌리려면 계획 없는 단건 실행이라는 새 유형이 생긴다.
-     자동화 실행의 단위는 계획이므로, 확인 시점도 계획의 다음 회차로 둔다. */
+  /* 확인은 '실패한 스위트 다시 실행' 으로 한다 — 계획 안에서 실패한 스위트만 처음부터 다시 도는 부분 실행이다.
+     계획 없는 단건 실행이라는 새 유형을 만들지 않는다. 부분 실행은 통과율 · 회귀 · 불안정 집계에서 빠진다(MQA 와 같은 규칙) */
   const HEAL_MSG = {
-    "승인됨": "제안 로케이터가 TC 스텝에 반영되었습니다(리비전 생성). 이 계획의 다음 실행 결과로 확인됩니다.",
+    "승인됨": "제안 로케이터가 TC 스텝에 반영되었습니다(리비전 생성). '실패한 스위트 다시 실행'으로 확인하세요.",
     "직접 수정함": "제안을 쓰지 않았습니다 — 에디터에서 직접 수정하세요.",
     "적용 실패": "제안한 로케이터가 케이스 스텝에 없어 반영되지 않았습니다. 에디터에서 직접 수정하세요.",
   };
@@ -59,7 +58,9 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   const jr = (() => { if (!(jiraConfig && jiraConfig.connected !== false)) return {}; const pl = (fqaPlans || []).find((p) => p.name === run.plan); return (pl && pl.jira && pl.jira.override) ? pl.jira : jiraConfig; })(); // 결함 라우팅: 미연동 시 내부 결함
   const dkey = (base) => (jr.project || "DEF") + "-" + base;
   const tcs = run.tcs || [];
-  const cur = tcs.find((t) => t.id === selId) || tcs[0] || null;
+  /* 같은 케이스가 두 스위트에서 돌 수 있다 — 행은 key(스위트:케이스)로 고른다. 옛 실행(스위트 정보 없음)은 id 로 */
+  const kOf = (t) => t.key || t.id;
+  const cur = tcs.find((t) => kOf(t) === selId) || tcs.find((t) => t.v === "FAIL") || tcs[0] || null;
   /* 선택 행 — 케이스를 바꾸면 그 케이스의 첫 실패 행으로 자연히 옮겨간다(별도 초기화 불필요) */
   const curRows = Array.isArray(cur && cur.rows) ? cur.rows : [];
   const curRow = curRows.find((r) => r.i === selRow) || curRows.find((r) => r.v === "FAIL") || curRows[0] || null;
@@ -87,6 +88,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
      케이스 단위 타임라인만 보여주면 "몇 행이 어느 스텝에서 깨졌나"를 알 수 없다. */
   const stepsFor = (t, row) => {
     if (!t) return [];
+    if (t.v === "SKIP") return [{ act: "미실행", info: t.skipWhy || "건너뜀", dur: "-", ok: true, skip: true }];
     if (row && row.v === "SKIP") return [{ act: "미실행", info: "앞선 행에서 중단되어 실행되지 않았습니다", dur: "-", ok: true, skip: true }];
     const id = t.id || "TC";
     const seg = (run.suite || "app").split(" ")[0].split("/")[0];
@@ -127,7 +129,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
     );
     return s;
   };
-  const SUM = [["전체 TC", run.total, "text-slate-900"], ["통과", run.pass, "text-emerald-600"], ["실패", run.fail, "text-red-600"], ["경고", run.warn, "text-amber-600"]].concat(!run.brow ? [] : [["보정 제안", tcs.filter((t) => healUsable(fqaCases, t)).length, "text-sky-600"]]);
+  const SUM = [["전체 TC", run.total, "text-slate-900", run.skip ? "건너뜀 " + run.skip + "건 제외" : ""], ["통과", run.pass, "text-emerald-600"], ["실패", run.fail, "text-red-600"], ["경고", run.warn, "text-amber-600"]].concat(!run.brow ? [] : [["보정 제안", tcs.filter((t) => healUsable(fqaCases, t)).length, "text-sky-600"]]);
   /* 중복 결함 판정 키 = (도메인, 대상 제품, TC).
      같은 TC라도 대상 제품이 다르면 다른 결함이다. 환경(스테이징/운영)은 발견 위치일 뿐 결함의 축이 아니다.
      '열린' 결함이 있으면 재등록 금지. Resolved만 있으면 재발이므로 재등록 허용. */
@@ -191,13 +193,27 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
     });
   };
   const toggleQuar = (r) => { updateFqaCase(r.id, { quarantined: !r.quarantined }); flash(r.id + (r.quarantined ? " 격리 해제 — 실행 대상에 복귀" : " 격리(quarantine) — 실행 대상에서 제외")); };
-  const vK = { PASS: "pass", FAIL: "fail", HEAL: "active", WARN: "warn" };
+  const vK = { PASS: "pass", FAIL: "fail", HEAL: "active", WARN: "warn", SKIP: "draft" };
+  const vLabel = (v) => (v === "SKIP" ? "건너뜀" : v);
+  /* 실패한 스위트 다시 실행 — 그 스위트를 처음부터 (앞 단계가 시작 상태를 만든다). 지금 실행할 수 없는 스위트는 뺀다 */
+  const plan = (fqaPlans || []).find((p) => p.id === run.planId);
+  const failSuites = [...new Set(tcs.filter((t) => t.v === "FAIL" && t.suiteId != null).map((t) => t.suiteId))];
+  const rerun = (only) => {
+    if (!plan) { flash("계획이 삭제되어 다시 실행할 수 없습니다"); return; }
+    if (plan.status !== "활성") { flash(plan.name + " — 초안 계획은 실행할 수 없습니다"); return; }
+    const ok = SL.planSuites(plan, fqaSuites).filter((s) => !SL.suiteBlock(s, fqaCases)).map((s) => s.id);
+    const sids = (only || failSuites).filter((x) => ok.includes(x));
+    if (!sids.length) { flash("실패한 스위트를 지금 실행할 수 없습니다 — 계획에서 빠졌거나 승인 전 케이스가 있습니다"); return; }
+    const nr = RL.makeRun(plan, { cases: fqaCases, suites: fqaSuites, runs: fqaRuns, systems: fqaSystems }, { onlySuites: sids, note: run.id + " 의 실패한 스위트 다시" });
+    addFqaRun(nr); flash(nr.id + " 대기열에 추가 — 스위트 " + sids.length + "개"); goto("fqa-run");
+  };
   /* 데이터 구동 케이스의 행 요약 — 판정·집계는 케이스 단위(1건)이고 행은 보조 표기다.
      rows가 없는 케이스는 기존 동작 그대로다(빈 문자열 반환). */
   const rowSum = (t) => { const rs = t && t.rows; if (!Array.isArray(rs) || !rs.length) return ""; const p = rs.filter((r) => r.v === "PASS").length; const s = rs.filter((r) => r.v === "SKIP").length; return rs.length + "행 중 " + p + "행 통과" + (s ? " · " + s + "행 미실행" : ""); };
-  const shown = tcs.filter((t) => filt === "전체" || (filt === "실패만" && t.v === "FAIL") || (filt === "통과만" && t.v === "PASS") || (filt === "보정 제안" && healUsable(fqaCases, t)));
+  const shown = tcs.filter((t) => filt === "전체" || (filt === "실패만" && t.v === "FAIL") || (filt === "통과만" && t.v === "PASS") || (filt === "건너뜀" && t.v === "SKIP") || (filt === "보정 제안" && healUsable(fqaCases, t)));
   // 실행은 계획을 id로 참조(planId) — 이름이 바뀌어도 이력이 안 끊긴다. 레거시 런(planId 없음)은 이름으로 매칭.
-  const finishedOf = (pid) => fqaRuns.filter((r) => (r.planId != null ? r.planId === pid : r.plan === ((fqaPlans.find((p) => p.id === pid) || {}).name)) && r.status === "완료").sort((x, y) => parseInt(y.id.split("-")[1] || "0", 10) - parseInt(x.id.split("-")[1] || "0", 10));
+  // 회귀는 전체 실행끼리만 비교한다 — 부분 실행(실패한 스위트 다시 실행)은 빠진 스위트가 '사라진 것' 처럼 보인다
+  const finishedOf = (pid) => fqaRuns.filter((r) => (r.planId != null ? r.planId === pid : r.plan === ((fqaPlans.find((p) => p.id === pid) || {}).name)) && r.status === "완료" && !r.partial).sort((x, y) => parseInt(y.id.split("-")[1] || "0", 10) - parseInt(x.id.split("-")[1] || "0", 10));
   const [regPlan, setRegPlan] = useState((fqaPlans && fqaPlans[0]) ? fqaPlans[0].id : null);
   const _ir = finishedOf(regPlan);
   const [bId, setBId] = useState(_ir[0] ? _ir[0].id : "");
@@ -208,15 +224,21 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   const runB = fqaRuns.find((r) => r.id === bId);
   const rate = (r) => (r && r.total ? Math.round((r.pass / r.total) * 1000) / 10 : 0);
   const rank = { FAIL: 0, WARN: 1, HEAL: 1, PASS: 2 };
-  const cls = (a, b) => (!a || !b ? { k: "-", c: "text-slate-500" } : a === b ? { k: "유지", c: "text-slate-500" } : ((rank[b] == null ? 2 : rank[b]) > (rank[a] == null ? 2 : rank[a]) ? { k: "개선", c: "text-emerald-600" } : { k: "퇴행", c: "text-red-600" }));
-  const _nameOf = (id) => { const t = [...((runB && runB.tcs) || []), ...((runA && runA.tcs) || [])].find((x) => x.id === id); return t ? t.name : id; };
-  const mapA = Object.fromEntries(((runA && runA.tcs) || []).map((t) => [t.id, t.v]));
-  const mapB = Object.fromEntries(((runB && runB.tcs) || []).map((t) => [t.id, t.v]));
+  /* 건너뜀은 판정이 없다 — 지난번 통과 → 이번 건너뜀은 퇴행이 아니라 비교 불가 */
+  const cls = (a, b) => (!a || !b ? { k: "-", c: "text-slate-500" } : a === "SKIP" || b === "SKIP" ? { k: "비교 불가", c: "text-slate-500" } : a === b ? { k: "유지", c: "text-slate-500" } : ((rank[b] == null ? 2 : rank[b]) > (rank[a] == null ? 2 : rank[a]) ? { k: "개선", c: "text-emerald-600" } : { k: "퇴행", c: "text-red-600" }));
+  /* 케이스 기준으로 합쳐 비교한다 — 같은 케이스가 여러 스위트에서 돌았으면 하나라도 실패면 실패 (suiteLogic.mergedTcs) */
+  const mA = runA ? SL.mergedTcs(runA) : [], mB = runB ? SL.mergedTcs(runB) : [];
+  const _nameOf = (id) => { const t = [...mB, ...mA].find((x) => x.id === id); return t ? t.name : id; };
+  const mapA = Object.fromEntries(mA.map((t) => [t.id, t.v]));
+  const mapB = Object.fromEntries(mB.map((t) => [t.id, t.v]));
   /* 회차별 케이스 리비전 — 퇴행의 원인이 제품인지 케이스 수정인지를 가르는 유일한 단서다.
      rev가 바뀐 퇴행은 케이스를 먼저 봐야 하고, rev가 같은 퇴행이라야 제품 회귀를 의심할 수 있다. */
-  const revA = Object.fromEntries(((runA && runA.tcs) || []).map((t) => [t.id, t.rev]));
-  const revB = Object.fromEntries(((runB && runB.tcs) || []).map((t) => [t.id, t.rev]));
-  const regRows = [...new Set([...Object.keys(mapA), ...Object.keys(mapB)])].map((id) => ({ id, name: _nameOf(id), a: mapA[id], b: mapB[id], ra: revA[id], rb: revB[id] }));
+  const revA = Object.fromEntries(mA.map((t) => [t.id, t.rev]));
+  const revB = Object.fromEntries(mB.map((t) => [t.id, t.rev]));
+  /* 여러 브라우저로 돈 회차는 '어느 브라우저에서 실패했는지' 를 함께 보여준다 (대표 행의 브라우저) */
+  const bwB = {}; ((runB && runB.tcs) || []).filter((t) => t.brow && (t.v === "FAIL" || t.v === "WARN")).forEach((t) => { const a = (bwB[t.id] = bwB[t.id] || []); if (!a.includes(t.brow)) a.push(t.brow); });
+  Object.keys(bwB).forEach((k) => { bwB[k] = bwB[k].join(" · "); });
+  const regRows = [...new Set([...Object.keys(mapA), ...Object.keys(mapB)])].map((id) => ({ id, name: _nameOf(id), a: mapA[id], b: mapB[id], ra: revA[id], rb: revB[id], bw: bwB[id] }));
   /* 러너·브라우저가 바뀐 회차끼리의 비교는 제품 회귀로 단정할 수 없다 — 회차 단위 사실이므로 한 번만 계산한다.
      케이스 rev와 같은 원칙: 판정을 뒤집지 않고 사실만 덧붙인다. */
   const runDiff = (() => {
@@ -242,10 +264,10 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
               {/* 🔑 러너 버전 스탬프 — 없으면 "제품이 깨진 건가 브라우저가 올라간 건가"를 구분할 수 없다.
                   케이스 rev와 같은 목적이다. 브라우저 버전은 Playwright 버전에 종속이지만 매핑표를 외우게 하지 않는다. */}
               {run.pw && <span className="font-mono text-slate-500" style={{ fontSize: 11 }} title={"Playwright " + run.pw + " · Chromium " + (run.brVer || "-")}>pw {run.pw}</span>}</div>
-            <div className="flex gap-2"><Btn icon={Download} onClick={() => flash("Excel")}>Excel</Btn><Btn icon={Download} onClick={() => flash("PDF")}>PDF</Btn></div>
+            <div className="flex gap-2">{run.status === "완료" && failSuites.length > 0 && <Btn kind="primary" icon={RefreshCw} onClick={() => rerun()}>실패한 스위트 다시 실행 ({failSuites.length})</Btn>}<Btn icon={Download} onClick={() => flash("Excel")}>Excel</Btn><Btn icon={Download} onClick={() => flash("PDF")}>PDF</Btn></div>
           </Card>
           <div className={"grid gap-3 " + (!run.brow ? "grid-cols-5" : "grid-cols-6")}>
-            {SUM.map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>))}
+            {SUM.map((k) => (<Card key={k[0]} className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div>{k[3] && <div className="text-slate-400" style={{ fontSize: 10 }}>{k[3]}</div>}</Card>))}
             <Card className="p-3 text-center"><div className="text-2xl font-bold text-slate-900">{run.dur}</div><div className="mt-0.5 text-xs text-slate-500">소요</div></Card>
           </div>
           <Card className="flex flex-wrap items-center gap-3 p-3 text-sm"><span className={"font-semibold " + (gate === "FAIL" ? "text-red-700" : "text-emerald-700")}>품질 게이트: {gate}</span><span className="text-slate-500">기준 {gval}% · 실제 <span className={"font-semibold " + (gate === "FAIL" ? "text-red-700" : "text-emerald-700")}>{passRate}%</span></span>{run.brow && (<><span className="text-slate-500">·</span><span className="text-slate-500">보정 제안 {tcs.filter((t) => healUsable(fqaCases, t)).length}건</span></>)}</Card>
@@ -255,23 +277,27 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
           <div className="grid grid-cols-5 gap-4">
             <Card className="col-span-2 overflow-hidden">
               <div className="flex flex-wrap gap-1.5 border-b border-slate-200 px-3 py-2">
-                {(!run.brow ? ["전체", "실패만", "통과만"] : ["전체", "실패만", "통과만", "보정 제안"]).map((t) => (<button key={t} onClick={() => setFilt(t)} className={"rounded-full px-2.5 py-1 text-xs " + (filt === t ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{t}</button>))}
+                {(!run.brow ? ["전체", "실패만", "통과만"] : ["전체", "실패만", "통과만", "보정 제안"]).concat(tcs.some((t) => t.v === "SKIP") ? ["건너뜀"] : []).map((t) => (<button key={t} onClick={() => setFilt(t)} className={"rounded-full px-2.5 py-1 text-xs " + (filt === t ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>{t}</button>))}
               </div>
               <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
-                {shown.map((t) => (
-                  <div key={t.id} onClick={() => setSelId(t.id)} className={"flex items-center justify-between border-b border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-100 " + (cur && cur.id === t.id ? SEL_ROW : "")}>
-                    <div><span className="font-mono text-xs text-sky-600">{t.id}</span>{t.rev != null && <span className="ml-1.5 font-mono text-slate-500" style={{ fontSize: 10 }}>rev {t.rev}</span>}<div className="text-xs text-slate-700">{t.name}</div>{(t.cause || rowSum(t)) && <div className="flex items-center gap-1.5" style={{ fontSize: 11 }}>{t.cause && <span className={CAUSE_TX[t.cause] || "text-slate-500"}>원인 · {t.cause}</span>}{t.cause && rowSum(t) && <span className="text-slate-300">·</span>}{rowSum(t) && <span className="text-slate-500">{rowSum(t)}</span>}</div>}</div>
-                    <div className="flex items-center gap-2">{t.v === "FAIL" && openDefectOf(t.id) && <Bug size={12} className="text-red-600" />}<span className="text-xs text-slate-500">{t.dur}</span>{healUsable(fqaCases, t) && <Badge kind="active">보정</Badge>}<Badge kind={vK[t.v]}>{t.v}</Badge></div>
+                {shown.map((t, i) => (
+                  <Fragment key={kOf(t)}>
+                  {t.suiteName && (i === 0 || shown[i - 1].suiteId !== t.suiteId || shown[i - 1].brow !== t.brow) && <div className="border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-600">{t.brow ? t.brow + " · " : ""}{t.suiteName}</div>}
+                  <div onClick={() => setSelId(kOf(t))} className={"flex items-center justify-between border-b border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-100 " + (cur && kOf(cur) === kOf(t) ? SEL_ROW : "")}>
+                    <div><span className="font-mono text-xs text-sky-600">{t.id}</span>{t.rev != null && <span className="ml-1.5 font-mono text-slate-500" style={{ fontSize: 10 }}>rev {t.rev}</span>}<div className={"text-xs " + (t.v === "SKIP" ? "text-slate-400" : "text-slate-700")}>{t.name}</div>{t.skipWhy && <div className="text-slate-400" style={{ fontSize: 11 }}>{t.skipWhy}</div>}{(t.cause || rowSum(t)) && <div className="flex items-center gap-1.5" style={{ fontSize: 11 }}>{t.cause && <span className={CAUSE_TX[t.cause] || "text-slate-500"}>원인 · {t.cause}</span>}{t.cause && rowSum(t) && <span className="text-slate-300">·</span>}{rowSum(t) && <span className="text-slate-500">{rowSum(t)}</span>}</div>}</div>
+                    <div className="flex items-center gap-2">{t.v === "FAIL" && openDefectOf(t.id) && <Bug size={12} className="text-red-600" />}<span className="text-xs text-slate-500">{t.dur}</span>{healUsable(fqaCases, t) && <Badge kind="active">보정</Badge>}<Badge kind={vK[t.v]}>{vLabel(t.v)}</Badge></div>
                   </div>
+                  </Fragment>
                 ))}
               </div>
             </Card>
             {cur && (
             <Card className="col-span-3 p-4">
-              <div className="mb-3 flex items-center justify-between"><span className="font-mono text-sky-600">{cur.id}</span><div className="flex items-center gap-2"><Badge kind={vK[cur.v]}>{cur.v}</Badge>{healUsable(fqaCases, cur) && <Badge kind="active">보정</Badge>}<Btn icon={RefreshCw} onClick={() => flash(cur.id + " 재실행")}>재실행</Btn>{cur.v === "FAIL" && openDefectOf(cur.id) && <Btn icon={Bug} onClick={() => { setPendingSelect({ kind: "defect", key: openDefectOf(cur.id).key }); goto("defects"); }}>결함 보기 · {openDefectOf(cur.id).key}</Btn>}
+              <div className="mb-3 flex items-center justify-between"><span className="font-mono text-sky-600">{cur.id}</span><div className="flex items-center gap-2"><Badge kind={vK[cur.v]}>{vLabel(cur.v)}</Badge>{healUsable(fqaCases, cur) && <Badge kind="active">보정</Badge>}<Btn icon={RefreshCw} onClick={() => flash(cur.id + " 재실행")}>재실행</Btn>{cur.v === "FAIL" && openDefectOf(cur.id) && <Btn icon={Bug} onClick={() => { setPendingSelect({ kind: "defect", key: openDefectOf(cur.id).key }); goto("defects"); }}>결함 보기 · {openDefectOf(cur.id).key}</Btn>}
                 {/* 행이 있는 케이스는 열린 결함이 있어도 다른 행에 대해 추가 등록할 수 있다 */}
                 {canRegister(cur) && <Btn kind="danger" icon={Bug} onClick={() => regDefect(cur)}>{isRegression(cur.id) ? "재발 결함 등록" : "결함 등록"}</Btn>}</div></div>
-              <div className="mb-3 text-sm text-slate-700">{cur.name}</div>
+              <div className="mb-3 text-sm text-slate-700">{cur.name}{cur.suiteName && <span className="ml-1.5 text-xs text-slate-500">· 스위트 {cur.suiteName}{cur.brow ? " · " + cur.brow : ""}</span>}</div>
+              {cur.v === "SKIP" && <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><b className="font-medium">건너뜀</b> — {cur.skipWhy}</div>}
               {/* 🔑 실행 결과의 리비전 스탬프 — 없으면 "제품이 깨진 건가 케이스가 바뀐 건가"를 구분할 수 없어 회귀 분석이 거짓말을 한다.
                   케이스가 그 뒤에 수정되었으면 이 결과를 현재 케이스로 재현할 수 없다는 뜻이므로 그렇게 알린다. */}
               {cur.rev != null && curCase && (curCase.rev || 1) !== cur.rev && (
@@ -387,7 +413,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
           <div className="grid grid-cols-3 gap-4">
             <Card className="p-4 text-center"><div className="text-2xl font-bold text-emerald-600">{summ["개선"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">개선</div></Card>
             <Card className="p-4 text-center"><div className="text-2xl font-bold text-red-600">{summ["퇴행"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">퇴행 (회귀)</div></Card>
-            <Card className="p-4 text-center"><div className="text-2xl font-bold text-slate-700">{summ["유지"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">유지</div></Card>
+            <Card className="p-4 text-center"><div className="text-2xl font-bold text-slate-700">{summ["유지"] || 0}</div><div className="mt-0.5 text-xs text-slate-500">유지</div>{summ["비교 불가"] ? <div className="text-slate-400" style={{ fontSize: 10 }}>비교 불가(건너뜀) {summ["비교 불가"]}건</div> : null}</Card>
           </div>
           <Card className="overflow-hidden">
             <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3"><div className="text-sm font-semibold text-slate-800">케이스 회귀 분석 <span className="font-normal text-slate-500">· {aId} → {bId}</span>{runDiff && <span className="ml-2 font-normal text-amber-600" style={{ fontSize: 12 }}>· {runDiff} — 판정 차이를 제품 회귀로 단정할 수 없습니다</span>}<span className="ml-2 font-normal text-slate-500" style={{ fontSize: 11 }}>행을 클릭하면 {bId} 결과 상세로 이동합니다</span></div>
@@ -398,7 +424,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
                 {regRows.length === 0 && (<tr><td colSpan={6} className="px-4 py-6 text-center text-sm text-slate-500">두 실행 모두 케이스 단위 결과가 없습니다.</td></tr>)}
                 {regRows.map((r) => { const v = cls(r.a, r.b); const revd = r.ra != null && r.rb != null && r.ra !== r.rb; const rv = (n) => (n == null ? null : <span className="ml-1.5 font-mono text-slate-500" style={{ fontSize: 10 }}>rev {n}</span>); return (
                   <tr key={r.id} onClick={() => nav && nav("fqa-result-detail", bId)} title={bId + " 결과 상세로 이동"} className={"cursor-pointer border-b border-slate-200 text-slate-700 hover:brightness-125 " + (v.k === "퇴행" ? "bg-red-50" : "")}>
-                    <td className="px-4 py-2.5 font-mono text-sky-600">{r.id}</td><td className="text-slate-700">{r.name}</td><td className="whitespace-nowrap">{r.a ? <Badge kind={vK[r.a]}>{r.a}</Badge> : <span className="text-xs text-slate-500">없음</span>}{rv(r.ra)}</td><td className="text-slate-500">→</td><td className="whitespace-nowrap">{r.b ? <Badge kind={vK[r.b]}>{r.b}</Badge> : <span className="text-xs text-slate-500">없음</span>}{rv(r.rb)}</td>
+                    <td className="px-4 py-2.5 font-mono text-sky-600">{r.id}</td><td className="text-slate-700">{r.name}{r.bw && <span className="ml-1.5 text-xs text-slate-500">· {r.bw}</span>}</td><td className="whitespace-nowrap">{r.a ? <Badge kind={vK[r.a]}>{vLabel(r.a)}</Badge> : <span className="text-xs text-slate-500">없음</span>}{rv(r.ra)}</td><td className="text-slate-500">→</td><td className="whitespace-nowrap">{r.b ? <Badge kind={vK[r.b]}>{vLabel(r.b)}</Badge> : <span className="text-xs text-slate-500">없음</span>}{rv(r.rb)}</td>
                     {/* rev가 다르면 판정 변화의 원인을 제품으로 단정할 수 없다 — 그 사실만 덧붙이고 결론은 내리지 않는다 */}
                     <td className={"font-semibold whitespace-nowrap " + v.c}>{v.k}{revd && <span className="ml-1.5 font-normal text-amber-600" style={{ fontSize: 11 }}>· 케이스 변경</span>}</td>
                   </tr>
@@ -453,7 +479,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
    원인 묶음은 러너가 붙인 실패 원인(로케이터 · 검증 · 타이밍 · 환경)을 그대로 쓴다 — AI 가 새로 분류하지 않는다 */
 const CAUSE_WHO = { "로케이터": "테스트 보정 대상 (QA)", "타이밍": "테스트 보정 대상 (QA)", "검증": "제품 결함 의심 (개발)", "환경": "환경 문제 (인프라)", "기타": "원인 확인 필요", "미분류": "원인 확인 필요" };
 function FqaRegAiPanel({ A, B, rows, summ, cls, rate, runDiff, cases, planName, flash, onClose, onOpen }) {
-  const tcB = (id) => (B.tcs || []).find((t) => t.id === id) || {};
+  const tcB = (id) => SL.mergedTc(B, id) || {};
   const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행").map((r) => { const t = tcB(r.id); return { ...r, cause: t.cause || "미분류", heal: healUsable(cases, t) }; });
   const groups = {}; reg.forEach((x) => { (groups[x.cause] = groups[x.cause] || { cause: x.cause, ids: [] }).ids.push(x.id); });
   const G = [...CAUSE_ORDER, "미분류"].filter((k) => groups[k]).map((k) => groups[k]);

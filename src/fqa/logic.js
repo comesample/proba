@@ -1,5 +1,6 @@
 // 원래 fqa/screens.jsx 의 일부를 옮긴 파일 — 내용 · 동작 변경 없음
 import { surfaceOf } from "./data.js";
+import { mergedTc } from "./suiteLogic.js";
 /* 이벤트 트리거는 정보성(읽기전용) — 감지 방식은 대상·환경 "배포 감지"에서 정의된 값을 상속만 표시.
    기능 테스트는 '배포된 앱'을 상대로 하므로 배포 완료가 유일하게 유효한 이벤트다.
    (커밋·PR 시점엔 코드가 배포돼 있지 않아 직전 빌드를 테스트하게 된다 — 트리거로 성립하지 않음) */
@@ -35,11 +36,14 @@ const tagList = (s) => String(s || "").split(",").map((x) => x.trim().replace(/^
 /* 필터는 OR — 하나라도 일치하면 대상 (Playwright --grep 관례) */
 const tagMatch = (c, filter) => { const f = tagList(filter); if (!f.length) return true; const t = tagList(c.tags); return f.some((x) => t.includes(x)); };
 
-/* 케이스의 최근 결과·이력·결함 수는 케이스에 저장하지 않고 실행 이력/결함에서 파생한다 */
+/* 케이스의 최근 결과·이력·결함 수는 케이스에 저장하지 않고 실행 이력/결함에서 파생한다
+   🔑 한 회차에 같은 케이스가 여러 스위트에서 돌면 하나로 합친다(suiteLogic.mergedTc).
+      건너뜀은 '판정 없음' 이라 이력에서 뺀다 · 부분 실행(실패한 스위트 다시 실행)은 집계 · 이력 판단에서 뺀다 */
+const tcOf = (r, id) => mergedTc(r, id);
 const runsFor = (runs, id) => (runs || [])
-  .filter((r) => r.status === "완료" && (r.tcs || []).some((t) => t.id === id))
+  .filter((r) => r.status === "완료" && !r.partial && (tcOf(r, id) || {}).v && tcOf(r, id).v !== "SKIP")
   .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
-const histOf = (runs, id) => runsFor(runs, id).slice(0, 4).map((r) => ((r.tcs || []).find((t) => t.id === id) || {}).v).filter(Boolean).reverse();
+const histOf = (runs, id) => runsFor(runs, id).slice(0, 4).map((r) => tcOf(r, id).v).filter(Boolean).reverse();
 /* 🔑 이 케이스에 최근 붙은 보정 제안 — 케이스에 저장하지 않고 실행에서 파생한다.
    케이스에 박아 두면 과거 회차의 판정 근거가 지금 값으로 바뀐다(F5 위반).
    결함 등록 경로가 "제품 결함인가, 로케이터가 낡은 것인가" 를 구분하려면 이 정보가 필요하다. */
@@ -56,7 +60,7 @@ const CAUSE_K = { "로케이터": "active", "검증": "fail", "타이밍": "warn
 const CAUSE_BG = { "로케이터": "bg-sky-500", "검증": "bg-red-500", "타이밍": "bg-amber-500", "환경": "bg-slate-400", "기타": "bg-slate-300" };
 const CAUSE_TX = { "로케이터": "text-sky-700", "검증": "text-red-700", "타이밍": "text-amber-700", "환경": "text-slate-600", "기타": "text-slate-500" };
 /* 케이스의 최근 실패 원인 — heal 과 같은 이유로 실행에서 파생한다 */
-const causeOf = (runs, id) => { const rs = runsFor(runs, id); for (let i = 0; i < rs.length; i++) { const t = (rs[i].tcs || []).find((x) => x.id === id); if (t && t.cause) return t.cause; } return null; };
+const causeOf = (runs, id) => { const rs = runsFor(runs, id); for (let i = 0; i < rs.length; i++) { const t = tcOf(rs[i], id); if (t && t.cause) return t.cause; } return null; };
 const healKey = (t) => t.id + "|" + ((t && t.heal && t.heal.from) || "");
 const healUsable = (cases, t) => {
   if (!t || !t.heal) return null;
@@ -64,10 +68,10 @@ const healUsable = (cases, t) => {
   const c = (cases || []).find((x) => x.id === t.id);
   return c && c.level === "Full-Code" ? null : t.heal;
 };
-const healOf = (runs, cases, id) => { const rs = runsFor(runs, id); for (let i = 0; i < rs.length; i++) { const h = healUsable(cases, (rs[i].tcs || []).find((x) => x.id === id)); if (h) return h; } return null; };
+const healOf = (runs, cases, id) => { const rs = runsFor(runs, id); for (let i = 0; i < rs.length; i++) { const h = healUsable(cases, tcOf(rs[i], id)); if (h) return h; } return null; };
 /* 결함 등록 본문에 붙이는 안내 — 판정을 뒤집지 않고 사실만 알린다(F7·F8). */
 const healNote = (h) => (h ? "\n\n[보정 제안 있음] " + h.step + "\n  " + h.from + " → " + h.to + (h.why ? "\n  " + h.why : "") + "\n  ※ 제품 결함이 아니라 로케이터가 낡은 것일 수 있습니다. 등록 전 확인하세요." : "");
-const lastOf = (runs, id) => { const rs = runsFor(runs, id); return rs.length ? (((rs[0].tcs || []).find((t) => t.id === id) || {}).v || "-") : "-"; };
+const lastOf = (runs, id) => { const rs = runsFor(runs, id); return rs.length ? (tcOf(rs[0], id).v || "-") : "-"; };
 const defectsOf = (defects, id) => (defects || []).filter((d) => d.tc === id && d.status !== "Resolved").length;
 /* 케이스 구성(웹/API/혼합) = 이 케이스가 환경에 요구하는 접점.
    platform 같은 선언 필드를 두지 않는다 — "API 케이스"라고 선언하고 웹 스텝을 넣으면 거짓이 되므로,
@@ -117,17 +121,25 @@ const outerChecks = (cs, env, datasets, suites) => {
   return g;
 };
 
-/* 실효 워커 — 워커 슬롯이 곧 계정이므로(F4) 워커 수가 역할별 계정 수를 넘을 수 없다.
-   넘으면 같은 계정으로 동시 로그인해 세션이 서로를 밀어낸다. 조용히 내리지 않고 원인을 알린다. */
-const effWorkers = (used, env, setWorkers) => {   // used = 계획이 쓰는 계정 역할 (스위트에서)
+/* 실효 워커 — 병렬은 스위트 단위다. 워커 하나가 스위트 하나를 자기 브라우저 세션으로 끝까지 돌린다(스위트 안은 항상 순서대로).
+   로그인하는 스위트는 워커마다 계정이 하나씩 필요하다(F4) — 같은 계정으로 동시에 로그인하면 세션이 서로를 밀어낸다.
+   그래서 역할별로 '그 역할의 스위트 수'와 '그 역할의 계정 수' 중 작은 만큼만 동시에 돈다. 역할이 없는 스위트는 계정을 쓰지 않는다.
+   스위트끼리는 순서가 보장되지 않는다 — 서로 무관한 검증만 스위트로 나누는 이유다.
+   조용히 내리지 않고 원인을 알린다. 스위트 수가 워커보다 적은 것은 제약이 아니므로 알리지 않는다 */
+const effWorkers = (suites, env, setWorkers) => {   // suites = 계획의 실행 가능한 스위트
   const accts = ((env || {}).accts || []);
-  if (!used.length) return null;
-  const cnt = (r) => accts.filter((a) => a.role === r).length;
-  const tight = used.map((r) => ({ role: r, n: cnt(r) })).sort((a, b) => a.n - b.n)[0];
   const want = setWorkers === "auto" ? 4 : (parseInt(setWorkers, 10) || 1);
-  if (tight.n === 0) return null;             // 역할 자체가 없는 건 사전 검사가 잡는다
-  if (tight.n >= want) return null;
-  return { want, eff: tight.n, role: tight.role };
+  const by = {}; (suites || []).forEach((s) => { const r = s.acctRole || ""; by[r] = (by[r] || 0) + 1; });
+  let cap = by[""] || 0, tight = null;
+  Object.keys(by).filter((r) => r).forEach((r) => {
+    const n = accts.filter((a) => a.role === r).length;
+    if (n === 0) return;                       // 역할 자체가 없는 건 사전 검사가 잡는다
+    cap += Math.min(by[r], n);
+    if (by[r] > n && (!tight || n < tight.n)) tight = { role: r, n };
+  });
+  const eff = Math.min(want, cap);
+  if (!tight || eff >= Math.min(want, (suites || []).length)) return null;
+  return { want, eff, role: tight.role, n: tight.n };
 };
 /* 이 환경이 케이스의 접점을 감당하는가 — 못 하면 실행은 반드시 실패한다 */
 

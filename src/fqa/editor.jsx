@@ -8,7 +8,7 @@ import { STEP_ACTS } from "./data.js";
 import { SURF_K, envCovers, envOpts, lastOf, nextTcId, refKey, surfacesOf } from "./logic.js";
 import { Hdr, TagPicker, taCls } from "./parts.jsx";
 import * as SL from "./suiteLogic.js";
-import { ASSERTS, DIFF_CLS, DIFF_MARK, DS_MAX_ROWS, LOC_HINT, LOC_PH, LV, REQ_METHODS, VAL_PH, assertDef, fieldDiff, hasBody, isStatusTarget, lcsDiff, parseAssert, reqJoin, reqParts, respCond, simCode, simRun, stepErrors, stepKey, stepText, stepsToCode } from "./stepLogic.js";
+import { ASSERTS, DIFF_CLS, DIFF_MARK, DS_MAX_ROWS, LOC_HINT, LOC_PH, LV, REQ_METHODS, VAL_PH, assertDef, fieldDiff, fullCodeWarns, hasBody, isStatusTarget, lcsDiff, parseAssert, reqJoin, reqParts, respCond, simCode, simRun, stepErrors, stepKey, stepText, stepsToCode } from "./stepLogic.js";
 export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const { commitFqaCase, addFqaCase, fqaSuites, fqaCases, fqaRuns, fqaSystems, datasets, debugEnv, setDebugEnv, setNavGuard } = useApp();
   const [msg, flash] = useToast();
@@ -32,6 +32,11 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const [prodCaution, setProdCaution] = useState(!!(tc && tc.prodCaution));
   /* 이 케이스가 포함된 스위트 — 시작 상태(로그인)와 계정 역할은 스위트가 정한다. 케이스는 스위트를 모른다 */
   const usedIn = tc ? SL.suitesOfCase(fqaSuites, tc.id) : [];
+  /* 🔑 디버그 실행의 스위트 문맥 — 스위트 안에서 앞 케이스가 만든 상태(로그인 등)에서 시작하는 케이스는 혼자 돌리면 실패한다.
+     앞 단계를 먼저 돌리고 이어서 이 케이스를 돈다(기본: 앞 단계가 있는 첫 스위트). 계정 역할도 그 스위트를 따른다 */
+  const preOpts = usedIn.filter((su) => (su.items || []).indexOf(tc.id) > 0);
+  const [preSuId, setPreSuId] = useState(() => (preOpts[0] ? preOpts[0].id : 0));
+  const preSu = preOpts.find((su) => su.id === preSuId) || null;
   // 계정 변수 사용 여부 — Full-Code는 V['계정 ID'] 형태로 나타난다
   const usesAcct = steps.some((s) => /\$\{계정/.test((s.val || "") + (s.loc || "") + (s.code || ""))) || /계정 (ID|비밀번호)/.test(code || "");
   const [dragIdx, setDragIdx] = useState(null);
@@ -94,19 +99,37 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const dbg = dbgOpts.find((o) => refKey(o) === refKey(debugEnv)) || dbgOpts[0] || null;
   const dbgEnvRec = (() => { const sy = (fqaSystems || []).find((s) => s.id === (dbg || {}).systemId); return sy ? (sy.envs || []).find((e) => e.env === dbg.env) : null; })();
   const dbgAccts = (dbgEnvRec && dbgEnvRec.accts) || [];
-  const acctOk = !usesAcct || dbgAccts.length > 0;   // 역할은 스위트가 정한다 — 디버그는 풀의 첫 계정 (스위트 문맥 디버그는 B2-3)
+  // 계정 — 스위트 문맥이면 그 스위트의 역할, 아니면 풀의 첫 계정
+  const dbgRole = preSu ? (preSu.acctRole || "") : "";
+  const acctOk = dbgRole ? dbgAccts.some((a) => a.role === dbgRole) : (!usesAcct || dbgAccts.length > 0);
   // 디버그 실행 고유 오류 — 환경·계정. 스텝/데이터셋 오류(errs)는 하단 패널이 전담하므로 여기서 문구로 반복하지 않는다.
   const envErr =
     !dbg ? "이 케이스의 접점(" + surf + ")에 맞는 대상·환경이 없습니다"
-    : !acctOk ? "이 환경의 계정 풀이 비어 있습니다"
+    : !acctOk ? (dbgRole ? "이 환경에 '" + dbgRole + "' 역할의 계정이 없습니다 (스위트 " + preSu.name + ")" : "이 환경의 계정 풀이 비어 있습니다")
     : (!isFull && steps.length === 0) ? "스텝이 없습니다"
     : "";
   const runBlocked = !!envErr || errs.length > 0;   // 실행 차단 = 환경 문제 또는 스텝/데이터셋 오류
+  /* 🔑 Full-Code 는 테스트 단위 결과만 있다 — 러너는 줄마다 성공 · 실패를 받지 않는다(test.step 이 없으면).
+     줄마다 ✓ 를 칠하면 "확인했다" 는 거짓이 된다. 줄은 '판정 없음' 으로 보여준다 (결과 상세와 같은 규칙) */
+  const naLines = (r0) => ({ ...r0, steps: r0.steps.map((x) => ({ ...x, ok: true, na: true })) });
   const runOne = () => {
     if (runBlocked) return;
     setRunRes(null); setQa("run");
     const last = tc ? lastOf(fqaRuns, tc.id) : "-";
-    setTimeout(() => setRunRes(isFull ? simCode(code, last) : simRun(steps, tc, last)), 900);
+    /* 앞 단계 — 저장된 내용으로 돈다(편집 중인 것은 이 케이스뿐). 앞 단계가 실패하면 이 케이스는 돌지 않는다 */
+    const preCases = preSu ? preSu.items.slice(0, preSu.items.indexOf(tc.id)).map((id) => fqaCases.find((c) => c.id === id)).filter(Boolean) : [];
+    const rows = []; let preFail = null;
+    preCases.forEach((c) => {
+      if (preFail) return;
+      const r0 = c.level === "Full-Code" ? naLines(simCode(c.code, lastOf(fqaRuns, c.id))) : simRun(c.steps, c, lastOf(fqaRuns, c.id));
+      rows.push({ head: true, id: c.id, name: c.name, pre: true }, ...r0.steps);
+      if (r0.verdict === "FAIL") preFail = c.id;
+    });
+    setTimeout(() => {
+      if (preFail) { setRunRes({ verdict: "FAIL", preFail, steps: rows }); return; }
+      const me = isFull ? naLines(simCode(code, last)) : simRun(steps, tc, last);
+      setRunRes({ ...me, steps: preCases.length ? [...rows, { head: true, id: tc.id, name: name || tc.name }, ...me.steps] : me.steps });
+    }, 900);
   };
 
   /* Low-Code는 스텝이 진실 — code를 저장하면 스텝과 어긋난 낡은 코드가 DB에 남는다(실행 시 서버가 스텝에서 생성한다).
@@ -385,6 +408,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
               <div className="p-3">
                 <div className="mb-2 text-xs text-slate-500">Playwright · TypeScript</div>
                 <textarea value={code} onChange={(e) => setCode(e.target.value)} rows={16} className={taCls} style={{ fontFamily: "monospace" }} />
+                {fullCodeWarns(code).map((w) => <div key={w} className="mt-1.5 text-xs text-amber-700">{w}</div>)}
               </div>
             )}
 
@@ -484,12 +508,19 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
                 <div className="flex items-center gap-2 text-slate-500"><RefreshCw size={14} className="text-sky-600" />실행 중…</div>
               ) : (
                 <>
-                  <div className="flex items-center gap-2"><Badge kind={runRes.verdict === "PASS" ? "pass" : "fail"}>{runRes.verdict}</Badge><span className="text-xs text-slate-500">{dbg ? dbg.label : ""}</span></div>
+                  <div className="flex items-center gap-2"><Badge kind={runRes.verdict === "PASS" ? "pass" : "fail"}>{runRes.verdict}</Badge><span className="text-xs text-slate-500">{dbg ? dbg.label : ""}{dbgRole ? " · " + dbgRole : ""}</span></div>
+                  {preOpts.length > 0 && <div className="flex items-center gap-2 text-xs text-slate-600"><span className="shrink-0">시작 상태</span>
+                    <div className="min-w-0 flex-1"><Select value={String(preSuId)} onChange={(e) => setPreSuId(+e.target.value)}><option value="0">이 케이스만</option>{preOpts.map((su) => <option key={su.id} value={String(su.id)}>{su.name} — 앞 {su.items.indexOf(tc.id)}건 먼저 ({su.items.slice(0, su.items.indexOf(tc.id)).join(", ")})</option>)}</Select></div>
+                    <Btn icon={RefreshCw} onClick={runOne} disabled={runBlocked}>다시 실행</Btn></div>}
+                  {runRes.preFail && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">앞 단계 {runRes.preFail} 에서 실패 — 이 케이스는 실행하지 않았습니다</div>}
                   <div className="overflow-hidden rounded-lg border border-slate-200">
-                    {runRes.steps.map((s, i) => (
-                      <div key={i} className={"flex items-center gap-2 border-b border-slate-200 px-3 py-1.5 text-xs last:border-0 " + (s.ok ? "" : "bg-red-50")}>{s.ok ? <CheckCircle2 size={13} className="text-emerald-600" /> : <XCircle size={13} className="text-red-600" />}<span className={"shrink-0 " + (s.ok ? "text-slate-700" : "text-red-700")}>{s.act}</span><span className="flex-1 truncate font-mono text-slate-500">{s.loc}</span></div>
+                    {runRes.steps.map((s, i) => s.head ? (
+                      <div key={i} className="border-b border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600"><span className="font-mono text-sky-600">{s.id}</span> {s.name}{s.pre && <span className="font-normal text-slate-500"> · 앞 단계</span>}</div>
+                    ) : (
+                      <div key={i} className={"flex items-center gap-2 border-b border-slate-200 px-3 py-1.5 text-xs last:border-0 " + (s.ok ? "" : "bg-red-50")}>{s.na ? <span className="h-[13px] w-[13px] shrink-0 rounded-full border border-slate-300" /> : s.ok ? <CheckCircle2 size={13} className="text-emerald-600" /> : <XCircle size={13} className="text-red-600" />}<span className={"shrink-0 " + (s.ok ? "text-slate-700" : "text-red-700")}>{s.act}</span><span className="flex-1 truncate font-mono text-slate-500">{s.loc}</span></div>
                     ))}
                   </div>
+                  {runRes.steps.some((x) => x.na) && <div className="text-xs text-slate-500">Full-Code 는 테스트 단위 결과만 있습니다 — 줄별 판정은 없습니다.</div>}
                   <div className="text-xs text-slate-500">＊ 목업 시뮬레이션</div>
                 </>
               ))}
