@@ -94,47 +94,47 @@ export const INIT_FQA_SUITES = [
 /* ── 테스트케이스 = 상대경로 스텝 (환경 독립) ─────────────── */
 export const INIT_FQA_CASES = [
   /* acctRole: 이 케이스가 어떤 역할의 계정으로 돌아야 하는지 — 실제 계정은 실행 계획이 고른 환경의 계정 풀에서 주입 */
-  { id: "TC-0031", origin: "레코딩", name: "로그인 성공", suite: "로그인 / 인증", tags: "smoke,critical", status: "승인", level: "Low-Code", dataset: "-", acctRole: "로그인 전용", steps: [
+  { id: "TC-0031", origin: "레코딩", name: "로그인 성공", suiteId: 1, tags: "smoke,critical", status: "승인", level: "Low-Code", dataset: "-", acctRole: "로그인 전용", steps: [
     { act: "이동", loc: "/login", val: "-" },
     { act: "입력", loc: "[data-testid=userid]", val: "${계정 ID}" },
     { act: "입력", loc: "[data-testid=password]", val: "${계정 비밀번호}" },
     { act: "클릭", loc: "role=button[로그인]", val: "-" },
     { act: "화면 검증", loc: "[data-testid=welcome]", val: 'text = "환영합니다"' },
   ] },
-  { id: "TC-0203", origin: "레코딩", name: "OTP 재발송", suite: "로그인 / 인증", tags: "regression", status: "승인", level: "Low-Code", dataset: "-", steps: [
+  { id: "TC-0203", origin: "레코딩", name: "OTP 재발송", suiteId: 1, tags: "regression", status: "승인", level: "Low-Code", dataset: "-", steps: [
     { act: "이동", loc: "/login", val: "-" },
     { act: "클릭", loc: "role=button[OTP 재발송]", val: "-" },
     { act: "화면 검증", loc: "[data-testid=otp_msg]", val: 'text = "재발송되었습니다"' },
   ] },
   /* Full-Code = 케이스에 코드가 저장된다(스텝에서 재생성하지 않음). versions에 직전 버전 스냅샷이 쌓인다. */
-  { id: "TC-0055", origin: "직접 작성", name: "세션 만료 처리", suite: "로그인 / 인증", tags: "regression", status: "승인", level: "Full-Code", dataset: "-", quarantined: false, rev: 3, preCase: "TC-0031", acctRole: "일반",
+  { id: "TC-0055", origin: "직접 작성", name: "세션 만료 처리", suiteId: 1, tags: "regression", status: "승인", level: "Full-Code", dataset: "-", quarantined: false, rev: 3, preCase: "TC-0031", acctRole: "일반",
     steps: [
       { act: "코드 스텝", loc: "", val: "", code: "await page.context().clearCookies();\nawait page.goto('/my');\nawait expect(page).toHaveURL(/\\/login/);" },
     ],
     code: "import { test, expect } from '@playwright/test';\n\ntest('TC-0055 세션 만료 처리', async ({ page }) => {\n  await page.context().clearCookies();\n  await page.goto('/my');\n  await expect(page).toHaveURL(/\\/login/);\n});",
     /* 리비전 = 그 시점의 전체 스냅샷 (최신이 앞) */
     versions: [
-      { rev: 2, at: "2026-06-14 11:20", by: "김지훈", note: "", level: "Full-Code", name: "세션 만료 처리", suite: "로그인 / 인증", tags: "regression", dataset: "-", acctRole: "",
+      { rev: 2, at: "2026-06-14 11:20", by: "김지훈", note: "", level: "Full-Code", name: "세션 만료 처리", suiteId: 1, tags: "regression", dataset: "-", acctRole: "",
         steps: [{ act: "코드 스텝", loc: "", val: "", code: "await page.goto('/my');\nawait expect(page).toHaveURL(/\\/login/);" }],
         code: "import { test, expect } from '@playwright/test';\n\ntest('TC-0055 세션 만료 처리', async ({ page }) => {\n  await page.goto('/my');\n  await expect(page).toHaveURL(/\\/login/);\n});" },
-      { rev: 1, at: "2026-05-30 09:05", by: "이서연", note: "", level: "Low-Code", name: "세션 만료 확인", suite: "로그인 / 인증", tags: "", dataset: "-", acctRole: "",
+      { rev: 1, at: "2026-05-30 09:05", by: "이서연", note: "", level: "Low-Code", name: "세션 만료 확인", suiteId: 1, tags: "", dataset: "-", acctRole: "",
         steps: [
           { act: "이동", loc: "/my", val: "-" },
           { act: "화면 검증", loc: "[data-testid=login-form]", val: "visible = true" },
         ],
         code: "" },
     ] },
-  { id: "TC-0021", origin: "레코딩", name: "회원가입 이메일 형식 검증", suite: "회원가입", tags: "regression", status: "승인", level: "Low-Code", dataset: "signup_emails", steps: [
+  { id: "TC-0021", origin: "레코딩", name: "회원가입 이메일 형식 검증", suiteId: 2, tags: "regression", status: "승인", level: "Low-Code", dataset: "signup_emails", steps: [
     { act: "이동", loc: "/signup", val: "-" },
     { act: "입력", loc: "[data-testid=email]", val: '"invalid-email"' },
     { act: "클릭", loc: "role=button[다음]", val: "-" },
     { act: "화면 검증", loc: "[data-testid=error]", val: 'text = "올바른 이메일 형식이 아닙니다"' },
   ] },
-  { id: "TC-0101", origin: "레코딩", name: "메인 배너 노출", suite: "메인 화면", tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
+  { id: "TC-0101", origin: "레코딩", name: "메인 배너 노출", suiteId: 3, tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
     { act: "이동", loc: "/", val: "-" },
     { act: "화면 검증", loc: "[data-testid=main-banner]", val: "visible = true" },
   ] },
-  { id: "TC-0102", origin: "레코딩", name: "추천 상품 카드 렌더", suite: "메인 화면", tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", preCase: "TC-0031", acctRole: "일반", steps: [
+  { id: "TC-0102", origin: "레코딩", name: "추천 상품 카드 렌더", suiteId: 3, tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", preCase: "TC-0031", acctRole: "일반", steps: [
     { act: "이동", loc: "/", val: "-" },
     { act: "화면 검증", loc: "[data-testid=product-card]", val: "count >= 3" },
   ] },
@@ -142,7 +142,7 @@ export const INIT_FQA_CASES = [
   /* ★ 혼합 케이스 — 웹으로 담고 → 결제 API 호출 → 다시 웹으로 확인 (한 세션·한 케이스)
      결제 요청은 웹 세션 쿠키를 그대로 쓰므로 장바구니 상태가 이어진다.
      응답의 orderId를 save로 저장해 뒤의 웹 스텝에서 ${orderId}로 사용한다. */
-  { id: "TC-0301", origin: "직접 작성", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", suite: "결제 / 주문", tags: "critical", status: "승인", level: "Low-Code", dataset: "-", preCase: "TC-0031", acctRole: "VIP", steps: [
+  { id: "TC-0301", origin: "직접 작성", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", suiteId: 4, tags: "critical", status: "승인", level: "Low-Code", dataset: "-", preCase: "TC-0031", acctRole: "VIP", steps: [
     { act: "이동", loc: "/products", val: "-" },
     { act: "클릭", loc: "[data-testid=product-featured]", val: "-" },
     { act: "클릭", loc: "role=button[장바구니 담기]", val: "-" },
@@ -156,35 +156,35 @@ export const INIT_FQA_CASES = [
   /* 로그인이 '전제조건'인 케이스 — 스텝에 로그인이 없다. 검증할 내용만 남는다.
      전제조건은 별도 엔티티가 아니라 '케이스 참조'다. 로그인 케이스(TC-0031)를 그대로 가리킨다.
      실행 시 (전제조건 케이스 × 역할) 조합마다 세션을 한 번만 만들어 재사용한다. */
-  { id: "TC-0156", origin: "레코딩", name: "쿠폰 적용 상태 반영", suite: "결제 / 주문", tags: "regression", status: "승인", level: "Low-Code", dataset: "-", quarantined: false, preCase: "TC-0031", acctRole: "일반", steps: [
+  { id: "TC-0156", origin: "레코딩", name: "쿠폰 적용 상태 반영", suiteId: 4, tags: "regression", status: "승인", level: "Low-Code", dataset: "-", quarantined: false, preCase: "TC-0031", acctRole: "일반", steps: [
     { act: "이동", loc: "/my/coupons", val: "-" },
     { act: "클릭", loc: "#btn_apply_coupon", val: "-" },
     { act: "화면 검증", loc: "[data-testid=coupon_status]", val: 'text = "적용됨"' },
   ] },
 
-  { id: "TC-0401", origin: "API 임포트", name: "사용자 조회", suite: "API 연동", tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
+  { id: "TC-0401", origin: "API 임포트", name: "사용자 조회", suiteId: 5, tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
     { act: "요청", loc: "GET /v1/users/qa_user01", val: "-", body: "", headers: "", save: "" },
     { act: "응답 검증", loc: "상태코드", val: "200" },
     { act: "응답 검증", loc: "$.name", val: "존재" },
   ] },
   /* 생성 → 저장(userId) → 조회 : save 체이닝 */
-  { id: "TC-0402", origin: "API 임포트", name: "사용자 생성 후 조회", suite: "API 연동", tags: "regression", status: "승인", level: "Low-Code", dataset: "signup_emails", steps: [
+  { id: "TC-0402", origin: "API 임포트", name: "사용자 생성 후 조회", suiteId: 5, tags: "regression", status: "승인", level: "Low-Code", dataset: "signup_emails", steps: [
     { act: "요청", loc: "POST /v1/users", val: "-", body: '{ "name": "${row.name}", "phone": "010-0000-0000" }', headers: "", save: "userId = $.id" },
     { act: "응답 검증", loc: "상태코드", val: "201" },
     { act: "요청", loc: "GET /v1/users/${userId}", val: "-", body: "", headers: "", save: "" },
     { act: "응답 검증", loc: "상태코드", val: "200" },
   ] },
-  { id: "TC-0403", origin: "직접 작성", name: "로그인 토큰 발급", suite: "API 연동", tags: "smoke,critical", status: "승인", level: "Full-Code", dataset: "-", steps: [
+  { id: "TC-0403", origin: "직접 작성", name: "로그인 토큰 발급", suiteId: 5, tags: "smoke,critical", status: "승인", level: "Full-Code", dataset: "-", steps: [
     { act: "요청", loc: "POST /v1/auth/login", val: "-", body: '{ "id": "${계정 ID}", "pw": "${계정 비밀번호}" }', headers: "", save: "token = $.token" },
     { act: "응답 검증", loc: "상태코드", val: "200" },
     { act: "응답 검증", loc: "$.token", val: "존재" },
   ] },
-  { id: "TC-0404", origin: "API 임포트", name: "상품 목록 조회", suite: "API 연동", tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
+  { id: "TC-0404", origin: "API 임포트", name: "상품 목록 조회", suiteId: 5, tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [
     { act: "요청", loc: "GET /v1/products", val: "-", body: "", headers: "Accept: application/json", save: "" },
     { act: "응답 검증", loc: "상태코드", val: "200" },
     { act: "응답 검증", loc: "$.items", val: "존재" },
   ] },
-  { id: "TC-0405", origin: "API 임포트", name: "사용자 삭제", suite: "API 연동", tags: "regression", status: "검토중", level: "Low-Code", dataset: "-", steps: [
+  { id: "TC-0405", origin: "API 임포트", name: "사용자 삭제", suiteId: 5, tags: "regression", status: "검토중", level: "Low-Code", dataset: "-", steps: [
     { act: "요청", loc: "DELETE /v1/users/qa_user01", val: "-", body: "", headers: "", save: "" },
     { act: "응답 검증", loc: "상태코드", val: "204" },
   ] },
@@ -318,16 +318,16 @@ export const INIT_FQA_RUNS = [
 
 /* ── 실행 계획 = 환경 1개(ID참조) + 스위트 다중 + 실행 옵션 ── */
 export const INIT_FQA_PLANS = [
-  { id: 1, name: "로그인 회귀 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suites: ["로그인 / 인증"], tags: "regression", sched: "매일 22:00", schedule: { mode: "schedule", freq: "daily", time: "22:00", dow: 1, dom: 1, cron: "0 22 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 22:00" }, status: "활성",
+  { id: 1, name: "로그인 회귀 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suiteIds: [1], tags: "regression", sched: "매일 22:00", schedule: { mode: "schedule", freq: "daily", time: "22:00", dow: 1, dom: 1, cron: "0 22 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 22:00" }, status: "활성",
     brow: ["Chromium"], res: "1920×1080", headless: true, video: "실패 시만", timeout: 30, workers: "4", retry: 1, onfail: "계속 진행", gate: 95 },
-  { id: 2, name: "전체 스모크 (운영)", targetRef: { systemId: 1, env: "운영" }, suites: ["로그인 / 인증", "메인 화면", "회원가입"], tags: "smoke", sched: "이벤트 · 배포 시", schedule: { mode: "event", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: { deploy: true }, summary: "이벤트 · 배포 시" }, status: "활성",
+  { id: 2, name: "전체 스모크 (운영)", targetRef: { systemId: 1, env: "운영" }, suiteIds: [1, 3, 2], tags: "smoke", sched: "이벤트 · 배포 시", schedule: { mode: "event", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: { deploy: true }, summary: "이벤트 · 배포 시" }, status: "활성",
     brow: ["Chromium", "Firefox"], res: "1920×1080", headless: true, video: "녹화 안 함", timeout: 30, workers: "auto", retry: 0, onfail: "계속 진행", gate: 98 },
-  { id: 3, name: "결제 회귀 (웹+API)", targetRef: { systemId: 1, env: "스테이징" }, suites: ["결제 / 주문"], tags: "critical", sched: "예약 없음", status: "초안",
+  { id: 3, name: "결제 회귀 (웹+API)", targetRef: { systemId: 1, env: "스테이징" }, suiteIds: [4], tags: "critical", sched: "예약 없음", status: "초안",
     brow: ["Chromium"], res: "1440×900", headless: false, video: "전체 녹화", timeout: 30, workers: "2", retry: 2, onfail: "첫 에러 시 중단", gate: 100 },
   /* 회원가입 스위트를 도는 계획 — 데이터 구동 케이스(TC-0021)가 여기 들어온다.
      데이터셋을 지우면 이 계획이 사전 검사에서 막힌다. */
-  { id: 5, name: "회원가입 회귀 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suites: ["회원가입"], tags: "regression", sched: "예약 없음", status: "활성",
+  { id: 5, name: "회원가입 회귀 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suiteIds: [2], tags: "regression", sched: "예약 없음", status: "활성",
     brow: ["Chromium"], res: "1920×1080", headless: true, video: "실패 시만", timeout: 30, workers: "2", retry: 1, onfail: "계속 진행", gate: 95 },
-  { id: 4, name: "API 스모크 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suites: ["API 연동"], tags: "smoke", sched: "이벤트 · 배포 시", schedule: { mode: "event", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: { deploy: true }, summary: "이벤트 · 배포 시" }, status: "활성",
+  { id: 4, name: "API 스모크 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suiteIds: [5], tags: "smoke", sched: "이벤트 · 배포 시", schedule: { mode: "event", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: { deploy: true }, summary: "이벤트 · 배포 시" }, status: "활성",
     brow: ["Chromium"], res: "1920×1080", headless: true, video: "녹화 안 함", timeout: 30, workers: "4", retry: 1, onfail: "계속 진행", gate: 95 },
 ];

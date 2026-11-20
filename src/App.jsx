@@ -46,7 +46,7 @@ const stampSeeds = (arr) => (arr || []).map((o, i) => { if (o.createdAt) return 
 const mqaX = (c) => (c.proc ? { proc: c.proc || [], prodCaution: !!c.prodCaution, pre: c.pre || "" } : undefined);   // 스위트·시작 상태는 케이스가 아니라 스위트가 가진다
 const seedCases = (arr) => stampSeeds(arr).map((c) => {
   const rev = c.rev || 1;
-  const head = { rev, at: c.updatedAt, by: c.updatedBy, note: "", level: c.level, steps: c.steps || [], code: c.code || "", name: c.name, suite: c.suite, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "", x: mqaX(c) };
+  const head = { rev, at: c.updatedAt, by: c.updatedBy, note: "", level: c.level, steps: c.steps || [], code: c.code || "", name: c.name, suiteId: c.suiteId, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "", x: mqaX(c) };
   return { ...c, rev, versions: [head, ...(c.versions || [])] };
 });
 
@@ -150,7 +150,7 @@ export default function App() {
   const revSnap = (c, rev, note) => ({
     rev, at: c.updatedAt || auditNow(), by: c.updatedBy || currentUser, note: note || "",
     level: c.level, steps: c.steps || [], code: c.code || "",
-    name: c.name, suite: c.suite, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "",
+    name: c.name, suiteId: c.suiteId, tags: c.tags || "", dataset: c.dataset || "-", acctRole: c.acctRole || "",
     x: mqaX(c),   // MQA 전용 필드(자연어 절차·사전조건 원문) — FQA 는 읽지 않는다. 관리 수준·코드는 level·code 로 FQA 와 공유
   });
   /* 🔑 미저장 변경 보호 — dirty 상태는 각 화면 안에 있고 사이드바는 그것을 모른다.
