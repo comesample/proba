@@ -6,7 +6,7 @@
 import { Bug, Megaphone, UserCog, Braces, Database } from "lucide-react";
 
 /* 상단 도메인 — 모두 펼쳐 놓는다. 앱 성능 · 부하는 내부적으로 NQA 도메인의 두 워크스페이스(ws) */
-export const DOMAINS = [{ id: "LQA", label: "AI 응답 품질", ready: true }, { id: "FQA", label: "웹 기능", ready: true }, { id: "MQA", label: "앱 기능", ready: true }, { id: "NQA", ws: "perf", label: "앱 성능", ready: true }, { id: "NQA", ws: "load", label: "부하", ready: true }];
+export const DOMAINS = [{ id: "LQA", label: "AI 품질", ready: true }, { id: "FQA", label: "웹 기능", ready: true }, { id: "MQA", label: "앱 기능", ready: true }, { id: "NQA", ws: "perf", label: "앱 성능", ready: true }, { id: "NQA", ws: "load", label: "부하", ready: true }];
 export const COMMON_SECTIONS = [
   { group: "공통", items: [
     { id: "variables", label: "변수", icon: Braces },

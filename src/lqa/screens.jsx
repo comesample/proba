@@ -297,7 +297,7 @@ export function JiraForm({ close, data }) {
         <Toggle on={jira} onClick={() => { if (!jconn) { toast("Jira 미연동 — 결함 화면의 ‘Jira 연동’에서 먼저 연결하세요", "warn"); return; } setJira(!jira); }} />
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Field label="영역"><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="LQA">AI 응답 품질</option><option value="FQA">웹 기능</option><option value="MQA">앱 기능</option><option value="PQA">앱 성능</option><option value="NQA">부하</option></Select></Field>
+        <Field label="영역"><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="LQA">AI 품질</option><option value="FQA">웹 기능</option><option value="MQA">앱 기능</option><option value="PQA">앱 성능</option><option value="NQA">부하</option></Select></Field>
         <Field label="심각도"><Select value={sev} onChange={(e) => { setSev(e.target.value); setPrio(prioMap[e.target.value] || "High"); }}><option>Critical</option><option>Major</option><option>Minor</option></Select></Field>
         <Field label="담당자"><Select value={assignee} onChange={(e) => setAssignee(e.target.value)}><option>QA Lead</option><option>챗봇 PO</option><option>미지정</option></Select></Field>
       </div>
@@ -846,7 +846,7 @@ export function Dashboard() {
   ];
   return (
     <div className="space-y-5">
-      <PageToolbar desc="AI 응답 품질 현황 요약 · 최근 실행과 안전성 지표">
+      <PageToolbar desc="AI 품질 현황 요약 · 최근 실행과 안전성 지표">
         <div style={{ width: 190 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value)}><option value="전체">전체 계획</option>{planNames.map((n) => <option key={n} value={n}>{n}</option>)}</Select></div>
         <input type="date" value={from} min={minFromOf(to)} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
         <span className="text-slate-500">~</span>
@@ -1934,7 +1934,7 @@ export function Defects() {
   const sev = KIND.severity;
   const st = KIND.issueStatus;
   const domKind = KIND.domain;
-  const domLabel = { LQA: "AI 응답 품질", FQA: "웹 기능", MQA: "앱 기능", PQA: "앱 성능", NQA: "부하" };
+  const domLabel = { LQA: "AI 품질", FQA: "웹 기능", MQA: "앱 기능", PQA: "앱 성능", NQA: "부하" };
   const [dom, setDom] = useState("전체");
   const [stf, setStf] = useState("전체");
   const [sel, setSel] = useState(null);
@@ -1953,7 +1953,7 @@ export function Defects() {
   return (
     <div className="space-y-4">
       <PageToolbar desc="Jira 연계 · 전 도메인 공통">
-        <div style={{ width: 140 }}><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="전체">전체</option><option value="LQA">AI 응답 품질</option><option value="FQA">웹 기능</option><option value="MQA">앱 기능</option><option value="PQA">앱 성능</option><option value="NQA">부하</option></Select></div>
+        <div style={{ width: 140 }}><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="전체">전체</option><option value="LQA">AI 품질</option><option value="FQA">웹 기능</option><option value="MQA">앱 기능</option><option value="PQA">앱 성능</option><option value="NQA">부하</option></Select></div>
         <div style={{ width: 130 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option value="전체">전체 상태</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option></Select></div>
         <Btn icon={SlidersHorizontal} onClick={() => openModal("jiraConfig")}>Jira 연동</Btn>
         <Btn kind="primary" icon={Bug} onClick={() => openModal("jira", { tc: "수동", sev: "Major", title: "" })}>이슈 등록</Btn>
@@ -2102,7 +2102,7 @@ export function Report() {
           <div className="-mt-1 text-xs text-slate-500">선택 범위 대시보드 지표를 <span className="text-slate-700">기간 스냅샷 + 직전 대비 델타 + 주요 실패·회귀·신규 결함 하이라이트</span>로 취합해 지정된 알림 채널로 발송합니다.</div>
           {rsched.on && (
             <div className="space-y-3">
-              <Field label="범위"><Select value={scope} onChange={(e) => setScope(e.target.value)}><option>AI 응답 품질</option><option>웹 기능</option><option>앱 기능</option><option>앱 성능</option><option>부하</option><option>통합 (전체 도메인)</option></Select></Field>
+              <Field label="범위"><Select value={scope} onChange={(e) => setScope(e.target.value)}><option>AI 품질</option><option>웹 기능</option><option>앱 기능</option><option>앱 성능</option><option>부하</option><option>통합 (전체 도메인)</option></Select></Field>
               <Field label="형식"><div className="rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-sm text-slate-700">HTML <span className="text-xs text-slate-500">· PDF·Excel은 후속 지원</span></div></Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="주기"><Select value={rsched.freq} onChange={(e) => setRsched({ ...rsched, freq: e.target.value })}><option value="daily">매일</option><option value="weekly">매주</option><option value="monthly">매월</option></Select></Field>
@@ -2208,7 +2208,7 @@ export function MembersView() {
   };
   const tName = (tenants.find((t) => t.id === tenantId) || {}).name;
   const MENU_GROUPS = [
-    { id: "LQA", label: "AI 응답 품질", menus: ["대시보드", "챗봇 연결", "테스트케이스", "Judge · Prompt", "평가 계획", "평가 실행", "실행 이력", "회귀 비교"] },
+    { id: "LQA", label: "AI 품질", menus: ["대시보드", "챗봇 연결", "테스트케이스", "Judge · Prompt", "평가 계획", "평가 실행", "실행 이력", "회귀 비교"] },
     { id: "FQA", label: "웹 기능", menus: ["대시보드", "대상·환경", "테스트 스위트", "테스트케이스", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "MQA", label: "앱 기능", menus: ["대시보드", "대상·환경", "테스트 기기", "테스트 스위트", "테스트케이스", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "PQA", label: "앱 성능", menus: ["대시보드", "대상 앱", "측정 시나리오", "측정 계획", "측정 실행", "실행 이력", "성능 추이"] },
