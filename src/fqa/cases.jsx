@@ -13,7 +13,7 @@ import { FqaSpecImportScreen } from "./specImportScreen.jsx";
 import { SAMPLE_TC_WEB } from "./aiLogic.js";
 /* ═══════════ 9. 테스트케이스 (통합 저장소) ═══════════ */
 export function FqaCasesScreen() {
-  const { fqaCases, fqaSuites, updateFqaSuite, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick } = useApp();
+  const { fqaCases, fqaSuites, updateFqaSuite, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick, pendingSelect, setPendingSelect } = useApp();
   const editorDirty = useRef(false);
   /* 좌측 메뉴 '테스트케이스' 재클릭 → 목록으로 (미저장 확인은 goTo 가 이미 했다). 처음 마운트 때는 무시 */
   const tick0 = useRef(navTick);
@@ -31,6 +31,8 @@ export function FqaCasesScreen() {
   const [platF, setPlatF] = useState("전체");
   // 스위트 화면의 "전체 N건 보기" — 해당 스위트로 필터를 걸고 목록을 연다
   useEffect(() => { if (fqaSuiteFocus) { setMode("목록"); setSuiteF(fqaSuiteFocus); setQ(""); setStf("전체"); setTagF("전체"); setPlatF("전체"); setFqaSuiteFocus(null); } }, [fqaSuiteFocus]);
+  /* 대시보드 KPI(승인 대기 등)에서 넘어온 경우 — 상태 필터만 걸어서 목록으로 연다 */
+  useEffect(() => { if (pendingSelect && pendingSelect.kind === "cases" && pendingSelect.dom === "FQA") { setMode("목록"); setSuiteF("전체"); setQ(""); setStf(pendingSelect.st || "전체"); setTagF("전체"); setPlatF("전체"); setPendingSelect(null); } }, [pendingSelect]);
   const [sel, setSel] = useState(() => (fqaEditTc ? fqaCases.find((x) => x.id === fqaEditTc) || null : null));
   const [open, setOpen] = useState(null);
   const [picked, setPicked] = useState(new Set());

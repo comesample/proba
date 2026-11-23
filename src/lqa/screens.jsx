@@ -8,7 +8,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useApp } from "../common/context.js";
 import { VarRefInput } from "../common/VarRefInput.jsx";
 import { C, vKind, KIND, TOOLTIP } from "../common/theme.js";
-import { Badge, ScoreBar, Card, Field, Btn, Input, Select, Toggle, PageToolbar, EmptyState, SearchInput, RunTime, nowStamp, Portal, SEL_CARD, SEL_IDLE, SEL_ROW } from "../common/ui.jsx";
+import { Badge, ScoreBar, Card, KpiCard, Field, Btn, Input, Select, Toggle, PageToolbar, EmptyState, SearchInput, RunTime, nowStamp, Portal, SEL_CARD, SEL_IDLE, SEL_ROW } from "../common/ui.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
 import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
 // 이벤트 트리거는 정보성(읽기전용) — 감지 방식은 챗봇 연결 "모델·배포 소스"에서 정의된 값을 상속만 표시.
@@ -258,7 +258,7 @@ export function JiraForm({ close, data }) {
   const [steps, setSteps] = useState(d.q ? "1. 사전조건: " + (d.pre || "없음") + "\n2. 발화 입력: \"" + d.q + "\"\n3. 챗봇 응답 확인" : (d.steps || ""));
   const [expected, setExpected] = useState(d.golden || d.expected || "");
   const [actual, setActual] = useState(d.actual || "");
-  const [attach, setAttach] = useState({ conv: true, judge: true, safety: true });
+  const [attach, setAttach] = useState(() => Object.fromEntries([...(d.artifacts || []).map((a) => a.k), "conv", "judge", "safety"].map((k) => [k, true])));
   const [files, setFiles] = useState([]);
   /* 데이터 구동 케이스(기능 QA)에서만 rows가 전달된다. 없으면 아래 블록이 렌더되지 않으므로 다른 영역에는 영향이 없다.
      원인이 다른 행은 별개 결함이므로 어느 행을 묶을지는 사용자가 고른다 — 시스템이 자동으로 나누거나 합치지 않는다. */
@@ -280,7 +280,8 @@ export function JiraForm({ close, data }) {
     /* 행은 데이터 스냅샷으로 저장한다 — 데이터셋이 바뀌거나 삭제돼도 결함은 그대로 유효하다 */
     const rowsSel = defRows.filter((r) => pickRows.has(r.i)).map((r) => ({ i: r.i, data: r.data }));
     const rowNote = rowsSel.length ? "\n\n[실패 행] " + (d.ds ? "데이터셋 " + d.ds + "\n" : "") + rowsSel.map((r) => r.i + "행 · " + Object.entries(r.data || {}).map(([k, v]) => k + "=" + v).join(" · ")).join("\n") : "";
-    addDefect({ key, tc: d.tc || "수동", target: d.target || "", sev, title, status: "Open", domain: dom, project: jira ? proj : "", assignee: assignee === "미지정" ? "" : assignee, desc: desc + rowNote, steps, expected, actual, evidence, ...(rowsSel.length ? { rows: rowsSel } : {}) });
+    addDefect({ key, tc: d.tc || "수동", target: d.target || "", sev, title, status: "Open", domain: dom, project: jira ? proj : "", assignee: assignee === "미지정" ? "" : assignee, desc: desc + rowNote, steps, expected, actual, evidence, ...(rowsSel.length ? { rows: rowsSel } : {}), ...(d.run ? { run: d.run } : {}), ...(d.perf ? { perf: true } : {}) });
+    if (d.onAdd) d.onAdd(key);   // 등록한 화면이 결과와 결함을 잇는다 (앱 테스트: run.defects)
     /* 🔑 사용자가 방금 [등록] 을 눌러서 생긴 일은 알림에 넣지 않는다 — 토스트로 이미 말했다.
        알림은 "내가 안 보고 있을 때 일어난 일" 이다. 자기 행동의 메아리로 채우면 진짜 알림이 묻힌다.
        규칙에 의한 자동 등록(아래 FAIL 자동 등록)은 알림이 맞다. */
@@ -797,7 +798,7 @@ export function Targets() {
 
 /* ============================ screens ============================ */
 export function Dashboard() {
-  const { goto, runs, plans, cases, defects, setLqaResultRun, setLqaResultFrom, toast } = useApp();
+  const { goto, runs, plans, cases, defects, setLqaResultRun, setLqaResultFrom, toast, goList } = useApp();
   const toISO = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
   const [today] = useState(() => toISO(new Date()));
   const [defFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return toISO(d); });
@@ -815,7 +816,7 @@ export function Dashboard() {
   const avg = (arr) => (arr.length ? arr.reduce((x, y) => x + y, 0) / arr.length : 0);
   const avgScore = doneRuns.length ? avg(doneRuns.map((r) => r.score)).toFixed(1) : "—";
   const avgPass = doneRuns.length ? Math.round(avg(doneRuns.map((r) => r.passRate))) : null;
-  const openDefects = defects.filter((d) => d.status === "Open").length;
+  const openDefects = defects.filter((d) => (d.domain || "LQA") === "LQA" && d.status !== "Resolved").length;   // 이 도메인 · 해결 전 (In Progress 포함)
   const running = fruns.filter((r) => r.status === "진행중").length;
   const pending = cases.filter((c) => c.status === "검토중" || c.status === "초안").length;
   /* 🔑 p.sched(표시용 문자열)가 아니라 firesToday(schedule 객체)로 센다.
@@ -838,10 +839,11 @@ export function Dashboard() {
   const planNames = [...new Set(runs.map((r) => r.planName))];
   const chartData = doneRuns.slice().sort((a, b) => (parseD(a.startedAt) || 0) - (parseD(b.startedAt) || 0)).map((r) => ({ d: (r.startedAt || "").slice(5, 10).replace("-", "/"), score: r.score, pass: r.passRate }));
   const kpis = [
-    { label: "총 평가 실행", value: String(fruns.length), sub: "완료 " + doneRuns.length + " · 오류 " + errRuns },
-    { label: "평균 종합 점수", value: avgScore, sub: doneRuns.length ? doneRuns.length + "개 완료 평균" : "완료 실행 없음" },
-    { label: "PASS율", value: avgPass != null ? avgPass + "%" : "—", sub: doneRuns.length ? "완료 실행 평균" : "—" },
-    { label: "미결 결함", value: String(openDefects), sub: running ? running + "건 실행 중" : "전체 도메인 · 현재" },
+    /* 누르면 그 값을 조치할 화면으로 — 실행 수 · 평균은 그 실행들이 있는 실행 이력, 결함은 결함 목록(AI 품질 · 해결 전). 0 이면 누를 곳이 없다 */
+    { label: "총 평가 실행", value: String(fruns.length), sub: "완료 " + doneRuns.length + " · 오류 " + errRuns, go: fruns.length ? () => goto("history") : null },
+    { label: "평균 종합 점수", value: avgScore, sub: doneRuns.length ? doneRuns.length + "개 완료 평균" : "완료 실행 없음", go: doneRuns.length ? () => goto("history") : null },
+    { label: "PASS율", value: avgPass != null ? avgPass + "%" : "—", sub: doneRuns.length ? "완료 실행 평균" : "—", go: doneRuns.length ? () => goto("history") : null },
+    { label: "미결 결함", value: String(openDefects), sub: "해결 전", go: openDefects ? () => goList("defects", { kind: "defects", dom: "LQA", st: "해결 전" }) : null },
   ];
   return (
     <div className="space-y-5">
@@ -852,13 +854,7 @@ export function Dashboard() {
         <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
       <div className="grid grid-cols-4 gap-4">
-        {kpis.map((k) => (
-          <Card key={k.label} className="p-4">
-            <div className="text-xs text-slate-500">{k.label}</div>
-            <div className="mt-1 text-3xl font-bold text-slate-900">{k.value}</div>
-            <div className="mt-1 text-xs text-slate-500">{k.sub}</div>
-          </Card>
-        ))}
+        {kpis.map((k) => <KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} onClick={k.go} />)}
       </div>
       <div className="grid grid-cols-3 gap-4">
         <Card className="col-span-2 p-4">
@@ -1943,16 +1939,18 @@ export function Defects() {
       if (d) { setDom("전체"); setStf("전체"); setSel(d); }
       setPendingSelect(null);
     }
+    /* 대시보드 '미해결 결함' 에서 넘어온 경우 — 그 도메인 · 해결 전으로 걸어서 연다 */
+    if (pendingSelect && pendingSelect.kind === "defects") { setDom(pendingSelect.dom || "전체"); setStf(pendingSelect.st || "전체"); setSel(null); setPendingSelect(null); }
   }, [pendingSelect]);
   const TRANS = { "Open": [["진행", "In Progress"], ["해결", "Resolved"]], "In Progress": [["해결", "Resolved"], ["보류", "Open"]], "Resolved": [["재오픈", "Open"]] };
-  const list = defects.filter((d) => (dom === "전체" || (d.domain || "LQA") === dom) && (stf === "전체" || (d.status || "Open") === stf));
+  const list = defects.filter((d) => (dom === "전체" || (d.domain || "LQA") === dom) && (stf === "전체" || (stf === "해결 전" ? d.status !== "Resolved" : (d.status || "Open") === stf)));
   const openN = list.filter((d) => d.status !== "Resolved").length;
   const resN = list.filter((d) => d.status === "Resolved").length;
   return (
     <div className="space-y-4">
       <PageToolbar desc="Jira 연계 · 전 도메인 공통">
         <div style={{ width: 140 }}><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="전체">전체</option><option value="LQA">AI 품질</option><option value="FQA">웹 테스트</option><option value="MQA">앱 테스트</option><option value="NQA">부하</option></Select></div>
-        <div style={{ width: 130 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option value="전체">전체 상태</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option></Select></div>
+        <div style={{ width: 130 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option value="전체">전체 상태</option><option value="해결 전">해결 전</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option></Select></div>
         <Btn icon={SlidersHorizontal} onClick={() => openModal("jiraConfig")}>Jira 연동</Btn>
         <Btn kind="primary" icon={Bug} onClick={() => openModal("jira", { tc: "수동", sev: "Major", title: "" })}>이슈 등록</Btn>
       </PageToolbar>

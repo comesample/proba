@@ -54,7 +54,7 @@ const TagPicker = ({ value, onChange }) => {
 
 /* ═══════════ 목록 ═══════════ */
 export function MqaCasesScreen() {
-  const { mqaCases = [], mqaSuites = [], mqaSystems = [], addMqaCase, setMqaCaseStatus, removeMqaCase, commitMqaCase, updateMqaSuite, mqaEditTc, setMqaEditTc, goTo, navTick } = useApp();
+  const { mqaCases = [], mqaSuites = [], mqaSystems = [], addMqaCase, setMqaCaseStatus, removeMqaCase, commitMqaCase, updateMqaSuite, mqaEditTc, setMqaEditTc, goTo, navTick, pendingSelect, setPendingSelect } = useApp();
   /* 케이스는 스위트를 모른다 — 스위트가 케이스를 가리킨다 (한 케이스가 여러 스위트에서 재사용) */
   const sn = (id) => SL.suiteNamesOf(mqaSuites, id).join(" · ");
   const suiteById = (id) => mqaSuites.find((x) => x.id === id) || null;
@@ -73,6 +73,8 @@ export function MqaCasesScreen() {
   const [picked, setPicked] = useState(new Set());
   const [suiteModal, setSuiteModal] = useState(null);
   const [tagModal, setTagModal] = useState(null);
+  /* 대시보드 KPI(승인 대기 등)에서 넘어온 경우 — 상태 필터만 걸어서 목록으로 연다 */
+  useEffect(() => { if (pendingSelect && pendingSelect.kind === "cases" && pendingSelect.dom === "MQA") { setMode("목록"); setSuiteF("전체"); setQ(""); setStf(pendingSelect.st || "전체"); setTagF("전체"); setSysF("전체"); setPendingSelect(null); } }, [pendingSelect]);
   /* 좌측 메뉴 '테스트케이스' 재클릭 → 목록으로 (미저장 확인은 goTo 가 이미 했다). 처음 마운트 때는 무시 */
   const tick0 = useRef(navTick);
   useEffect(() => { if (navTick === tick0.current) return; editorDirty.current = false; setMode("목록"); setOpen(null); setBlank(null); setAddOpen(false); }, [navTick]);

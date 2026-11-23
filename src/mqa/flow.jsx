@@ -11,10 +11,12 @@
 import { useState, useEffect, Fragment } from "react";
 import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp, Sparkles, Bug } from "lucide-react";
 import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
-import { Card, Badge, Btn, Field, Input, Select, Seg, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
+import { Card, Badge, Btn, Field, Input, Select, Seg, KpiCard, StatusLine, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
 import * as SL from "./suiteLogic.js";
+import { openMqaDefect, regMqaDefects } from "./defectLogic.js";
+import { isTimed, isOnNewBuild, nextRun } from "../common/scheduleLogic.js";
 import * as BV from "./builds.js";
 import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
 import { envText, DeviceSelect, MockBtn, ReadonlyField } from "./workPickers.jsx";
@@ -78,22 +80,8 @@ export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride, queueOk
    업로드가 PROBA 안에서 일어나므로 고객사 빌드 시스템 연동이 필요 없다 */
 export const SCHED0 = { mode: "manual", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "예약 없음" };
 export const MQA_EVENTS = [{ key: "newBuild", label: "새 버전을 올리면", desc: "대상·환경에 더 높은 빌드 번호의 앱을 올리면 바로 실행합니다 (앱 버전이 '최신' 인 계획만)", short: "새 버전" }];
-export const isTimed = (s) => !!(s && s.mode === "schedule" && s.active !== false);
-export const isOnNewBuild = (s) => !!(s && s.mode === "event" && s.ev && s.ev.newBuild);
+export { isTimed, isOnNewBuild, nextRun } from "../common/scheduleLogic.js";   // 다른 앱 화면이 여기서 가져다 쓴다
 export const schedText = (s) => (!s || s.mode === "manual" ? "예약 없음" : s.summary || "예약");
-/* 다음 실행 시각 — 정기 스케줄만. Cron 은 식 그대로 보여준다 */
-export const nextRun = (s) => {
-  if (!isTimed(s)) return "";
-  if (s.freq === "cron") return "Cron " + s.cron;
-  const now = new Date(); const [h, m] = String(s.time || "02:00").split(":").map(Number);
-  const z = (n) => String(n).padStart(2, "0");
-  const fmt = (d) => d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()) + " " + z(d.getHours()) + ":" + z(d.getMinutes());
-  if (s.freq === "hourly") { const d = new Date(now); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return fmt(d); }
-  const d = new Date(now); d.setHours(h, m, 0, 0);
-  const ok = (x) => (s.freq === "weekdays" ? x.getDay() >= 1 && x.getDay() <= 5 : s.freq === "weekly" ? x.getDay() === +s.dow : s.freq === "monthly" ? x.getDate() === +s.dom : true);
-  for (let i = 0; i < 400 && (d <= now || !ok(d)); i++) d.setDate(d.getDate() + 1);
-  return fmt(d);
-};
 const RUN_K = { "대기 중": "info", "실행 중": "warn", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
 const CASE_K = { "대기": "draft", "실행 중": "warn", "통과": "pass", "경고": "warn", "실패": "fail", "건너뜀": "draft" };
 /* 🔑 회차의 케이스 결과는 '케이스' 기준으로 합친다 — 같은 케이스가 여러 스위트에서 돌 수 있다 (U3)
@@ -840,7 +828,7 @@ function ResultDetail({ runId, back, backLabel, nav }) {
     app.commitMqaCase(rc.id, { steps: c.steps.map((x) => (x.loc === h.from ? { ...x, loc: h.to, ex: h.ex } : x)) }, { note: "보정 승인 — " + h.from + " → " + h.to });
     setHealSt(rc, "승인됨"); flash(rc.id + " 로케이터 반영 (" + hit + "개 스텝) — 이 스위트를 다시 실행해 확인하세요");
   };
-  const addDefect = (c) => { const no = "BUG-" + (1200 + Object.keys(run.defects || {}).length + 1); app.updateMqaRun(run.id, { defects: { ...(run.defects || {}), [c.id]: no } }); flash(no + " 결함 초안 생성 — 실패 화면 · 로그 첨부 (목업)"); };
+  const addDefect = (c) => openMqaDefect(app, run, c.id, { tc: c.id, title: c.name + " 실패 — 앱 결함 의심", desc: "실행: " + run.id + " · v" + run.build + "\n케이스: " + c.name + " (" + c.id + ")" + (c.failMsg ? "\n실패: " + c.failMsg : ""), steps: "1. 케이스 '" + c.name + "' 실행" + (c.failStep ? "\n2. 스텝 " + c.failStep + " 에서 실패" : ""), expected: "케이스 통과", actual: c.failMsg || "케이스 실패" });
   const mc = mergedCases(run), mFail = mc.filter((c) => c.st === "실패").length;
   const SUM = [["통과", mc.filter((c) => c.st === "통과").length, "text-emerald-600"], ["경고", mc.filter((c) => c.st === "경고").length, "text-amber-600"], ["실패", mFail, mFail ? "text-red-600" : "text-slate-400"], ["건너뜀", mc.filter((c) => c.st === "건너뜀").length, "text-slate-500"], ["소요", durOfRun(run), "text-slate-900"]];
   const j = oc ? judgeOf(run, oc, mqaRuns, tcNow(oc.id)) : null;
@@ -959,7 +947,7 @@ const completed = (runs) => (runs || []).filter((r) => r.status === "완료" && 
      · 퇴행 행에는 결과 화면과 같은 원인 판정(담당자 확정 우선) */
 const pctOf = (r) => { const p = passRate(r); return p == null ? "—" : p + "%"; };
 function Regression({ nav }) {
-  const { mqaRuns = [], mqaPlans = [], mqaCases = [], mqaSystems = [], mqaSuites = [], updateMqaRun, mqaRegFocus } = useApp();
+  const { mqaRuns = [], mqaPlans = [], mqaCases = [], mqaSystems = [], mqaSuites = [], updateMqaRun, mqaRegFocus, defects, addDefect } = useApp();
   const [msg, flash] = useToast();
   const [aiOpen, setAiOpen] = useState(false);
   const plansWith = mqaPlans.filter((p) => completed(mqaRuns).filter((r) => r.planId === p.id).length >= 2);
@@ -1033,7 +1021,7 @@ function Regression({ nav }) {
         </table>
       </Card>
       {aiOpen && <RegAiPanel flash={flash} A={A} B={B} rows={rows} summ={summ} cls={cls} devDiff={devDiff} part={part} runs={mqaRuns} cases={mqaCases} systems={mqaSystems} suites={mqaSuites} onClose={() => setAiOpen(false)} onOpen={() => { setAiOpen(false); nav && nav("mqa-result-detail", B.id); }}
-        onDefects={(ids) => { const d = { ...(B.defects || {}) }; ids.forEach((id, i) => { if (!d[id]) d[id] = "BUG-" + (1400 + Object.keys(d).length + i + 1); }); updateMqaRun(B.id, { defects: d }); flash(ids.length + "건 결함 초안 생성 — 실패 화면 · 로그 첨부 (목업)"); }} />}
+        onDefects={(ids) => { const ks = regMqaDefects({ defects, addDefect, updateMqaRun }, B, ids.map((id) => { const c = mqaCases.find((x) => x.id === id) || { id, name: id }; return [id, { tc: id, title: c.name + " 실패 — 앱 결함 의심 (회귀 " + A.id + " → " + B.id + ")", desc: "회귀 비교: " + A.id + " (v" + A.build + ") → " + B.id + " (v" + B.build + ")\n케이스: " + c.name + " (" + id + ")" }]; })); flash(ks.length + "건 결함 등록 — 결함 메뉴에서 볼 수 있습니다"); }} />}
       <Toast msg={msg} />
     </div>
   );
@@ -1149,13 +1137,13 @@ export const caseHistory = (runs) => {
   });
 };
 function Flaky({ nav }) {
-  const { mqaRuns = [], mqaCases = [], mqaSuites = [], updateMqaCase, updateMqaRun, setMqaEditTc, goTo } = useApp();
+  const { mqaRuns = [], mqaCases = [], mqaSuites = [], updateMqaCase, updateMqaRun, setMqaEditTc, goTo, openModal } = useApp();
   const [msg, flash] = useToast();
   const caseNow = (id) => mqaCases.find((c) => c.id === id);
   const rows = caseHistory(mqaRuns).filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
   const causeOf = (h) => { if (!h.lastFail) return null; const run = mqaRuns.find((r) => r.id === h.lastFail.run); const c = run && mergedCases(run).find((x) => x.id === h.id); const j = run && c ? judgeOf(run, c, mqaRuns, caseNow(h.id)) : null; return j ? { ...j, kind: h.lastFail.judged || j.kind, fixed: !!h.lastFail.judged } : null; };
   const toggleQuar = (h) => { const c = caseNow(h.id); if (!c) return; updateMqaCase(h.id, { quarantined: !c.quarantined }); flash(c.quarantined ? h.id + " 격리 해제 — 다음 실행부터 대상에 들어갑니다" : h.id + " 격리 — 실행 계획 대상에서 빠집니다"); };
-  const regDefect = (h) => { const run = mqaRuns.find((r) => r.id === h.lastFail.run); const no = "BUG-" + (1300 + Math.floor(Math.random() * 90)); updateMqaRun(run.id, { defects: { ...(run.defects || {}), [h.id]: no } }); flash(no + " 결함 초안 생성 — " + run.id + " 실패 화면 · 로그 첨부 (목업)"); };
+  const regDefect = (h) => { const run = mqaRuns.find((r) => r.id === h.lastFail.run); openMqaDefect({ openModal, updateMqaRun }, run, h.id, { tc: h.id, title: "지속 실패: " + h.name, desc: "케이스 '" + h.name + "' (" + h.id + ")\n최근 " + h.runs + "회 중 " + h.fails + "회 실패 · 마지막 실패 " + run.id, steps: "1. 케이스 '" + h.name + "' 반복 실행\n2. 실패 재현 확인", expected: "케이스 통과", actual: "최근 " + h.runs + "회 중 " + h.fails + "회 실패" }); };
   const suiteOf = (id) => SL.suiteNamesOf(mqaSuites, id).join(" · ");
   /* 공용 표(common/FlakyTable)에 맞춰 행을 만든다 — 판정은 caseHistory, 원인은 결과 화면과 같은 judgeOf */
   const healOf = (h) => { if (!h.lastFail) return null; const run = mqaRuns.find((r) => r.id === h.lastFail.run); const c = run && mergedCases(run).find((x) => x.id === h.id); return (c && c.heal) || null; };
@@ -1178,7 +1166,7 @@ function Flaky({ nav }) {
      · 필터(계획 · 기간)는 모든 카드에 똑같이 적용 */
 const hbar = (p) => (p >= 90 ? "#10b981" : p >= 70 ? "#f59e0b" : "#ef4444");
 export function MqaDashboardScreen({ nav }) {
-  const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [], mqaSuites = [] } = useApp();
+  const { mqaCases = [], mqaRuns = [], mqaPlans = [], mqaRunners = [], mqaSuites = [], defects = [], goList } = useApp();
   const [msg, flash] = useToast();
   const iso = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
   const [today] = useState(() => iso(new Date()));
@@ -1198,20 +1186,28 @@ export function MqaDashboardScreen({ nav }) {
   const approved = mqaCases.filter((c) => c.status === "승인").length, quar = mqaCases.filter((c) => c.quarantined).length;
   const hist = caseHistory(scoped);
   const unstable = hist.filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
-  const defectN = new Set(scoped.flatMap((r) => Object.keys(r.defects || {}).map((k) => k + "@" + r.defects[k]))).size;
+  /* 미해결 결함 = 공통 결함 목록의 앱 테스트 결함 중 Resolved 가 아닌 것 (웹 대시보드와 같은 규칙) · 기능 화면이라 성능 결함은 뺀다 */
+  const defectN = defects.filter((d) => d.domain === "MQA" && !d.perf && d.status !== "Resolved").length;
   const purPlans = mqaPlans.filter((p) => (p.purpose === "성능" ? "성능" : "기능") === purF);
   const next = purPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
   const evPlans = purPlans.filter((p) => p.status === "활성" && !p.buildId && isOnNewBuild(p.schedule)).length;   // 버전 고정 계획은 새 버전에 돌지 않는다
   /* 한 번에 한 목적만 — 계획 목록도 그 목적의 계획만. 단말 · 예약 KPI 는 공통이라 늘 보인다 */
   const selP = planF === "전체" ? null : mqaPlans.find((p) => p.id === planF);
   const showFn = purF === "기능", showPerf = purF === "성능";
+  /* KPI 5 — 웹 기능과 같은 4개 + 앱만의 1개(승인 대기). 누르면 그 값을 조치할 화면으로 (0 이면 누를 곳이 없다)
+     단말 · 다음 예약은 카드가 아니라 상태 줄 (기능 · 성능 공통) */
+  const review = mqaCases.filter((c) => c.status === "검토중").length, drafts = mqaCases.filter((c) => c.status === "초안").length;
   const KPI = [
-    ["자동화 TC", mqaCases.length, "text-slate-900", "승인 " + approved + (quar ? " · 격리 " + quar : "")],
-    ["PASS율 (최근 실행)", lastFull && passRate(lastFull) != null ? passRate(lastFull) + "%" : "—", "text-emerald-600", lastFull ? lastFull.id + " · v" + lastFull.build : "실행 없음"],
-    ["사용 가능 단말", devs.filter((d) => d.state === "사용 가능").length + "/" + devs.length, "text-slate-900", "러너 " + mqaRunners.filter((r) => runnerState(r) === "연결됨").length + "/" + mqaRunners.length + " 연결"],
-    ["불안정 · 지속 실패", unstable.length, "text-amber-600", "최근 " + FLAKY_WINDOW + "회 기준"],
-    ["미해결 결함", defectN, defectN ? "text-red-600" : "text-slate-400", "결과 · 불안정에서 등록"],
-    ["다음 예약", next ? next.at.slice(5) : evPlans ? "새 버전 시" : "—", "text-sky-600", next ? next.p.name : evPlans ? "이벤트 계획 " + evPlans + "건" : "예약 없음"],
+    { label: "자동화 TC", value: mqaCases.length, sub: "승인 " + approved + "/" + mqaCases.length + (quar ? " · 격리 " + quar : ""), go: mqaCases.length ? () => nav && nav("mqa-cases") : null },
+    { label: "PASS율 (최근 실행)", value: lastFull && passRate(lastFull) != null ? passRate(lastFull) + "%" : "—", tone: "text-emerald-600", sub: lastFull ? lastFull.id + " · v" + lastFull.build : "실행 없음", go: lastFull ? () => nav && nav("mqa-result-detail", lastFull.id) : null },
+    { label: "불안정 · 지속 실패", value: unstable.length, tone: "text-amber-600", sub: "최근 " + FLAKY_WINDOW + "회 기준", go: unstable.length ? () => nav && nav("mqa-flaky") : null },
+    { label: "미해결 결함", value: defectN, tone: defectN ? "text-red-600" : "text-slate-400", sub: "해결 전", go: defectN ? () => goList("defects", { kind: "defects", dom: "MQA", st: "해결 전" }) : null },
+    { label: "승인 대기", value: review, tone: review ? "text-sky-600" : "text-slate-400", sub: "검토중 기준 · 초안 " + drafts, go: review ? () => goList("mqa-cases", { kind: "cases", dom: "MQA", st: "검토중" }) : null },
+  ];
+  const devOk = devs.filter((d) => d.state === "사용 가능").length, runOk = mqaRunners.filter((r) => runnerState(r) === "연결됨").length;
+  const status = [
+    { label: "단말 " + devOk + "/" + devs.length + " 사용 가능 · 러너 " + runOk + "/" + mqaRunners.length + " 연결", onClick: () => nav && nav("mqa-devices") },
+    { label: "다음 예약 " + (next ? next.at.slice(5) + " " + next.p.name : "없음") + (evPlans ? " · 새 버전 시 계획 " + evPlans + "건" : ""), onClick: () => nav && nav("mqa-plan") },
   ];
   /* 실패 원인 분포 — 전체 실행의 실패 케이스 */
   /* '누가 고칠 일인가'(구분) 기준으로 묶는다 — 담당자 확정이 우선 · 세부 원인은 툴팁 (FQA 대시보드와 같은 규칙) */
@@ -1224,14 +1220,13 @@ export function MqaDashboardScreen({ nav }) {
   full.slice().reverse().forEach((r) => { const d = dOf(r); const b = (byDay[d] = byDay[d] || { d: d.slice(5), runs: 0, p: 0, n: 0, ver: r.build }); b.runs++; mergedCases(r).forEach((c) => { if (c.st === "통과" || c.st === "실패" || c.st === "경고") { b.n++; if (c.st === "통과") b.p++; } }); b.ver = r.build; });
   const trend = Object.values(byDay).map((x) => ({ ...x, pass: x.n ? Math.round((x.p / x.n) * 100) : null }));
   const verMarks = trend.filter((x, i) => i > 0 && x.ver !== trend[i - 1].ver);
-  /* 스위트 건강도 — 케이스의 최근 전체 실행 결과 */
-  const lastSt = (id) => { const r = full.find((x) => mergedCases(x).some((c) => c.id === id && ["통과", "실패", "경고"].includes(c.st))); return r ? mergedCases(r).find((c) => c.id === id).st : null; };
-  const suiteHealth = mqaSuites.map((su) => { const cs = SL.suiteCases(su, mqaCases); const rated = cs.map((c) => lastSt(c.id)).filter(Boolean); return { name: su.name, tc: cs.length, pass: rated.length ? Math.round((rated.filter((x) => x === "통과").length / rated.length) * 100) : null }; });
+  /* 스위트 건강도 = 그 스위트가 마지막으로 돈 전체 실행의 그 스위트 행만 (단말 행 모두) — 다른 스위트에서 돈 같은 케이스 결과를 빌려 오지 않는다.
+     통과율은 KPI 와 같은 기준 (경고는 통과로 세지 않는다 · 건너뜀은 분모에서 뺀다). 돈 적 없으면 '미실행' (웹 대시보드와 같은 규칙) */
+  const suiteHealth = mqaSuites.map((su) => { const cs = SL.suiteCases(su, mqaCases); const r = full.find((x) => (x.cases || []).some((c) => c.suiteId === su.id)); const rows = r ? r.cases.filter((c) => c.suiteId === su.id && ["통과", "실패", "경고"].includes(c.st)) : []; return { name: su.name, tc: cs.length, pass: rows.length ? Math.round((rows.filter((c) => c.st === "통과").length / rows.length) * 100) : null }; });
   /* 단말별 PASS율 — FQA 의 '브라우저별' 자리 */
   /* 단말별 — 실행 행(케이스 × 단말) 기준. 여러 단말에서 돈 회차는 그 단말의 행만 센다 */
   const byDev = devs.map((d) => { const rs = full.filter((r) => (r.devIds || [r.devId]).includes(d.id)); const cs = rs.flatMap((r) => (r.cases || []).filter((c) => (c.devId || r.devId) === d.id)).filter((c) => ["통과", "실패", "경고"].includes(c.st)); return { d, runs: rs.length, p: cs.length ? Math.round((cs.filter((c) => c.st === "통과").length / cs.length) * 100) : null }; });
   const recent = scoped.filter((r) => r.purpose !== "성능").slice(0, 5);
-  const KPI_V = KPI.filter((k) => showFn || ["사용 가능 단말", "다음 예약"].includes(k[0]));
   return (
     <div className="space-y-4">
       <PageToolbar desc="기능 검증 · 성능 측정 현황 (실행 · 케이스 · 테스트 기기에서 파생)">
@@ -1241,8 +1236,9 @@ export function MqaDashboardScreen({ nav }) {
         <span className="text-slate-500">~</span>
         <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(" + KPI_V.length + ", minmax(0, 1fr))" }}>{KPI_V.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      <StatusLine items={status} />
       {showFn && <>
+      <div className="grid grid-cols-5 gap-3">{KPI.map((k) => <KpiCard key={k.label} label={k.label} value={k.value} tone={k.tone} sub={k.sub} onClick={k.go} />)}</div>
       <Card className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">실패 원인 분포 <span className="text-xs font-normal text-slate-500">전체 실행 기준</span></span><span className="text-xs text-slate-500">누가 고칠 일인가 기준 · 담당자 확정 우선</span></div>
         {causeTot === 0 ? <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">기간 내 실패가 없습니다</div> : (<>
@@ -1270,7 +1266,7 @@ export function MqaDashboardScreen({ nav }) {
       </Card>
       <div className="grid grid-cols-3 gap-4">
         <Card className="col-span-2 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-sky-600" />스위트 건강도 (케이스 최근 결과 기준)</div>
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-sky-600" />스위트 건강도 (스위트 마지막 실행 기준)</div>
           <div className="space-y-2.5">{suiteHealth.map((su) => (
             <div key={su.name}><div className="mb-1 flex justify-between text-xs"><span className="text-slate-700">{su.name} <span className="text-slate-500">· {su.tc} TC</span></span>{su.pass == null ? <span className="text-slate-500">미실행</span> : <span className="font-semibold" style={{ color: hbar(su.pass) }}>{su.pass}%</span>}</div>
               <div className="h-2 rounded bg-slate-100">{su.pass != null && <div className="h-2 rounded" style={{ width: su.pass + "%", background: hbar(su.pass) }} />}</div></div>
@@ -1303,7 +1299,7 @@ export function MqaDashboardScreen({ nav }) {
       </div>
       </>}
       {/* 성능 측정 — 성능 계획이 있을 때만. 기능 지표와 섞지 않는다 (같은 기간 필터) */}
-      {showPerf && <PerfDashSection plans={selP ? [selP] : mqaPlans} runs={mqaRuns.filter((r) => dOf(r) >= from && dOf(r) <= to)} nav={nav} title={showFn ? "성능 측정" : ""} />}
+      {showPerf && <PerfDashSection plans={selP ? [selP] : mqaPlans} runs={mqaRuns.filter((r) => dOf(r) >= from && dOf(r) <= to)} nav={nav} title={showFn ? "성능 측정" : ""} defects={defects} onDefects={() => goList("defects", { kind: "defects", dom: "MQA", st: "해결 전" })} />}
       <Toast msg={msg} />
     </div>
   );

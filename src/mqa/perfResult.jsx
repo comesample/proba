@@ -7,6 +7,7 @@ import { Badge, Btn, Card, Toast, useToast } from "../common/ui.jsx";
 import { osName } from "./devices.js";
 import * as PF from "./perfLogic.js";
 import * as PR from "./perfRun.js";
+import { openMqaDefect } from "./defectLogic.js";
 
 const mmss = (ms) => { const s = Math.floor((ms || 0) / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const fmt = (m, v) => (v == null ? "—" : v + (m.unit === "건" ? "건" : " " + m.unit));
@@ -45,7 +46,7 @@ export function PerfRunDetail({ run, onStop, onOpen }) {
 /* 결과 상세 — 위: 확인할 것(기준 초과 · 측정 실패 · 흔들림 큼) / 아래: 항목별 상세(항목 × 단말 · 단서). 직전과의 비교는 회귀 비교에서 */
 const FIND_K = { "초과": "fail", "측정 실패": "warn", "흔들림 큼": "info" };
 export function PerfResultView({ run, back, backLabel, nav }) {
-  const { updateMqaRun } = useApp();
+  const { updateMqaRun, openModal } = useApp();
   const [msg, flash] = useToast();
   const perf = run.perf || PF.PERF0;
   const subs = run.subs || [];
@@ -57,7 +58,7 @@ export function PerfResultView({ run, back, backLabel, nav }) {
   const defects = run.defects || {};
   const fkey = (f) => f.key + "|" + (f.dev ? f.dev.devId : "") + "|" + (f.mid || "");
   /* 결함 등록 — 측정값 · 기준값 · 시작 단계 · 트레이스를 첨부한다 (목업: 번호만 붙인다) */
-  const regDefect = (f) => { const no = "BUG-" + (1400 + Object.keys(defects).length + 1); updateMqaRun(run.id, { defects: { ...defects, [fkey(f)]: no } }); flash(no + " 결함 초안 — " + f.label + (f.dev ? " · " + f.dev.model : "") + " · 측정값 · 트레이스 첨부 (목업)"); };
+  const regDefect = (f) => openMqaDefect({ openModal, updateMqaRun }, run, fkey(f), { perf: true, tc: f.label, title: (f.dev ? f.dev.model + " " : "") + f.label + " — " + f.k + " (v" + run.build + ")", desc: "성능 측정: " + (run.planName || "") + " (" + run.id + ")" + (f.dev ? "\n단말: " + f.dev.model : "") + "\n" + findText(f), steps: "1. 같은 조건으로 " + f.label + " 측정 (반복 " + (cond.iters || "") + "회)", expected: f.crit != null && f.mid ? "기준 " + fmt(PF.metricOf(f.mid), f.crit) + " 이하" : "", actual: findText(f) });
   const findText = (f) => { const m = f.mid ? PF.metricOf(f.mid) : null;
     return f.k === "측정 실패" ? f.why : f.k === "흔들림 큼" ? m.label + " 흔들림 ±" + f.cv + "% — 다시 측정 권장" : m.label + " " + fmt(m, f.val) + " (기준 " + fmt(m, f.crit) + ")"; };
   return (

@@ -143,6 +143,22 @@ export function SearchInput({ value, onChange, placeholder, className = "" }) {
   );
 }
 
+/* 대시보드 KPI 카드 — onClick 이 있으면 눌러서 그 값을 조치할 화면으로 간다. 0 이거나 갈 곳이 없으면 onClick 을 넘기지 않는다 */
+export function KpiCard({ label, value, tone, sub, onClick, title }) {
+  const body = <><div className="text-xs text-slate-500">{label}</div><div className={"mt-1 text-3xl font-bold " + (tone || "text-slate-900")}>{value}</div><div className="mt-1 truncate text-xs text-slate-500">{sub}</div></>;
+  if (!onClick) return <Card className="p-4">{body}</Card>;
+  return <button onClick={onClick} title={title} className="rounded-xl border border-hairline bg-white p-4 text-left transition hover:border-sky-500 hover:bg-slate-50">{body}</button>;
+}
+
+/* 대시보드 상태 줄 — KPI 카드로 두기엔 가벼운 운영 정보(단말 · 다음 예약). 항목을 누르면 그 화면으로 간다 */
+export function StatusLine({ items }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-slate-500">
+      {items.filter(Boolean).map((it, i) => <span key={i} className="flex items-center gap-1.5">{i > 0 && <span className="text-slate-300">·</span>}{it.onClick ? <button onClick={it.onClick} className="hover:text-sky-700 hover:underline">{it.label}</button> : <span>{it.label}</span>}</span>)}
+    </div>
+  );
+}
+
 // 세그먼트 컨트롤 (탭형 토글)
 export function Seg({ options, value, onChange }) {
   return (

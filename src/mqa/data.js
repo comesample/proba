@@ -217,9 +217,10 @@ const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반�
   ] });
 /* 실행 행 = (스위트, 케이스). 계획의 스위트 순서대로 — 실행 불가 스위트는 건너뜀 + 이유로 남는다 */
 const IN = (su, c) => ({ ...c, key: su.id + ":" + c.id, suiteId: su.id, suiteName: su.name, acctRole: su.acctRole });
-const S2 = { id: 2, name: "상품 탐색", acctRole: "" }, S3 = { id: 3, name: "장바구니 비우기", acctRole: "일반" }, S7 = { id: 7, name: "담기 · 서버 반영", acctRole: "일반" };
+const S2 = { id: 2, name: "상품 탐색", acctRole: "" }, S3 = { id: 3, name: "장바구니 비우기", acctRole: "일반" }, S7 = { id: 7, name: "담기 · 서버 반영", acctRole: "일반" }, S5 = { id: 5, name: "검색 후 담기", acctRole: "일반" };
+const TC7 = () => ({ id: "TC-007", name: "검색 후 첫 상품 담기", st: "통과", steps: [st("탭", "검색창"), st("입력", "검색창", "통과", "립밤"), st("탭", "상품 카드 1"), st("탭", "장바구니 담기 버튼"), st("화면 확인", "\"장바구니에 담았습니다\"")] });
 const TC2SKIP = () => ({ id: "TC-002", name: "상품 검색 결과 확인", st: "건너뜀", skipWhy: "실행 불가 — 1번 TC-002 승인 전", steps: [] });
-const ROWS = (f6, f8) => [IN(S2, TC2SKIP()), IN(S3, TC1()), IN(S3, TC6(f6)), IN(S7, TC1()), IN(S7, TC8(f8))];
+const ROWS = (f6, f8) => [IN(S2, TC2SKIP()), IN(S3, TC1()), IN(S3, TC6(f6)), IN(S7, TC1()), IN(S7, TC8(f8)), IN(S5, TC1()), IN(S5, TC7())];   // 계획 1 의 스위트 순서 [2, 3, 7, 5]
 export const INIT_MQA_RUNS = [
   RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", ROWS(false, false)),
   /* 한 회차에 원인이 둘 — 요소 변경(UI)과 백엔드 결함(API). 담당자가 갈리는 것을 보여준다 */
@@ -258,4 +259,13 @@ INIT_MQA_RUNS.push(
   _PRUN("MRUN-006", "3.0.2", "2026-10-17 03:00", "2026-10-17 03:10", { start: 0.97 }, 0.97, 5),
 );
 INIT_MQA_RUNS.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));   // 최신이 앞
+/* ── 결함 시드 (공통 '결함' 목록에 합쳐진다 · App.jsx) — 성능 불합격 하나를 등록한 상태.
+   실행 쪽 run.defects 는 '어느 결과에서 등록했나' 의 연결만 (키 → 결함 번호). 결함 본문 · 상태는 공통 목록이 갖는다 */
+export const INIT_MQA_DEFECTS = [
+  { key: "SHOP-1881", tc: "앱 시작 · 콜드", target: "샘플 쇼핑 앱", domain: "MQA", perf: true, project: "SHOP", run: "MRUN-005", sev: "Major", status: "Open", assignee: "이민준",
+    title: "Galaxy A15 콜드 시작 기준 초과 (v3.2.0 · 1224ms / 기준 900ms)", desc: "성능 측정: 릴리스 성능 · 스테이징 (MRUN-005)\n단말: Galaxy A15 (저사양)\n앱 시작 · 콜드 — 시작 시간 1224ms (기준 900ms)\n직전 빌드 대비 시작 단계 중 bind 구간 증가",
+    steps: "1. 앱 데이터 초기화\n2. 콜드 시작 10회 (첫 회 버림)", expected: "중앙값 900ms 이하", actual: "중앙값 1224ms", evidence: ["Perfetto 트레이스"],
+    createdBy: "이민준", createdAt: "2026-11-02 09:30", updatedBy: "이민준", updatedAt: "2026-11-02 09:30" },
+];
+{ const r = INIT_MQA_RUNS.find((x) => x.id === "MRUN-005"); if (r) r.defects = { "start:콜드|D-4|start": "SHOP-1881" }; }
 

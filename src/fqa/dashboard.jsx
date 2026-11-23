@@ -2,16 +2,18 @@
 import { useState } from "react";
 import { Activity, AlertTriangle, History, TrendingUp } from "lucide-react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Badge, Btn, Card, PageToolbar, Select, Toast, useToast } from "../common/ui.jsx";
+import { Badge, Btn, Card, KpiCard, PageToolbar, Select, StatusLine, Toast, useToast } from "../common/ui.jsx";
+import { isTimed, nextRun } from "../common/scheduleLogic.js";
+import { FLAKY_WINDOW } from "../common/FlakyTable.jsx";
 import { useApp } from "../common/context.js";
 import { C, TOOLTIP } from "../common/theme.js";
 import { judgeWeb } from "../common/causeLogic.js";
-import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, caseFlaky, healKey, healUsable, lastOf } from "./logic.js";
+import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, caseFlaky, healKey, healUsable } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 /* ═══════════ 8. FQA 대시보드 ═══════════ */
 const barColor = (p) => (p >= 90 ? C.sky : p >= 80 ? C.warn : C.err);
 export function FqaDashboardScreen({ nav }) {
-  const { fqaRuns, fqaCases, fqaSuites, fqaPlans, defects, healState } = useApp();
+  const { fqaRuns, fqaCases, fqaSuites, fqaPlans, defects, healState, goList } = useApp();
   const [msg, flash] = useToast();
   const toISO = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
   const [today] = useState(() => toISO(new Date()));
@@ -27,6 +29,8 @@ export function FqaDashboardScreen({ nav }) {
   const fruns = fqaRuns.filter((r) => inPlan(r) && inPeriod(r));   // 계획·기간으로 스코프한 실행 집합
   const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
   const rate = (r) => (r && r.total ? Math.round((r.pass / r.total) * 1000) / 10 : 0);
+  /* 최근 실행 — 진행 표시(n/n) 대신 결과 (앱 대시보드와 같은 표기) */
+  const resultText = (r) => { const t = SL.tally(r.tcs || []); return "통과 " + t.pass + (t.warn ? " · 경고 " + t.warn : "") + " · 실패 " + t.fail + (t.skip ? " · 건너뜀 " + t.skip : ""); };
   const byDate = (a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || ""));
   // 집계는 전체 실행만 — 부분 실행(실패한 스위트 다시 실행)을 섞으면 실패가 과대 집계된다
   const finished = fruns.filter((r) => r.status === "완료" && !r.partial).slice().sort(byDate);
@@ -39,11 +43,13 @@ export function FqaDashboardScreen({ nav }) {
   const unstableN = flakyRows.length;
   const topFail = flakyRows.slice().sort((a, b) => b.rate - a.rate).slice(0, 4);
   const openDef = defects.filter((d) => (d.domain || "LQA") === "FQA" && d.status !== "Resolved").length;
+  /* 스위트 건강도 = 그 스위트가 마지막으로 돈 전체 실행의 그 스위트 행만 — 다른 스위트에서 돈 같은 케이스 결과를 빌려 오지 않는다.
+     통과율은 KPI 와 같은 tally (경고는 통과로 세지 않는다 · 건너뜀은 분모에서 뺀다). 돈 적 없으면 '미실행' */
   const suiteHealth = fqaSuites.map((su) => {
     const cs = SL.suiteCases(su, fqaCases);
-    const rated = cs.filter((c) => ["PASS", "FAIL", "WARN"].includes(lastOf(fruns, c.id)));
-    const pass = rated.length ? Math.round((cs.filter((c) => ["PASS", "WARN"].includes(lastOf(fruns, c.id))).length / rated.length) * 100) : null;
-    return { name: su.name, tc: cs.length, pass };
+    const r = finished.find((x) => (x.tcs || []).some((t) => t.suiteId === su.id));
+    const t = r ? SL.tally(r.tcs.filter((x) => x.suiteId === su.id)) : null;
+    return { name: su.name, tc: cs.length, pass: t && t.total ? Math.round((t.pass / t.total) * 100) : null };
   });
   // 추이 = 완료 실행을 일자별로 집계 (실행 수 + 평균 PASS율) — 하드코딩 없이 실행에서 파생
   const byDay = {}; finished.forEach((r) => { const d = dOf(r); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return; (byDay[d] = byDay[d] || []).push(rate(r)); });
@@ -71,14 +77,19 @@ export function FqaDashboardScreen({ nav }) {
   finished.forEach((r) => SL.mergedTcs(r).forEach((t) => { const j = judgeWeb(r, t); if (!j) return; causeCnt[j.kind] = (causeCnt[j.kind] || 0) + 1; (causeSub[j.kind] = causeSub[j.kind] || {})[j.cause] = ((causeSub[j.kind] || {})[j.cause] || 0) + 1; }));   // 케이스 기준으로 합쳐 센다
   const causeTot = Object.keys(causeCnt).reduce((a, k) => a + causeCnt[k], 0);
   const causeRows = CAUSE_ORDER.filter((k) => causeCnt[k]).map((k) => ({ k, n: causeCnt[k], p: Math.round((causeCnt[k] / causeTot) * 100), sub: Object.entries(causeSub[k]).map(([c, n]) => c + " " + n).join(" · ") }));
+  /* 보정 제안 — 미검토 제안이 있는 가장 최근 실행 (결과 상세에서 승인 · 반려) */
+  const healRun = finished.find((r) => SL.mergedTcs(r).some((t) => healUsable(fqaCases, t) && !healState[healKey(t)]));
+  /* KPI 5 — 앱 기능과 같은 4개 + 웹만의 1개(보정 제안). 누르면 그 값을 조치할 화면으로 (0 이면 누를 곳이 없다) */
   const KPI = [
-    ["자동화 TC", totalTc, "text-slate-900", "저장소 등록"],
-    ["PASS율(최근 실행)", lastRun ? rate(lastRun) + "%" : "—", "text-emerald-600", lastRun ? lastRun.id : "실행 없음"],
-    ["승인 TC", approved + "/" + totalTc, "text-sky-600", "승인/전체"],
-    ["불안정 TC", unstableN, "text-amber-600", "불안정 + 지속 실패"],
-    ["미해결 결함", openDef, "text-red-600", "기능 · Open"],
-    ["보정 제안", healPend, "text-sky-600", healIds.length ? "미검토 · 승인 " + healOk + "/" + healIds.length : "제안 없음"],
+    { label: "자동화 TC", value: totalTc, sub: "승인 " + approved + "/" + totalTc, go: totalTc ? () => nav && nav("fqa-cases") : null },
+    { label: "PASS율 (최근 실행)", value: lastRun ? rate(lastRun) + "%" : "—", tone: "text-emerald-600", sub: lastRun ? lastRun.id : "실행 없음", go: lastRun ? () => nav && nav("fqa-result-detail", lastRun.id) : null },
+    { label: "불안정 · 지속 실패", value: unstableN, tone: "text-amber-600", sub: "최근 " + FLAKY_WINDOW + "회 기준", go: unstableN ? () => nav && nav("fqa-flaky") : null },
+    { label: "미해결 결함", value: openDef, tone: openDef ? "text-red-600" : "text-slate-400", sub: "해결 전", go: openDef ? () => goList("defects", { kind: "defects", dom: "FQA", st: "해결 전" }) : null },
+    { label: "보정 제안", value: healPend, tone: "text-sky-600", sub: healIds.length ? "미검토 · 승인 " + healOk + "/" + healIds.length : "제안 없음", go: healRun ? () => nav && nav("fqa-result-detail", healRun.id) : null },
   ];
+  /* 상태 줄 — 다음 예약 (정기 계획 중 가장 가까운 것 · 없으면 배포 시 계획 수) */
+  const next = fqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
+  const evN = fqaPlans.filter((p) => p.status === "활성" && p.schedule && p.schedule.mode === "event").length;
   return (
     <div className="space-y-4">
       <PageToolbar desc="자동화 현황 · 스위트 건강도 (실행·케이스·결함에서 파생)">
@@ -87,9 +98,8 @@ export function FqaDashboardScreen({ nav }) {
         <span className="text-slate-500">~</span>
         <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
-      <div className="grid grid-cols-6 gap-3">
-        {KPI.map((k) => (<Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 text-xs text-slate-500">{k[3]}</div></Card>))}
-      </div>
+      <StatusLine items={[{ label: "다음 예약 " + (next ? next.at.slice(5) + " " + next.p.name : "없음") + (evN ? " · 배포 시 계획 " + evN + "건" : ""), onClick: () => nav && nav("fqa-plan") }]} />
+      <div className="grid grid-cols-5 gap-3">{KPI.map((k) => <KpiCard key={k.label} label={k.label} value={k.value} tone={k.tone} sub={k.sub} onClick={k.go} />)}</div>
       <Card className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-semibold text-slate-800">실패 원인 분포 <span className="text-xs font-normal text-slate-500">완료 실행 기준</span></span>
@@ -135,7 +145,7 @@ export function FqaDashboardScreen({ nav }) {
       </Card>
       <div className="grid grid-cols-3 gap-4">
         <Card className="col-span-2 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-sky-600" />스위트 건강도 (케이스 최근 결과 기준)</div>
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><Activity size={15} className="text-sky-600" />스위트 건강도 (스위트 마지막 실행 기준)</div>
           <div className="space-y-2.5">
             {suiteHealth.map((s) => (
               <div key={s.name}>
@@ -178,7 +188,7 @@ export function FqaDashboardScreen({ nav }) {
             <tbody className="text-slate-700">
               {recent.length === 0 && <tr><td className="px-4 py-6 text-center text-xs text-slate-500">실행 이력이 없습니다</td></tr>}
               {recent.map((r) => (
-                <tr key={r.id} onClick={() => nav && nav("fqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 hover:bg-slate-100"><td className="px-4 py-2.5 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{planNow(r.planId) || r.plan || r.name}</td><td className="text-xs text-slate-500">{r.progt}</td><td className="pr-4 text-right"><Badge kind={sK[r.status]}>{r.status}</Badge></td></tr>
+                <tr key={r.id} onClick={() => nav && nav("fqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 hover:bg-slate-100"><td className="px-4 py-2.5 font-mono text-xs text-sky-600">{r.id}</td><td className="text-slate-800">{planNow(r.planId) || r.plan || r.name}</td><td className="text-xs text-slate-500">{r.status === "완료" ? resultText(r) : r.progt}</td><td className="pr-4 text-right"><Badge kind={sK[r.status]}>{r.status}</Badge></td></tr>
               ))}
             </tbody>
           </table>

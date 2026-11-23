@@ -356,3 +356,12 @@ export const INIT_FQA_PLANS = [
   { id: 4, name: "API 스모크 (스테이징)", targetRef: { systemId: 1, env: "스테이징" }, suiteIds: [5], sched: "이벤트 · 배포 시", schedule: { mode: "event", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: { deploy: true }, summary: "이벤트 · 배포 시" }, status: "활성",
     brow: ["Chromium"], res: "1920×1080", headless: true, video: "녹화 안 함", timeout: 30, workers: "4", retry: 1, onfail: "계속 진행", gate: 95 },
 ];
+
+/* ── 결함 시드 (공통 '결함' 목록에 합쳐진다 · App.jsx) — 데이터 구동 케이스의 실패 행 하나만 등록된 상태.
+   FRUN-503 TC-0402 는 3 · 5행이 실패했고 3행만 결함에 묶였다 → 결과 화면에서 5행은 아직 등록할 수 있다 */
+export const INIT_FQA_DEFECTS = [
+  { key: "SHOP-1874", tc: "TC-0402", target: "온마켓", domain: "FQA", project: "SHOP", run: "FRUN-503", sev: "Major", status: "In Progress", assignee: "최서연",
+    title: "사용자 생성 API — 이메일 형식 검증 누락 (no@dot 허용)", desc: "기능 케이스: 사용자 생성 후 조회 (TC-0402)\n대상 제품: 온마켓\n실패 원인(자동 분류): API 응답 불일치\n\n[실패 행] 데이터셋 signup_emails\n3행 · email=no@dot · expected=fail",
+    steps: "1. POST /users (email=no@dot)\n2. 응답 상태 확인", expected: "400 형식 오류", actual: "201 생성됨", evidence: ["네트워크 HAR"], rows: [{ i: 3, data: { email: "no@dot", expected: "fail" } }],
+    createdBy: "최서연", createdAt: _rd(0, "10:42"), updatedBy: "최서연", updatedAt: _rd(0, "10:50") },
+];

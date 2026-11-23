@@ -3,7 +3,7 @@
 //   비교 단위 = (항목, 지표, 단말). 측정 실패 · 측정 불가 · 그 단말이 없던 회차는 '비교 불가'
 import { useState } from "react";
 import { ArrowRight } from "lucide-react";
-import { Badge, Card, Field, Select } from "../common/ui.jsx";
+import { Badge, Card, Field, KpiCard, Select } from "../common/ui.jsx";
 import * as PF from "./perfLogic.js";
 import * as PR from "./perfRun.js";
 
@@ -135,23 +135,33 @@ export function PerfTrend({ plans, runs, nav, compact }) {
 
 /* ═══════════ 대시보드 성능 영역 — 성능 계획이 있을 때만 보인다 (기능만 하는 조직에는 나타나지 않음) ═══════════
    KPI(마지막 회차 판정 · 확인할 것 · 직전 대비 악화) → 계획별 마지막 회차 → 빌드별 추이 */
-export function PerfDashSection({ plans, runs, nav, title }) {
+export function PerfDashSection({ plans, runs, nav, title, defects, onDefects }) {
   const perfPlans = (plans || []).filter((p) => p.purpose === "성능");
   if (!perfPlans.length) return null;
   const hist = (p) => (runs || []).filter((r) => r.planId === p.id && r.purpose === "성능" && r.status === "완료").sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
   const rows = perfPlans.map((p) => { const rs = hist(p); const r = rs[0]; const prev = rs[1]; return { p, r, f: r ? PR.findings(r) : [], worse: r && prev ? compareRows(prev, r, 10).filter((x) => x.d.k === "악화" && !x.noisy).length : 0 }; });
   const withRun = rows.filter((x) => x.r);
   const pass = withRun.filter((x) => x.r.verdict === "합격").length;
+  /* KPI 5 — 누르면 그 값을 조치할 화면으로. 계획이 여럿이면 해당하는 가장 최근 회차 (0 이면 누를 곳이 없다) */
+  const latest = withRun.slice().sort((a, b) => String(b.r.startedAt).localeCompare(String(a.r.startedAt)));
+  const pick = (fn) => latest.find(fn);
+  const open = (x) => (x ? () => nav && nav("mqa-result-detail", x.r.id) : null);
+  const findN = withRun.reduce((n, x) => n + x.f.length, 0), worseN = withRun.reduce((n, x) => n + x.worse, 0), failN = withRun.reduce((n, x) => n + x.f.filter((y) => y.k === "측정 실패").length, 0);
+  /* 미해결 결함 — 공통 결함 목록의 성능 결함 중 해결 전 (In Progress 포함). 계획 필터를 따른다 (그 계획 회차에서 등록한 것) */
+  const runIds = new Set((runs || []).filter((r) => perfPlans.some((p) => p.id === r.planId)).map((r) => r.id));
+  const openDef = (defects || []).filter((d) => d.domain === "MQA" && d.perf && d.status !== "Resolved" && runIds.has(d.run)).length;
+  const worseRun = pick((x) => x.worse > 0);
   const KPI = [
-    ["성능 판정 (마지막 회차)", withRun.length ? pass + "/" + withRun.length + " 합격" : "—", pass === withRun.length && withRun.length ? "text-emerald-600" : "text-red-600", "성능 계획 " + perfPlans.length + "개"],
-    ["확인할 것", withRun.reduce((n, x) => n + x.f.length, 0), "text-amber-600", "기준 초과 · 측정 실패 · 흔들림 큼"],
-    ["직전 대비 악화", withRun.reduce((n, x) => n + x.worse, 0), "text-red-600", "+10% 넘게 · 흔들림 큰 값 제외"],
-    ["측정 실패", withRun.reduce((n, x) => n + x.f.filter((y) => y.k === "측정 실패").length, 0), "text-slate-900", "측정 중 케이스 실패"],
+    { label: "성능 판정 (마지막 회차)", value: withRun.length ? pass + "/" + withRun.length + " 합격" : "—", tone: pass === withRun.length && withRun.length ? "text-emerald-600" : "text-red-600", sub: "성능 계획 " + perfPlans.length + "개", go: open(pick((x) => x.r.verdict !== "합격") || latest[0]) },
+    { label: "확인할 것", value: findN, tone: "text-amber-600", sub: "기준 초과 · 측정 실패 · 흔들림 큼", go: findN ? open(pick((x) => x.f.length)) : null },
+    { label: "직전 대비 악화", value: worseN, tone: "text-red-600", sub: "+10% 넘게 · 흔들림 큰 값 제외", go: worseRun ? () => nav && nav("mqa-regression", worseRun.r.id) : null },
+    { label: "측정 실패", value: failN, sub: "측정 중 케이스 실패", go: failN ? open(pick((x) => x.f.some((y) => y.k === "측정 실패"))) : null },
+    { label: "미해결 결함", value: openDef, tone: openDef ? "text-red-600" : "text-slate-400", sub: "해결 전", go: openDef && onDefects ? onDefects : null },
   ];
   return (
     <div className="space-y-4">
       {title && <div className="flex items-center gap-2 pt-1 text-sm font-semibold text-slate-700"><span className="h-4 w-1 rounded bg-sky-500" />{title}</div>}
-      <div className="grid grid-cols-4 gap-3">{KPI.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      <div className="grid grid-cols-5 gap-3">{KPI.map((k) => <KpiCard key={k.label} label={k.label} value={k.value} tone={k.tone} sub={k.sub} onClick={k.go} />)}</div>
       <Card className="p-4">
         <div className="mb-3 text-sm font-semibold text-slate-800">계획별 마지막 회차</div>
         <div className="space-y-2">{rows.map(({ p, r, f, worse }) => (

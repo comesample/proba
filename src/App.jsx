@@ -24,14 +24,14 @@ import logoUrl from "./assets/proba-logo.png";
 import { DOMAINS, COMMON_SECTIONS, MEMBERS_ITEM, INIT_TENANTS, INIT_USERS, INIT_MODELS, INIT_VARIABLES, INIT_DATASETS } from "./common/data.js";
 import { VariablesScreen } from "./common/variables.jsx";
 import { DatasetsScreen } from "./common/datasets.jsx";
-import { FQA_SECTIONS, INIT_FQA_CASES, INIT_FQA_SUITES, INIT_FQA_SYSTEMS, INIT_FQA_RUNS, INIT_FQA_PLANS, FQA_HIDDEN } from "./fqa/data.js";
+import { FQA_SECTIONS, INIT_FQA_CASES, INIT_FQA_SUITES, INIT_FQA_SYSTEMS, INIT_FQA_RUNS, INIT_FQA_PLANS, INIT_FQA_DEFECTS, FQA_HIDDEN } from "./fqa/data.js";
 import { MqaTargetScreen } from "./mqa/targetScreen.jsx";
 import { MqaSuiteScreen } from "./mqa/suiteScreen.jsx";
 import { usesCase as SL_uses } from "./mqa/suiteLogic.js";
 import { MqaDashboardScreen, MqaPlanScreen, MqaRunScreen, MqaHistoryScreen, MqaResultScreen } from "./mqa/flow.jsx";
 import { MqaCasesScreen } from "./mqa/cases.jsx";
 import { MqaDevicesScreen } from "./mqa/devicesScreen.jsx";
-import { MQA_SECTIONS, INIT_MQA_CASES, INIT_MQA_SUITES, INIT_MQA_SYSTEMS, INIT_MQA_RUNNERS, INIT_MQA_RUNS, INIT_MQA_PLANS, MQA_HIDDEN } from "./mqa/data.js";
+import { MQA_SECTIONS, INIT_MQA_CASES, INIT_MQA_SUITES, INIT_MQA_SYSTEMS, INIT_MQA_RUNNERS, INIT_MQA_RUNS, INIT_MQA_PLANS, INIT_MQA_DEFECTS, MQA_HIDDEN } from "./mqa/data.js";
 import { NQA_SECTIONS, INIT_NQA_SYSTEMS, INIT_NQA_SCENARIOS, INIT_NQA_RUNS } from "./nqa/data.js";
 import { NqaDashboardScreen, NqaTargetScreen, NqaScenarioScreen, NqaRunScreen, NqaHistoryScreen } from "./nqa/screens.jsx";
 import { NewPlanForm, AiGenForm, NewCaseForm, JiraForm, AddPromptForm, PlanCasesForm, JiraConfigForm, AddChatbotForm, Targets, Dashboard, Plans, RunHistory, CategoryManager, ImportCasesForm, Cases, LqaRunScreen, LqaResultScreen, Compare, Defects, Report, Settings, InviteMemberForm, MembersView } from "./lqa/screens.jsx";
@@ -76,7 +76,7 @@ export default function App() {
      이력을 매번 다시 뒤져야 한다. From 은 뒤로가기 라벨("평가 실행"/"실행 이력"/"대시보드")을 만든다. */
   const [lqaResultRun, setLqaResultRun] = useState(null);
   const [lqaResultFrom, setLqaResultFrom] = useState("history");
-  const [defects, setDefects] = useState(INIT_DEFECTS);
+  const [defects, setDefects] = useState(() => [...INIT_FQA_DEFECTS, ...INIT_MQA_DEFECTS, ...INIT_DEFECTS]);   // 결함은 도메인 공통 목록 하나
   const [fqaCases, setFqaCases] = useState(seedCases(INIT_FQA_CASES));
   const [fqaSuites, setFqaSuites] = useState(stampSeeds(INIT_FQA_SUITES));
   const [fqaSystems, setFqaSystems] = useState(stampSeeds(INIT_FQA_SYSTEMS));
@@ -289,6 +289,8 @@ export default function App() {
     judges, toggleJudge: (name) => setJudges((x) => x.map((j) => (j.name === name ? { ...j, enabled: !j.enabled } : j))),
     prompts, addPrompt: (p) => setPrompts((x) => [p, ...x]), updatePrompt: (name, patch) => setPrompts((x) => x.map((pp) => (pp.name === name ? { ...pp, ...patch } : pp))), removePrompt: (name) => setPrompts((x) => x.filter((pp) => pp.name !== name)),
     pendingSelect, setPendingSelect,
+    /* 목록 화면으로 가면서 필터를 미리 건다 (대시보드 KPI → 결함 · 테스트케이스). 이동이 취소되면 필터도 남기지 않는다 */
+    goList: (v, preset) => { if (goTo(v)) setPendingSelect(preset); },
     chatbots, addChatbot: (c) => { setChatbots((x) => [withCreate(c), ...x]); setPendingSelect({ kind: "chatbot", id: c.id }); }, updateChatbot: (id, patch) => setChatbots((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate(patch) } : c))), removeChatbot: (id) => setChatbots((x) => x.filter((c) => c.id !== id)),
     setChatbotStatus: (id, status) => setChatbots((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate({ status }) } : c))),
     role, setRole, space, setSpace, domain, setDomain, tenants, tenantId, setTenantId,
