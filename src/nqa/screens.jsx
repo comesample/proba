@@ -8,7 +8,7 @@ import { Gauge, Plus, X, Save, Smartphone, Cpu, Wifi, Package, Upload, Link2, Ch
 import { NQA_SUBTYPES, NQA_HTTP_METHODS, NQA_AUTH_TYPES, NQA_LOAD_UNITS, NQA_LOAD_SHAPES } from "./data.js";
 
 
-// 워크스페이스 전환(앱 성능/부하)은 App.jsx 사이드바에서 1회 선택 — 화면별 탭 제거(2026-07).
+// 워크스페이스(부하)는 App.jsx 상단 도메인에서 선택 — 앱 성능은 앱 테스트의 성능 측정으로 옮겼다.
 
 /* ═══════════ 측정 대상·환경 (부하 대상 SUT · 인증 · 부하 생성 인프라) — 기능 QA 독립 ═══════════ */
 const M_LK = { GET: "info", POST: "pass", PUT: "warn", DELETE: "fail", PATCH: "warn" };

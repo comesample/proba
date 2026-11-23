@@ -34,8 +34,6 @@ import { MqaDevicesScreen } from "./mqa/devicesScreen.jsx";
 import { MQA_SECTIONS, INIT_MQA_CASES, INIT_MQA_SUITES, INIT_MQA_SYSTEMS, INIT_MQA_RUNNERS, INIT_MQA_RUNS, INIT_MQA_PLANS, MQA_HIDDEN } from "./mqa/data.js";
 import { NQA_SECTIONS, INIT_NQA_SYSTEMS, INIT_NQA_SCENARIOS, INIT_NQA_RUNS } from "./nqa/data.js";
 import { NqaDashboardScreen, NqaTargetScreen, NqaScenarioScreen, NqaRunScreen, NqaHistoryScreen } from "./nqa/screens.jsx";
-import { PQA_SECTIONS, INIT_PERF_APPS, INIT_PERF_SCENARIOS, INIT_PERF_PLANS, INIT_PERF_RUNS } from "./pqa/data.js";
-import { PqaTargetScreen, PqaScenarioScreen, PqaPlanScreen, PqaRunScreen, PqaHistoryScreen, PqaTrendScreen, PqaDashboardScreen } from "./pqa/screens.jsx";
 import { NewPlanForm, AiGenForm, NewCaseForm, JiraForm, AddPromptForm, PlanCasesForm, JiraConfigForm, AddChatbotForm, Targets, Dashboard, Plans, RunHistory, CategoryManager, ImportCasesForm, Cases, LqaRunScreen, LqaResultScreen, Compare, Defects, Report, Settings, InviteMemberForm, MembersView } from "./lqa/screens.jsx";
 
 /* ============================ context ============================ */
@@ -84,10 +82,6 @@ export default function App() {
   const [fqaSystems, setFqaSystems] = useState(stampSeeds(INIT_FQA_SYSTEMS));
   const [nqaSystems, setNqaSystems] = useState(stampSeeds(INIT_NQA_SYSTEMS));
   const [nqaScenarios, setNqaScenarios] = useState(stampSeeds(INIT_NQA_SCENARIOS));
-  const [perfApps, setPerfApps] = useState(INIT_PERF_APPS);
-  const [perfScenarios, setPerfScenarios] = useState(INIT_PERF_SCENARIOS);
-  const [perfPlans, setPerfPlans] = useState(INIT_PERF_PLANS);
-  const [perfRuns, setPerfRuns] = useState(INIT_PERF_RUNS);
   const [nqaRuns, setNqaRuns] = useState(INIT_NQA_RUNS);
   const [variables, setVariables] = useState(INIT_VARIABLES);
   const [datasets, setDatasets] = useState(stampSeeds(INIT_DATASETS));
@@ -117,6 +111,7 @@ export default function App() {
   const [mqaRuns, setMqaRuns] = useState(INIT_MQA_RUNS);
   const [mqaPlans, setMqaPlans] = useState(stampSeeds(INIT_MQA_PLANS));
   const [mqaResultRun, setMqaResultRun] = useState(null);
+  const [mqaRegFocus, setMqaRegFocus] = useState(null);   // 결과 → '직전 회차와 비교' — 회귀 비교를 그 회차(B)로 연다
   const [mqaEditTc, setMqaEditTc] = useState(null);
   const [mqaSuiteFocus, setMqaSuiteFocus] = useState(null);
   const [mqaResultFrom, setMqaResultFrom] = useState("mqa-history");
@@ -130,7 +125,7 @@ export default function App() {
   const [roleMenu, setRoleMenu] = useState(false);   // 사람 아이콘 하위 드롭다운 열림
   const [space, setSpace] = useState("product");
   const [domain, setDomain] = useState("LQA");
-  const [nqaWs, setNqaWs] = useState(null);   // NQA 워크스페이스: null(미선택) / perf(앱 성능) / load(부하) — 상단 버튼을 고를 때 확정
+  const [nqaWs, setNqaWs] = useState(null);   // NQA 워크스페이스: null(미선택) / load(부하). 앱 성능은 앱 테스트의 '성능 측정' 계획으로 옮겼다
   const [tenants, setTenants] = useState(INIT_TENANTS);
   const [tenantId, setTenantId] = useState("t1");
   const [users, setUsers] = useState(INIT_USERS);
@@ -205,6 +200,7 @@ export default function App() {
   const mqaNav = (v, arg) => {
     if (!goTo(v)) return;
     if (arg && v === "mqa-result-detail") { setMqaResultRun(arg); setMqaResultFrom(view); }
+    if (arg && v === "mqa-regression") setMqaRegFocus(arg);
     if (arg && v === "mqa-cases") setMqaEditTc(arg);
   };
   const api = {
@@ -257,10 +253,6 @@ export default function App() {
     nqaSystems, addNqaSystem: (sy) => setNqaSystems((x) => [withCreate(sy), ...x]), updateNqaSystem: (id, patch) => setNqaSystems((x) => x.map((sy) => (sy.id === id ? { ...sy, ...withUpdate(patch) } : sy))), removeNqaSystem: (id) => setNqaSystems((x) => x.filter((sy) => sy.id !== id)),
     nqaScenarios, addNqaScenario: (s) => setNqaScenarios((x) => [withCreate(s), ...x]), updateNqaScenario: (id, patch) => setNqaScenarios((x) => x.map((s) => (s.id === id ? { ...s, ...withUpdate(patch) } : s))), removeNqaScenario: (id) => setNqaScenarios((x) => x.filter((s) => s.id !== id)),
     nqaRuns, addNqaRun: (r) => setNqaRuns((x) => [r, ...x]), updateNqaRun: (id, patch) => setNqaRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))), removeNqaRun: (id) => setNqaRuns((x) => x.filter((r) => r.id !== id)),
-    perfApps, addPerfApp: (a) => setPerfApps((x) => [a, ...x]), updatePerfApp: (id, patch) => setPerfApps((x) => x.map((a) => (a.id === id ? { ...a, ...patch } : a))), removePerfApp: (id) => setPerfApps((x) => x.filter((a) => a.id !== id)),
-    perfScenarios, addPerfScenario: (s) => setPerfScenarios((x) => [s, ...x]), updatePerfScenario: (id, patch) => setPerfScenarios((x) => x.map((s) => (s.id === id ? { ...s, ...patch } : s))), removePerfScenario: (id) => setPerfScenarios((x) => x.filter((s) => s.id !== id)),
-    perfPlans, addPerfPlan: (p) => setPerfPlans((x) => [p, ...x]), updatePerfPlan: (id, patch) => setPerfPlans((x) => x.map((p) => (p.id === id ? { ...p, ...patch } : p))), removePerfPlan: (id) => setPerfPlans((x) => x.filter((p) => p.id !== id)),
-    perfRuns, addPerfRun: (r) => setPerfRuns((x) => [r, ...x]), updatePerfRun: (id, patch) => setPerfRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))), removePerfRun: (id) => setPerfRuns((x) => x.filter((r) => r.id !== id)),
     variables, addVariable: (v) => setVariables((x) => [v, ...x]), updateVariable: (id, patch) => setVariables((x) => x.map((v) => (v.id === id ? { ...v, ...patch } : v))), removeVariable: (id) => setVariables((x) => x.filter((v) => v.id !== id)),
     datasets, addDataset: (d) => setDatasets((x) => [withCreate(d), ...x]), updateDataset: (id, patch) => setDatasets((x) => x.map((d) => (d.id === id ? { ...d, ...withUpdate(patch) } : d))), removeDataset: (id) => setDatasets((x) => x.filter((d) => d.id !== id)),
     fqaRuns, addFqaRun: (r) => setFqaRuns((x) => [r, ...x]), updateFqaRun: (id, patch) => setFqaRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))), removeFqaRun: (id) => setFqaRuns((x) => x.filter((r) => r.id !== id)),
@@ -285,7 +277,7 @@ export default function App() {
     mqaSystems, addMqaSystem: (sy) => setMqaSystems((x) => [withCreate(sy), ...x]), updateMqaSystem: (id, patch) => setMqaSystems((x) => x.map((sy) => (sy.id === id ? { ...sy, ...withUpdate(patch) } : sy))), removeMqaSystem: (id) => setMqaSystems((x) => x.filter((sy) => sy.id !== id)),
     mqaRuns, addMqaRun: (r) => setMqaRuns((x) => [r, ...x]), updateMqaRun: (id, patch) => setMqaRuns((x) => x.map((r) => (r.id === id ? { ...r, ...patch } : r))), removeMqaRun: (id) => setMqaRuns((x) => x.filter((r) => r.id !== id)),
     mqaPlans, addMqaPlan: (pl) => setMqaPlans((x) => [withCreate(pl), ...x]), updateMqaPlan: (id, patch) => setMqaPlans((x) => x.map((pl) => (pl.id === id ? { ...pl, ...withUpdate(patch) } : pl))), removeMqaPlan: (id) => setMqaPlans((x) => x.filter((pl) => pl.id !== id)),
-    mqaResultRun, setMqaResultRun,
+    mqaResultRun, setMqaResultRun, mqaRegFocus, setMqaRegFocus,
     mqaEditTc, setMqaEditTc,
     mqaSuiteFocus, setMqaSuiteFocus,
     healState, setHeal: (id, st) => setHealState((h) => Object.assign({}, h, { [id]: st })),
@@ -310,17 +302,17 @@ export default function App() {
     models, addModel: (m) => setModels((x) => [m, ...x]),
     setModelStatus: (id, status) => setModels((x) => x.map((m) => (m.id === id ? { ...m, status } : m))),
   };
-  const ALL_SECTIONS = [...SECTIONS, ...FQA_SECTIONS, ...MQA_SECTIONS, ...NQA_SECTIONS, ...PQA_SECTIONS, ...COMMON_SECTIONS];
+  const ALL_SECTIONS = [...SECTIONS, ...FQA_SECTIONS, ...MQA_SECTIONS, ...NQA_SECTIONS, ...COMMON_SECTIONS];
   const nqaViewIds = new Set(NQA_SECTIONS.flatMap((s) => s.items.map((i) => i.id)));   // 부하 전용 화면 id
-  /* 앱 성능 · 부하는 같은 NQA 도메인의 두 워크스페이스 — 지금 화면으로 정한다.
+  /* 부하는 NQA 도메인의 워크스페이스 — 지금 화면으로 정한다.
      알림 · 데이터셋 이동처럼 상단 버튼을 거치지 않고 들어와도 상단 강조 · 사이드바가 맞게 */
-  const viewWs = nqaViewIds.has(view) ? "load" : String(view).startsWith("perf-") ? "perf" : null;
+  const viewWs = nqaViewIds.has(view) ? "load" : null;
   const ws = viewWs || nqaWs;
   useEffect(() => { if (viewWs && viewWs !== nqaWs) setNqaWs(viewWs); }, [viewWs]);   // 공통 화면(변수 등)으로 넘어가도 유지
   const cur = [...ALL_SECTIONS.flatMap((s) => s.items), ...FQA_HIDDEN, ...MQA_HIDDEN, ...LQA_HIDDEN, MEMBERS_ITEM].find((n) => n.id === view) || NAV[0];
   const curSection = ((ALL_SECTIONS.find((s) => s.items.some((i) => i.id === view)) || {}).group) || (FQA_HIDDEN.find((i) => i.id === view) || {}).group || (MQA_HIDDEN.find((i) => i.id === view) || {}).group || (LQA_HIDDEN.find((i) => i.id === view) || {}).group;
   const tenantName = (tenants.find((t) => t.id === tenantId) || {}).name;
-  const screens = { dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <LqaRunScreen />, "lqa-result": <LqaResultScreen />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "mqa-dashboard": <MqaDashboardScreen nav={mqaNav} />, "mqa-targets": <MqaTargetScreen />, "mqa-devices": <MqaDevicesScreen />, "mqa-suites": <MqaSuiteScreen />, "mqa-cases": <MqaCasesScreen />, "mqa-plan": <MqaPlanScreen />, "mqa-run": <MqaRunScreen nav={mqaNav} />, "mqa-history": <MqaHistoryScreen nav={mqaNav} />, "mqa-regression": <MqaResultScreen mode="회귀" nav={mqaNav} />, "mqa-flaky": <MqaResultScreen mode="불안정" nav={mqaNav} />, "mqa-result-detail": <MqaResultScreen mode="상세" nav={mqaNav} runId={mqaResultRun} back={() => setView(mqaResultFrom || "mqa-history")} backLabel={{ "mqa-run": "실행", "mqa-history": "실행 이력", "mqa-dashboard": "대시보드", "mqa-regression": "회귀 비교" }[mqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen />,"perf-targets": <PqaTargetScreen />, "perf-scenarios": <PqaScenarioScreen />, "perf-plan": <PqaPlanScreen />, "perf-run": <PqaRunScreen />, "perf-history": <PqaHistoryScreen />, "perf-trend": <PqaTrendScreen />, "perf-dashboard": <PqaDashboardScreen /> };
+  const screens = { dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <LqaRunScreen />, "lqa-result": <LqaResultScreen />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "mqa-dashboard": <MqaDashboardScreen nav={mqaNav} />, "mqa-targets": <MqaTargetScreen />, "mqa-devices": <MqaDevicesScreen />, "mqa-suites": <MqaSuiteScreen />, "mqa-cases": <MqaCasesScreen />, "mqa-plan": <MqaPlanScreen />, "mqa-run": <MqaRunScreen nav={mqaNav} />, "mqa-history": <MqaHistoryScreen nav={mqaNav} />, "mqa-regression": <MqaResultScreen mode="회귀" nav={mqaNav} />, "mqa-flaky": <MqaResultScreen mode="불안정" nav={mqaNav} />, "mqa-result-detail": <MqaResultScreen mode="상세" nav={mqaNav} runId={mqaResultRun} back={() => setView(mqaResultFrom || "mqa-history")} backLabel={{ "mqa-run": "실행", "mqa-history": "실행 이력", "mqa-dashboard": "대시보드", "mqa-regression": "회귀 비교" }[mqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen /> };
   const tk = { ok: "border-emerald-200 bg-emerald-50 text-emerald-800", warn: "border-amber-200 bg-amber-50 text-amber-800", err: "border-red-200 bg-red-50 text-red-800", info: "border-slate-200 bg-white text-slate-800" };
   const nIcon = { play: Play, bug: Bug, send: Send };
 
@@ -334,7 +326,7 @@ export default function App() {
         <aside className="flex w-56 shrink-0 flex-col text-white/70">
           <div className="flex shrink-0 items-center gap-2 py-2 pl-4"><img src={logoUrl} alt="PROBA" className="h-12 w-auto" /><span className="rounded-md border border-amber-300/60 bg-amber-300/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-200">목업</span></div>
           <nav className="min-h-0 flex-1 overflow-y-auto pb-4 pr-3">
-            {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? (ws === "load" ? NQA_SECTIONS : PQA_SECTIONS) : SECTIONS), ...COMMON_SECTIONS, ...(role === "tadmin" ? [{ group: "관리", items: [MEMBERS_ITEM] }] : [])].map((sec) => (
+            {[...(domain === "FQA" ? FQA_SECTIONS : domain === "MQA" ? MQA_SECTIONS : domain === "NQA" ? NQA_SECTIONS : SECTIONS), ...COMMON_SECTIONS, ...(role === "tadmin" ? [{ group: "관리", items: [MEMBERS_ITEM] }] : [])].map((sec) => (
               <div key={sec.group} className="mb-1 pl-4">
                 <p className="pb-2 pt-4 text-[13px] font-medium tracking-wide text-line">{sec.group}</p>
                 <ul className="space-y-0.5">
@@ -359,10 +351,10 @@ export default function App() {
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl bg-canvas shadow-lg">
           {/* 상단 바 — 도메인 선택 · 조직 · 알림 · 역할(데모) */}
           <header className="flex h-14 shrink-0 items-center justify-between border-b border-line bg-canvas px-4">
-            {/* 테스트 도메인 — 선택 상자. 앱 성능 · 부하는 NQA 도메인의 두 워크스페이스(ws) */}
-            <select value={domain === "NQA" ? "NQA" + (ws || "perf") : domain} title="테스트 도메인"
+            {/* 테스트 도메인 — 선택 상자. 부하는 NQA 도메인의 워크스페이스(ws) */}
+            <select value={domain === "NQA" ? "NQA" + (ws || "load") : domain} title="테스트 도메인"
               onChange={(e) => { const d = DOMAINS.find((x) => x.id + (x.ws || "") === e.target.value); if (!d) return;
-                if (!goTo(d.ws === "load" ? "nqa-dashboard" : d.ws === "perf" ? "perf-dashboard" : d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return;
+                if (!goTo(d.ws === "load" ? "nqa-dashboard" : d.id === "FQA" ? "fqa-dashboard" : d.id === "MQA" ? "mqa-dashboard" : "dashboard")) return;
                 setDomain(d.id); if (d.ws) setNqaWs(d.ws); }}
               className="w-40 rounded-lg border border-line bg-white px-3 py-1.5 text-sm font-medium text-ink outline-none hover:bg-canvas">
               {DOMAINS.map((d) => <option key={d.id + (d.ws || "")} value={d.id + (d.ws || "")} disabled={!d.ready}>{d.label}</option>)}

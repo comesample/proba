@@ -4,6 +4,8 @@
 //   스위트가 케이스를 ID 로 가리키고(s.items), 계획이 스위트를 ID 로 가리킨다(p.suiteIds) — 이름을 바꿔도 연결이 끊기지 않는다
 // ============================================================
 import { LayoutDashboard, Plug, Layers, Code2, ClipboardList, Play, FileText, History, GitCompare, Activity, Smartphone } from "lucide-react";
+import * as PF from "./perfLogic.js";
+import * as PR from "./perfRun.js";
 
 export const MQA_SECTIONS = [
   { group: "모니터링", items: [
@@ -166,23 +168,34 @@ export const INIT_MQA_RUNNERS = [
   { id: "R-1", name: "11층 QA PC", host: "QA-PC-11F", os: "Windows 11", status: "연결됨", lastSeen: "방금 전", pkg: "0.1.0",
     registeredAt: "2026-10-30 14:20", registeredBy: "박지영", checks: { server: true, appium: true },
     devices: [
-      { id: "D-1", model: "Galaxy S23", maker: "Samsung", sdk: 34, serial: "R3CT40XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "130", connectedAt: "2026-10-30 14:25" },
-      { id: "D-2", model: "Pixel 7", maker: "Google", sdk: 33, serial: "2B191FDH20XXXX", adb: true, auth: false, helper: null, busy: null, webview: "129", connectedAt: "2026-10-30 14:31" },
+      { id: "D-1", model: "Galaxy S23", maker: "Samsung", sdk: 34, serial: "R3CT40XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "130", connectedAt: "2026-10-30 14:25", tier: "고사양", power: false },
+      { id: "D-2", model: "Pixel 7", maker: "Google", sdk: 33, serial: "2B191FDH20XXXX", adb: true, auth: false, helper: null, busy: null, webview: "129", connectedAt: "2026-10-30 14:31", tier: "고사양", power: true },
     ] },
 ];
-/* 실행용 PC — 상시 켜 두고 예약 실행을 맡는다 (저작은 개인 PC 에서) */
+/* 실행용 PC — 상시 켜 두고 예약 실행을 맡는다 (저작은 개인 PC 에서)
+   단말의 tier(성능 등급) · power(전력 측정 가능)는 성능 측정 계획이 기기를 고를 때 쓴다 — 기능 실행에는 영향이 없다
+   · tier: 사람이 정한다 (고사양 / 중사양 / 저사양)
+   · power: 러너가 점검 때 알아낸다 (기기의 전력 측정 칩 — 주로 Pixel 6 이후) */
 INIT_MQA_RUNNERS.push(
   { id: "R-2", name: "10층 실행 PC", host: "QA-RUN-10F", os: "Windows 11", status: "연결됨", lastSeen: "방금 전", pkg: "0.1.0",
     registeredAt: "2026-10-31 09:10", registeredBy: "박지영", checks: { server: true, appium: true },
     devices: [
-      { id: "D-3", model: "Galaxy A54", maker: "Samsung", sdk: 34, serial: "R5CW30XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "128", connectedAt: "2026-10-31 09:14" },
+      { id: "D-3", model: "Galaxy A54", maker: "Samsung", sdk: 34, serial: "R5CW30XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "128", connectedAt: "2026-10-31 09:14", tier: "중사양", power: false },
+      { id: "D-5", model: "Galaxy S24", maker: "Samsung", sdk: 35, serial: "R3DX55XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "131", connectedAt: "2026-10-31 09:15", tier: "고사양", power: false },
+      { id: "D-4", model: "Galaxy A15", maker: "Samsung", sdk: 34, serial: "R9KX12XXXXX", adb: true, auth: true, helper: true, busy: null, webview: "128", connectedAt: "2026-10-31 09:16", tier: "저사양", power: false },
     ] },
 );
 /* ── 실행 계획 · 실행 이력 (한 바퀴 확인용 샘플) ──
    계획은 앱 · 환경 · 버전(buildId — 빈 값 = 최신, 지정하면 그 버전으로 고정) + 스위트 + 실행 단말 1대 + 예약
    이력: v3.1.4 에서 통과 → v3.2.0 으로 올린 뒤 TC-006 이 한 번 대기 시간 초과로 실패(불안정) */
 export const INIT_MQA_PLANS = [
-  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [2, 3, 7, 5], devId: "D-3", retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
+  { id: 1, name: "야간 회귀 · 스테이징", systemId: 1, env: "스테이징", buildId: "", suiteIds: [2, 3, 7, 5], runnerId: "R-2", devIds: ["D-3"], retry: 1, onfail: "계속 진행", gate: 90, status: "활성", schedule: { mode: "schedule", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매일 02:00" }, createdBy: "박지영", createdAt: "2026-10-31 09:20", updatedBy: "박지영", updatedAt: "2026-10-31 09:20" },
+  /* 성능 측정 계획 — 같은 앱 · 스위트 · 기기를 쓴다. 등급별 단말 3대 · 앱 시작(콜드 · 웜) + 스위트 케이스별 · 합격 기준이 게이트 */
+  { id: 2, name: "릴리스 성능 · 스테이징", purpose: "성능", systemId: 1, env: "스테이징", buildId: "", suiteIds: [5], runnerId: "R-2", devIds: ["D-5", "D-3", "D-4"], retry: 0, onfail: "계속 진행", gate: 0, status: "활성",
+    perf: { items: { start: ["콜드", "웜"], idle: 0, cases: true }, metrics: ["start", "jank", "slow", "mem", "cpu", "crash", "size"],
+      criteria: { app: { size: 120 }, "start:콜드": { start: 900, mem: 320 }, "start:웜": { start: 400 }, "TC-007": { jank: 8, slow: 32, mem: 400 } },
+      cond: { iters: 10, warmup: 1, clearData: true, compile: "설치 상태 그대로", maxTemp: 40, minBatt: 30, cvWarn: 10, cvBad: 20 } },
+    schedule: { mode: "event", freq: "daily", time: "02:00", dow: 1, dom: 1, cron: "0 2 * * *", tz: "Asia/Seoul", active: true, ev: { newBuild: true }, summary: "새 버전" }, createdBy: "이민준", createdAt: "2026-11-20 10:00", updatedBy: "이민준", updatedAt: "2026-11-20 10:00" },
 ];
 const st = (act, name, s, val) => ({ act, name, val: val || "", st: s || "통과", msg: "" });
 const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("화면 확인", "\"로그아웃\"")] });
@@ -190,7 +203,7 @@ const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", steps:
 const TC6 = (fail) => fail === "warn" ? ({ id: "TC-006", name: "장바구니 비우기", st: "경고", retried: 1, warnMsg: "1차 실패 후 재시도에서 통과 — 요소를 찾지 못했습니다 (10초 대기 초과)",
   steps: [st("탭", "장바구니 탭"), st("탭", "전체 삭제"), st("화면 확인", "\"장바구니가 비어 있습니다\"")] }) : ({ id: "TC-006", name: "장바구니 비우기", st: fail ? "실패" : "통과", ...(fail ? { failStep: 2, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
   steps: [st("탭", "장바구니 탭"), fail ? { ...st("탭", "전체 삭제", "실패"), msg: "요소를 찾지 못했습니다" } : st("탭", "전체 삭제"), fail ? st("화면 확인", "\"장바구니가 비어 있습니다\"", "실행 안 함") : st("화면 확인", "\"장바구니가 비어 있습니다\"")] });
-const RUN = (id, build, at, end, trig, cases) => ({ id, planId: 1, planName: "야간 회귀 · 스테이징", systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, devId: "D-3", device: "Galaxy A54 (Android 14) — 10층 실행 PC", trigger: trig, status: "완료", startedAt: at, endedAt: end, gate: 90, retry: 1, note: "", cases, log: [] });
+const RUN = (id, build, at, end, trig, cases) => ({ id, planId: 1, planName: "야간 회귀 · 스테이징", systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, runnerId: "R-2", devIds: ["D-3"], devId: "D-3", device: "Galaxy A54 — 10층 실행 PC", trigger: trig, status: "완료", startedAt: at, endedAt: end, gate: 90, retry: 1, note: "", cases, log: [] });
 /* API 스텝에서 실패한 회차 — 화면은 성공했는데 서버 반영이 안 됐다.
    UI 만 봤으면 '통과' 로 끝났을 실패이고, 원인은 앱이 아니라 백엔드로 간다(judgeOf 참고). */
 const TC8 = (fail) => ({ id: "TC-008", name: "장바구니 담기 · 서버 반영 확인", st: fail ? "실패" : "통과",
@@ -213,3 +226,36 @@ export const INIT_MQA_RUNS = [
   RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", ROWS(true, true)),
   RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", ROWS("warn", false)),   // TC-006 재시도 통과 (경고)
 ];
+/* ── 성능 측정 실행 시드 — 계획 2(릴리스 성능). v3.1.4 → v3.2.0 에서 콜드 시작이 느려져 저사양(A15)이 기준을 넘는다
+   값은 고정 난수로 만든다 (새로고침해도 같은 숫자) */
+const _rng = (seed) => { let x = seed; return () => { x = (x * 9301 + 49297) % 233280; return x / 233280; }; };
+const _P2 = INIT_MQA_PLANS.find((p) => p.id === 2);
+const _P2_CASES = [{ id: "TC-001", name: "로그인" }, { id: "TC-007", name: "검색 후 첫 상품 담기" }];
+const _PDEV = { "D-5": { model: "Galaxy S24", tier: "고사양", sdk: 35, runner: "10층 실행 PC", power: false }, "D-3": { model: "Galaxy A54", tier: "중사양", sdk: 34, runner: "10층 실행 PC", power: false }, "D-4": { model: "Galaxy A15", tier: "저사양", sdk: 34, runner: "10층 실행 PC", power: false } };
+/* opt: fail { "단말:항목": 사유 } · noisy { "단말:항목": 지표 } · phaseDrift (시작 단계 중 늘어난 단계) */
+const _PRUN = (id, build, at, end, drift, sizeDrift, seed, opt = {}) => {
+  const perf = _P2.perf, rnd = _rng(seed);
+  const items = PF.itemKeys(perf, _P2_CASES).filter((it) => it.kind !== "app");
+  const subs = _P2.devIds.map((did, k) => { const d = { id: did, ..._PDEV[did] };
+    const its = items.map((it) => { const fk = did + ":" + it.key; const fail = (opt.fail || {})[fk] || null;
+      const m = PR.measureItem(it, PF.metricsFor(perf, it.kind), d, perf.cond, drift, rnd, { fail, noise: (opt.noisy || {})[fk] ? 0.9 : 0, noisyMetric: (opt.noisy || {})[fk], phaseDrift: opt.phaseDrift });
+      const j = fail ? { over: [], judged: false } : PR.judgeItem(perf, it.key, m.vals);
+      return { key: it.key, label: it.label, kind: it.kind, vals: m.vals, iters: m.iters, cv: m.cv, phases: m.phases, jankCause: m.jankCause, fail: m.fail || null, over: j.over, judged: j.judged, trace: PR.traceName(id, d, it) }; });
+    const total = items.length * (perf.cond.iters + perf.cond.warmup);
+    return { devId: did, model: d.model, tier: d.tier, sdk: d.sdk, runnerId: "R-2", runner: d.runner, power: d.power, st: "완료", why: "", batt: 70 + k * 9, temp: Math.round((32.1 + k * 0.6) * 10) / 10, items: its, prog: total, total };
+  });
+  const run = { id, purpose: "성능", planId: 2, planName: _P2.name, systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, trigger: "새 버전", status: "완료", startedAt: at, endedAt: end, elapsed: 0, phase: "", runnerId: "R-2", devIds: _P2.devIds, device: "Galaxy S24 외 2대 — 10층 실행 PC", devId: _P2.devIds[0], perf, cond: perf.cond, cases: [], subs, app: PR.appSize(perf, build, sizeDrift), log: [{ lv: "INFO", t: "성능 측정 — 시드" }] };
+  run.verdict = PR.runVerdict(run);
+  return run;
+};
+INIT_MQA_RUNS.push(
+  /* v3.2.0 — 콜드 시작이 느려졌고(앱 초기화 단계가 늘어남) · A15 에서 TC-007 이 측정 중 실패 · A54 의 TC-001 프레임 값이 흔들림 */
+  _PRUN("MRUN-005", "3.2.0", "2026-11-02 03:00", "2026-11-02 03:12", { start: 1.16, cpu: 1.1 }, 1.03, 7,
+    { fail: { "D-4:TC-007": "케이스 실패 — 스텝 3 · 요소를 찾지 못했습니다 (10초 대기 초과)" }, noisy: { "D-3:TC-001": "jank" }, phaseDrift: { bind: 1.45 } }),
+  _PRUN("MRUN-004", "3.1.4", "2026-10-31 03:00", "2026-10-31 03:11", {}, 1, 3),
+  /* 추이용 이전 빌드 — 3.1.0 에서 메모리가 잠깐 늘었다가 3.1.4 에서 돌아온다 */
+  _PRUN("MRUN-007", "3.1.0", "2026-10-24 03:00", "2026-10-24 03:11", { mem: 1.12 }, 0.99, 11),
+  _PRUN("MRUN-006", "3.0.2", "2026-10-17 03:00", "2026-10-17 03:10", { start: 0.97 }, 0.97, 5),
+);
+INIT_MQA_RUNS.sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));   // 최신이 앞
+

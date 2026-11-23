@@ -155,7 +155,7 @@ export function MqaCasesScreen() {
 
   return (
     <div className="space-y-4">
-      <PageToolbar desc="앱 기능 TC 저장소 · 자연어 절차 → 실행 스텝 · 생성·편집·관리" />
+      <PageToolbar desc="앱 테스트 TC 저장소 · 자연어 절차 → 실행 스텝 · 생성·편집·관리" />
       <div className="flex items-center gap-2">
         <div className="flex flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"><Search size={15} className="text-slate-500" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="TC·스위트·태그 검색" className="flex-1 bg-transparent text-sm text-slate-800 outline-none" /></div>
         <div style={{ width: 150 }}><Select value={suiteF} onChange={(e) => setSuiteF(e.target.value)}><option value="전체">전체</option>{mqaSuites.map((x) => <option key={x.id} value={String(x.id)}>{x.name}</option>)}</Select></div>

@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from "react";
 import { Plus, X, RefreshCw, Smartphone, Monitor, CheckCircle2, XCircle, AlertTriangle, Copy, Download, KeyRound, Trash2, ChevronDown, Circle, Pencil, Check } from "lucide-react";
 import { Card, Badge, Btn, Field, Input, Modal, Toast, useToast, PageToolbar, SEL_CARD, SEL_IDLE } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
-import { runnerState, devState, DEV_K, osName, RUNNER_CHECKS, DEVICE_CHECKS, PREREQ } from "./devices.js";
+import { runnerState, devState, DEV_K, osName, RUNNER_CHECKS, DEVICE_CHECKS, PREREQ, TIERS, perfCaps } from "./devices.js";
 import { MockBtn } from "./workPickers.jsx";
 import { Select } from "../common/ui.jsx";
 
@@ -156,7 +156,7 @@ export function MqaDevicesScreen() {
 
   const devs = r.devices || [];
   /* 이 러너의 단말을 쓰는 예약 계획 — 끄면 안 되는 PC 인지 바로 알 수 있게 */
-  const schedOn = (x) => mqaPlans.filter((p) => p.status === "활성" && p.schedule && p.schedule.mode !== "manual" && (x.devices || []).some((dv) => dv.id === p.devId));
+  const schedOn = (x) => mqaPlans.filter((p) => p.status === "활성" && p.schedule && p.schedule.mode !== "manual" && p.runnerId === x.id && (x.devices || []).some((dv) => (p.devIds || []).includes(dv.id)));
   const usable = devs.filter((d) => devState(r, d) === "사용 가능").length;
   return (
     <div className="space-y-4">
@@ -213,7 +213,11 @@ export function MqaDevicesScreen() {
                       <div className="flex h-10 w-7 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-slate-50"><Smartphone size={13} className="text-slate-500" /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="text-sm font-medium text-slate-800">{d.model}</span><span className="text-xs text-slate-500">{d.maker} · {osName(d.sdk)}</span></div>
-                        <div className="font-mono text-xs text-slate-400">{d.serial}</div>
+                        <div className="flex items-center gap-2 text-xs"><span className="font-mono text-slate-400">{d.serial}</span>
+                          {/* 성능 측정용 — 성능 등급은 사람이 정하고, 측정 능력은 러너가 알아낸다 */}
+                          <select value={d.tier || ""} onChange={(e) => updateMqaDevice(d.id, { tier: e.target.value })} title="성능 등급 — 성능 측정 계획에서 기기를 고를 때 씁니다" className="rounded border border-slate-200 bg-white px-1 py-0 text-xs text-slate-600"><option value="">등급 없음</option>{TIERS.map((t) => <option key={t}>{t}</option>)}</select>
+                          {perfCaps(d).power && <span className="text-emerald-700" title="기기의 전력 측정 칩으로 전력을 잴 수 있습니다">전력 측정 가능</span>}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1.5" title="인식 · USB 디버깅 허용 · 자동화 준비">{DEVICE_CHECKS.map((c) => <span key={c.k} title={c.label}><CheckIcon v={c.k === "auth" ? !!d.auth : d[c.k]} /></span>)}</div>
                       <Badge kind={DEV_K[st]}>{st}</Badge>

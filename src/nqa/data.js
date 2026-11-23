@@ -33,9 +33,8 @@ export const NQA_LOAD_SHAPES = [
   { id: "소크", label: "소크(내구)", hint: "장시간 유지 — 누수·성능 저하" },
 ];
 
-/* 성능 QA 하위 워크스페이스 — 앱 성능(랩 기반 클라이언트 성능)·부하(서버 부하). 필드(RUM)는 벤더 콘솔·전문 APM과 중복·저ROI로 제외. */
+/* 성능 QA 하위 워크스페이스 — 부하(서버 부하). 앱 성능은 앱 테스트의 '성능 측정' 계획으로 옮겼다 (adb · Perfetto). 필드(RUM)는 벤더 콘솔·전문 APM과 중복·저ROI로 제외. */
 export const NQA_SUBTYPES = [
-  { id: "perf", label: "앱 성능", ready: true },
   { id: "load", label: "부하", ready: true },
 ];
 

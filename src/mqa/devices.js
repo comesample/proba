@@ -60,4 +60,8 @@ export const PREREQ = [
   { g: "하드웨어", items: ["데이터 전송용 USB 케이블"] },
 ];
 
+/* 성능 측정 능력 — 성능 측정 계획이 기기를 고를 때만 쓴다 (기능 실행과 무관)
+   · 전력 측정은 러너가 점검에서 알아낸 값. 프레임 지표는 gfxinfo 로 모든 버전에서 잰다 (12 이상은 원인 분석이 더해질 뿐) */
+export const TIERS = ["고사양", "중사양", "저사양"];
+export const perfCaps = (d) => ({ power: !!d.power });
 export const runnerOfDev = (runners, devId) => (runners || []).find((r) => (r.devices || []).some((d) => d.id === devId)) || null;

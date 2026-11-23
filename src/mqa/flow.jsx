@@ -21,6 +21,12 @@ import { envText, DeviceSelect, MockBtn, ReadonlyField } from "./workPickers.jsx
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
 import { FlakyTable, FLAKY_WINDOW } from "../common/FlakyTable.jsx";
 import { JUDGE_K, KIND_BG, kindsOf } from "../common/causeLogic.js";
+import * as PF from "./perfLogic.js";
+import * as PR from "./perfRun.js";
+import { PerfResultView, PerfRunDetail, perfProg } from "./perfResult.jsx";
+import { PerfConfig } from "./perfPlan.jsx";
+import { PlanDevices } from "./planDevices.jsx";
+import { PerfRegression, PerfDashSection } from "./perfAnalysis.jsx";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from "recharts";
 import { C, TOOLTIP } from "../common/theme.js";
 
@@ -32,6 +38,16 @@ export const buildOf = (e, buildId) => BV.resolveBuild(e, buildId);
    (대상 건수 · 버전 확인용으로 중복을 뺀다 — 실제 실행은 runItems 의 스위트 순서) */
 export const casesOfPlan = (p, cases, suites) => SL.casesOfPlanSuites(p, cases, suites);
 const devOf = (runners, id) => flatDevices(runners).find((d) => d.id === id) || null;
+/* 🔑 계획의 단말 = 러너 1곳 + 그 러너에 붙은 단말 n대 (기능 · 성능 공통)
+   여러 러너에 걸친 선택은 두지 않는다 — 결과 수집 · 점유 · 대기가 러너 하나 안에서 끝난다 (앱의 단말 = 웹의 브라우저) */
+export const planDevs = (runners, p) => {
+  const runner = (runners || []).find((r) => r.id === p.runnerId) || null;
+  const all = runner ? flatDevices([runner]) : [];
+  return { runner, all, devs: (p.devIds || []).map((id) => all.find((d) => d.id === id)).filter(Boolean) };
+};
+export const devsLabel = (devs, runner) => (!devs.length ? "단말 없음" : devs.length === 1 ? devs[0].model : devs[0].model + " 외 " + (devs.length - 1) + "대") + (runner ? " — " + runner.name : "");
+/* 실행을 막지 않는 '사용 중' — 편집 세션(예약 실행이 우선) · 다른 실행(러너 대기열로) */
+const freeOf = (d, editPreempt, queueOk) => (d.state === "사용 중" && ((editPreempt && /^편집 세션/.test(d.busy || "")) || (queueOk && /^실행 /.test(d.busy || ""))) ? { ...d, state: "사용 가능" } : d);
 /* 실행을 막는 사유 — 빈 문자열이면 실행 가능. scheduled=true 면 예약 시각 기준(편집 세션은 끊고 시작)으로 본다.
    editPreempt=true 면 편집 세션이 점유한 단말은 '사용 가능' 으로 본다 (예약 실행이 우선) */
 /* queueOk=true: 다른 '실행' 이 단말을 쓰는 중이면 막지 않는다 — 단말 대기열에 들어간다 */
@@ -41,14 +57,20 @@ export const planBlock = (p, ctx, scheduled, editPreempt, buildOverride, queueOk
   if (!e) return "대상·환경을 찾을 수 없습니다";
   const b = buildOverride || buildOf(e, p.buildId);
   if (!b) return p.buildId ? "계획에 고정한 앱 버전이 삭제되었습니다 — 계획에서 앱 버전을 다시 고르세요" : e.env + " 환경에 앱 설치 파일이 없습니다";
-  if (!casesOfPlan(p, ctx.cases, ctx.suites).length) return "조건에 맞는 승인 케이스가 없습니다";
-  const mr = SL.missingRoles(p, ctx.suites, ctx.cases, e);
-  if (mr.length) return "스위트 '" + mr[0].s.name + "' 의 계정 역할 '" + mr[0].role + "' 이(가) " + e.env + " 환경에 없습니다 — 대상·환경에서 계정을 추가하세요";
-  const d = devOf(ctx.runners, p.devId);
-  if (!d) return "실행 단말이 지정되지 않았습니다";
-  const free = d.state === "사용 중" && ((editPreempt && /^편집 세션/.test(d.busy || "")) || (queueOk && /^실행 /.test(d.busy || "")));
-  const dd = free ? { ...d, state: "사용 가능" } : d;
-  return deviceBlock(dd, b);
+  /* 성능 측정 계획 — 측정 항목 · 지표를 본다. 앱 시작 · 유휴만 재면 스위트가 없어도 된다 */
+  if (p.purpose === "성능") { const pb = PF.perfBlock(p.perf || PF.PERF0, casesOfPlan(p, ctx.cases, ctx.suites)); if (pb) return pb; }
+  else {
+    if (!casesOfPlan(p, ctx.cases, ctx.suites).length) return "조건에 맞는 승인 케이스가 없습니다";
+    const mr = SL.missingRoles(p, ctx.suites, ctx.cases, e);
+    if (mr.length) return "스위트 '" + mr[0].s.name + "' 의 계정 역할 '" + mr[0].role + "' 이(가) " + e.env + " 환경에 없습니다 — 대상·환경에서 계정을 추가하세요";
+  }
+  /* 단말 — 러너 1곳 + 단말 n대. 쓸 수 있는 단말이 하나라도 있으면 실행한다 (못 쓰는 단말은 그 회차에서 제외 · 기록) */
+  const { runner, all, devs } = planDevs(ctx.runners, p);
+  if (!runner) return "러너가 지정되지 않았습니다";
+  if (runnerState(runner) !== "연결됨") return "러너(" + runner.name + ")가 연결되어 있지 않습니다";
+  if (!all.length) return runner.name + " 에 연결된 단말이 없습니다 — 테스트 기기에서 단말을 연결하세요";
+  if (!devs.length) return "단말을 1대 이상 고르세요";
+  return devs.some((d) => !deviceBlock(freeOf(d, editPreempt, queueOk), b)) ? "" : deviceBlock(devs[0], b);
 };
 /* 예약 — 공통 스케줄 설정(FQA 와 같은 컴포넌트)을 쓴다
    schedule = { mode: manual | schedule | event, freq: hourly|daily|weekdays|weekly|monthly|cron, time, dow, dom, cron, tz, active, ev: { newBuild }, summary }
@@ -96,9 +118,9 @@ const T = { install: 4000, caseStart: 1500, step: 1200, caseEnd: 600, end: 800 }
 let SPEED = 1;
 export const getSpeed = () => SPEED;
 export const setSpeed = (v) => { SPEED = v; };
-/* 단말별 대기열 — 1단말 1작업. 실행 중인 단말에 들어온 실행은 막지 않고 줄을 세운다 */
-const QUEUE = {};   // devId → [{ id, args }]
-export const queueOf = (devId) => (QUEUE[devId] || []).map((q) => q.id);
+/* 러너별 대기열 — 1단말 1작업. 쓰려는 단말이 다른 실행에 쓰이는 중이면 막지 않고 줄을 세운다 */
+const QUEUE = {};   // runnerId → [{ id, args }]
+export const queueOf = (runnerId) => (QUEUE[runnerId] || []).map((q) => q.id);
 /* 🔑 API 스텝의 loc 은 화면 요소가 아니라 경로·검증 대상이다 — 요소로 풀면 "위치로 지정한 요소" 가 되어
    어느 경로를 쳤는지가 화면에서 사라진다. api 를 먼저 가른다. */
 const actName = (s) => { const a = L.ACT[s.act] || { needs: [] };
@@ -126,73 +148,88 @@ const planOf = ({ items, build, env, plan }) => {
     return p;
   });
 };
-const runShell = (id, { plan, sys, env, build, dev, trigger, note, partial }, plans, status) => ({
-  id, planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver, devId: dev.id, device: devLabel(dev), trigger, note: note || "",
-  status, startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry, elapsed: 0, partial: !!partial, queuedAt: status === "대기 중" ? nowStamp() : "",
-  log: status === "대기 중" ? [{ lv: "INFO", t: "단말 대기 — " + dev.model + " 이(가) 다른 실행에 사용 중" }] : [],
-  cases: plans.map(({ it, c, all, pl, skip }) => ({ key: it.suiteId + ":" + c.id, id: c.id, name: c.name, rev: c.rev || 1, suiteId: it.suiteId, suiteName: it.suiteName, acctRole: it.acctRole,
-    st: skip ? "건너뜀" : "대기", skipWhy: skip || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", el: x.el || "", st: skip ? "실행 안 함" : "대기", msg: x.res.msg || "" })) })),
-});
-/* 큐에 넣기 — 단말이 다른 '실행' 에 쓰이는 중일 때 */
+/* 계정 슬롯 — 여러 단말이 같은 계정으로 동시에 돌면 데이터(장바구니 등)가 꼬인다.
+   계획이 쓰는 역할마다 환경의 계정 수를 보고, 그 최솟값만큼만 동시에 돈다 (나머지 단말은 앞 단말이 끝난 뒤 · FQA 병렬과 같은 규칙) */
+const acctSlots = (items, env, n) => {
+  const roles = [...new Set(items.filter((it) => !it.skip && it.acctRole).map((it) => it.acctRole))];
+  if (!roles.length) return n;
+  return Math.max(1, Math.min(n, ...roles.map((r) => ((env && env.accts) || []).filter((a) => a.role === r).length || 1)));
+};
+const caseRows = (plans, dev, multi) => plans.map(({ it, c, all, pl, skip }) => ({ key: (multi ? dev.id + ":" : "") + it.suiteId + ":" + c.id, id: c.id, name: c.name, rev: c.rev || 1, suiteId: it.suiteId, suiteName: it.suiteName, acctRole: it.acctRole,
+  devId: dev.id, devModel: dev.model, st: skip ? "건너뜀" : "대기", skipWhy: skip || "", preLen: pl, steps: all.map((x) => ({ act: x.act, name: x.name, val: x.val || "", el: x.el || "", st: skip ? "실행 안 함" : "대기", msg: x.res.msg || "" })) }));
+const runHead = (id, { plan, sys, env, build, runner, devs, trigger, note, partial }, status) => ({
+  id, ...(plan.purpose === "성능" ? { purpose: "성능" } : {}), planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver,
+  runnerId: runner ? runner.id : "", devIds: devs.map((d) => d.id), devId: devs[0] ? devs[0].id : "", device: devsLabel(devs, runner), trigger, note: note || "",
+  status, startedAt: nowStamp(), endedAt: "", gate: plan.gate, retry: plan.retry, elapsed: 0, partial: !!partial, queuedAt: status === "대기 중" ? nowStamp() : "", cases: [], subs: [], log: [] });
+/* 러너별 대기열 — 계획이 고른 단말 중 하나라도 다른 실행이 쓰는 중이면 줄을 선다 (러너 단위) */
 export function enqueueRun(args) {
-  const { dev, api, runs } = args;
+  const { runner, api, runs } = args;
   const id = nextRunId(runs);
-  api.addMqaRun(runShell(id, args, planOf(args), "대기 중"));
-  (QUEUE[dev.id] = QUEUE[dev.id] || []).push({ id, args });
+  api.addMqaRun({ ...runHead(id, args, "대기 중"), log: [{ lv: "INFO", t: "단말 대기 — " + runner.name + " 의 단말이 다른 실행에 사용 중" }] });
+  (QUEUE[runner.id] = QUEUE[runner.id] || []).push({ id, args });
   return id;
 }
-const drain = (devId) => { const q = QUEUE[devId]; if (!q || !q.length) return; const next = q.shift(); startRun({ ...next.args, existingId: next.id }); };
+const drain = (runnerId) => { const q = QUEUE[runnerId]; if (!q || !q.length) return; const next = q.shift(); (next.args.plan.purpose === "성능" ? startPerfRun : startRun)({ ...next.args, existingId: next.id }); };
 export function startRun(args) {
-  const { plan, dev, api, runs, existingId, build } = args;
+  const { plan, devs, runner, api, runs, existingId, build, env } = args;
   const id = existingId || nextRunId(runs);
-  const plans = planOf(args);
-  const cur = runShell(id, args, plans, "실행 중");
-  cur.log = [{ lv: "INFO", t: "러너 배정 — " + dev.model }, { lv: "INFO", t: "앱 v" + build.ver + " 설치 · 데이터 초기화 · 실행" }];
+  const multi = devs.length > 1;
+  const perDev = devs.map((d) => ({ dev: d, plans: planOf(args) }));      // 단말마다 따로 판정 (재시도 통과는 단말마다 다를 수 있다)
+  const cur = runHead(id, args, "실행 중");
+  cur.cases = perDev.flatMap(({ dev, plans }) => caseRows(plans, dev, multi));
+  const slots = acctSlots(args.items, env, devs.length);
+  cur.log = [{ lv: "INFO", t: "러너 " + runner.name + " — 단말 " + devs.map((d) => d.model).join(", ") + (multi && slots < devs.length ? " · 계정이 " + slots + "개라 " + slots + "대씩 동시에" : multi ? " · 동시에" : "") }, { lv: "INFO", t: "앱 v" + build.ver + " 설치 · 데이터 초기화 · 실행" }, ...(args.excluded || []).map((x) => ({ lv: "INFO", t: x.model + " 제외 — " + x.why }))];
   if (existingId) cur.log.unshift({ lv: "INFO", t: "단말이 비어 대기열에서 시작" });
   cur.phase = "앱 설치 · 실행";
-  api.lockMqaDevice(dev.id, "실행 " + id);
+  devs.forEach((d) => api.lockMqaDevice(d.id, "실행 " + id));
   if (existingId) api.updateMqaRun(id, JSON.parse(JSON.stringify(cur))); else api.addMqaRun(JSON.parse(JSON.stringify(cur)));
   const push = () => api.updateMqaRun(id, JSON.parse(JSON.stringify({ status: cur.status, startedAt: cur.startedAt, endedAt: cur.endedAt, cases: cur.cases, log: cur.log, elapsed: cur.elapsed, phase: cur.phase })));
   const ev = []; const at = (ms, fn) => ev.push({ at: ms, fn });
-  let t = T.install; let stop = false;
-  let prevSuite = null;
-  plans.forEach(({ it, c, all, fi, pl, skip, later, rp }, i) => {
-    const rc = cur.cases[i];
-    /* 스위트 시작 — 여기서 앱을 한 번 연다. 계정 역할은 스위트가 정한다 */
-    if (it.suiteId !== prevSuite) {
-      prevSuite = it.suiteId;
-      at(t, () => { if (stop) return; cur.log.push({ lv: "INFO", t: "스위트 " + it.suiteName + (it.acctRole ? " · 계정 역할 " + it.acctRole : "") + " — 앱 초기화 · 순서대로 이어서 실행" }); });
-      t += T.caseStart;
-    }
-    if (skip) { at(t, () => { if (stop) return; cur.log.push({ lv: "INFO", t: c.id + " 건너뜀 — " + skip }); }); t += 200; return; }
-    if (later) { at(t, () => { if (stop) return; rc.st = "건너뜀"; rc.skipWhy = later; rc.steps.forEach((x) => { x.st = "실행 안 함"; }); cur.log.push({ lv: "INFO", t: c.id + " 건너뜀 — " + later }); }); t += 200; return; }
-    at(t, () => { if (stop) { rc.st = "건너뜀"; rc.skipWhy = "중단"; return; } rc.st = "실행 중"; cur.phase = c.id + (i > 0 && plans[i - 1].it.suiteId === it.suiteId ? " — 앞 케이스에서 이어서" : " 시작"); cur.log.push({ lv: "TC", t: c.id + " " + c.name }); });
-    t += 300;
-    const last = fi >= 0 ? fi : all.length - 1;
-    for (let j = 0; j <= last; j++) {
-      const jj = j, x = all[j];
-      at(t, () => { if (stop) return; rc.steps[jj].st = "실행 중"; cur.phase = c.id + " · 스텝 " + (jj < pl ? "전" : jj + 1 - pl); cur.log.push({ lv: "STEP", t: x.act + (x.name ? " · " + x.name : "") + (x.val ? " \"" + x.val + "\"" : "") }); });
-      t += T.step;
-      const dur = x.res.st === "fail" ? 10000 : 700 + ((jj * 337 + i * 191) % 900);   // 목업 소요: 실패는 대기 초과(10초)
-      at(t, () => { if (stop) return; rc.steps[jj].st = x.res.st === "fail" ? "실패" : "통과"; rc.steps[jj].dur = dur; rc.dur = (rc.dur || 0) + dur; });
-    }
-    if (fi >= 0 && plan.retry > 0) {
-      at(t, () => { if (stop) return; cur.log.push({ lv: "RETRY", t: c.id + " 실패 → 스위트 " + it.suiteName + " 를 처음부터 재시도 (" + plan.retry + "회)" + (rp ? " — 재시도에서 통과" : "") }); });
-      t += (T.caseStart + T.step * (last + 1)) * plan.retry;
-    }
-    t += T.caseEnd;
-    at(t, () => {
-      if (stop) return;
-      for (let j = last + 1; j < rc.steps.length; j++) rc.steps[j].st = "실행 안 함";
-      if (fi < 0) { rc.st = "통과"; cur.log.push({ lv: "PASS", t: c.id + " 통과" }); return; }
-      if (rp) { rc.steps.forEach((x) => { x.st = "통과"; }); rc.st = "경고"; rc.retried = plan.retry; rc.warnMsg = "1차 실패 후 재시도에서 통과 — " + all[fi].res.msg; cur.log.push({ lv: "WARN", t: c.id + " 재시도 통과 (불안정 신호)" }); return; }
-      rc.st = "실패"; rc.failStep = fi + 1 - pl; /* 에디터 스텝 번호와 맞춘다 */ rc.failMsg = all[fi].res.msg; rc.retried = plan.retry > 0 ? plan.retry : 0;
-      cur.log.push({ lv: "FAIL", t: c.id + " 실패 — 스텝 " + (fi + 1 - pl) + " · " + all[fi].res.msg + (rc.retried ? " (재시도 " + rc.retried + "회 후)" : "") });
-      if (plan.onfail === "첫 실패 시 중단") stop = true;
+  /* 단말 하나의 타임라인 — t0 에서 시작해 끝 시각을 돌려준다. 단말마다 '첫 실패 시 중단' 이 따로 걸린다 */
+  const schedule = ({ dev, plans }, base, t0) => {
+    let t = t0; let stop = false; let prevSuite = null; const tag = multi ? "[" + dev.model + "] " : "";
+    plans.forEach(({ it, c, all, fi, pl, skip, later, rp }, i) => {
+      const rc = cur.cases[base + i];
+      if (it.suiteId !== prevSuite) {
+        prevSuite = it.suiteId;
+        at(t, () => { if (stop) return; cur.log.push({ lv: "INFO", t: tag + "스위트 " + it.suiteName + (it.acctRole ? " · 계정 역할 " + it.acctRole : "") + " — 앱 초기화 · 순서대로 이어서 실행" }); });
+        t += T.caseStart;
+      }
+      if (skip) { at(t, () => { if (stop) return; cur.log.push({ lv: "INFO", t: tag + c.id + " 건너뜀 — " + skip }); }); t += 200; return; }
+      if (later) { at(t, () => { if (stop) return; rc.st = "건너뜀"; rc.skipWhy = later; rc.steps.forEach((x) => { x.st = "실행 안 함"; }); cur.log.push({ lv: "INFO", t: tag + c.id + " 건너뜀 — " + later }); }); t += 200; return; }
+      at(t, () => { if (stop) { rc.st = "건너뜀"; rc.skipWhy = "중단"; return; } rc.st = "실행 중"; cur.phase = tag + c.id + (i > 0 && plans[i - 1].it.suiteId === it.suiteId ? " — 앞 케이스에서 이어서" : " 시작"); cur.log.push({ lv: "TC", t: tag + c.id + " " + c.name }); });
+      t += 300;
+      const last = fi >= 0 ? fi : all.length - 1;
+      for (let j = 0; j <= last; j++) {
+        const jj = j, x = all[j];
+        at(t, () => { if (stop) return; rc.steps[jj].st = "실행 중"; cur.phase = tag + c.id + " · 스텝 " + (jj < pl ? "전" : jj + 1 - pl); cur.log.push({ lv: "STEP", t: tag + x.act + (x.name ? " · " + x.name : "") + (x.val ? " \"" + x.val + "\"" : "") }); });
+        t += T.step;
+        const dur = x.res.st === "fail" ? 10000 : 700 + ((jj * 337 + i * 191) % 900);   // 목업 소요: 실패는 대기 초과(10초)
+        at(t, () => { if (stop) return; rc.steps[jj].st = x.res.st === "fail" ? "실패" : "통과"; rc.steps[jj].dur = dur; rc.dur = (rc.dur || 0) + dur; });
+      }
+      if (fi >= 0 && plan.retry > 0) {
+        at(t, () => { if (stop) return; cur.log.push({ lv: "RETRY", t: tag + c.id + " 실패 → 스위트 " + it.suiteName + " 를 처음부터 재시도 (" + plan.retry + "회)" + (rp ? " — 재시도에서 통과" : "") }); });
+        t += (T.caseStart + T.step * (last + 1)) * plan.retry;
+      }
+      t += T.caseEnd;
+      at(t, () => {
+        if (stop) return;
+        for (let j = last + 1; j < rc.steps.length; j++) rc.steps[j].st = "실행 안 함";
+        if (fi < 0) { rc.st = "통과"; cur.log.push({ lv: "PASS", t: tag + c.id + " 통과" }); return; }
+        if (rp) { rc.steps.forEach((x) => { x.st = "통과"; }); rc.st = "경고"; rc.retried = plan.retry; rc.warnMsg = "1차 실패 후 재시도에서 통과 — " + all[fi].res.msg; cur.log.push({ lv: "WARN", t: tag + c.id + " 재시도 통과 (불안정 신호)" }); return; }
+        rc.st = "실패"; rc.failStep = fi + 1 - pl; /* 에디터 스텝 번호와 맞춘다 */ rc.failMsg = all[fi].res.msg; rc.retried = plan.retry > 0 ? plan.retry : 0;
+        cur.log.push({ lv: "FAIL", t: tag + c.id + " 실패 — 스텝 " + (fi + 1 - pl) + " · " + all[fi].res.msg + (rc.retried ? " (재시도 " + rc.retried + "회 후)" : "") });
+        if (plan.onfail === "첫 실패 시 중단") stop = true;
+      });
     });
-  });
-  t += T.end;
-  at(t, () => {
+    return t;
+  };
+  /* 계정 슬롯만큼 동시에 — k 번째 단말은 (k - slots) 번째 단말이 끝난 뒤 시작 */
+  const ends = []; let base = 0, tEnd = 0;
+  perDev.forEach((pd, k) => { const t0 = k < slots ? T.install : ends[k - slots]; if (k >= slots) at(t0, () => cur.log.push({ lv: "INFO", t: "[" + pd.dev.model + "] 계정이 비어 시작" })); ends[k] = schedule(pd, base, t0); base += pd.plans.length; tEnd = Math.max(tEnd, ends[k]); });
+  ev.sort((a, b) => a.at - b.at);
+  const rowPlans = perDev.flatMap((pd) => pd.plans);
+  at(tEnd + T.end, () => {
     cur.cases.forEach((rc) => { if (rc.st === "대기") { rc.st = "건너뜀"; rc.skipWhy = rc.skipWhy || "중단"; } });
     cur.status = "완료"; cur.phase = ""; cur.endedAt = nowStamp(); cur.log.push({ lv: "INFO", t: "완료 · 단말 반납" });
     /* 원인을 지금 박는다 — 이 시점의 이력으로 판단하고, 이후 실행이 과거를 바꾸지 못하게 한다 */
@@ -202,14 +239,14 @@ export function startRun(args) {
     });
     /* 로케이터 보정 제안 — '요소 변경' 일 때만, 실행한 그 케이스(리비전)의 실패 스텝으로 계산해 함께 박는다 (L.healFor) */
     cur.cases.forEach((rc, i) => {
-      const c = plans[i] && plans[i].c;
+      const c = rowPlans[i] && rowPlans[i].c;
       if (rc.st !== "실패" || !rc.cause || rc.cause.cause !== "요소 변경" || !c || c.level === "Full-Code") return;
       const h = L.healFor((c.steps || [])[rc.failStep - 1], build.ver);
       if (h) rc.heal = { ...h, stepNo: rc.failStep, rev: c.rev || 1, st: "검토 대기" };
     });
     /* 정식 실행에서 통과한 버전은 '확인된 버전' 이 된다 — 디버그로 다시 확인하라고 하지 않는다 (builds.js) */
     cur.cases.filter((rc) => rc.st === "통과" || rc.st === "경고").forEach((rc) => { const c = (api.mqaCases || []).find((x) => x.id === rc.id); if (c && !BV.isVerified(c, build.ver)) api.updateMqaCase(rc.id, { verifiedOn: BV.withVerified(c, build.ver) }); });
-    api.releaseMqaDevice(dev.id);
+    devs.forEach((d) => api.releaseMqaDevice(d.id));
     if (api.notify) { const mc = mergedCases(cur), p = mc.filter((x) => x.st === "통과").length, f = mc.filter((x) => x.st === "실패").length; api.notify({ icon: "play", text: plan.name + " 완료 — 통과 " + p + " / 실패 " + f, to: { domain: "MQA", view: "mqa-result-detail", run: id } }); }
     runAlert(cur, api);
   });
@@ -220,9 +257,9 @@ export function startRun(args) {
     let any = false;
     while (ev.length && ev[0].at <= v) { ev.shift().fn(); any = true; }
     if (any || tick % 5 === 0 || !ev.length) push();   // 화면 갱신은 변화가 있을 때 + 0.5초마다(경과 시간)
-    if (!ev.length) { clearInterval(iv); delete RUN_TIMERS[id]; drain(dev.id); }
+    if (!ev.length) { clearInterval(iv); delete RUN_TIMERS[id]; drain(runner.id); }
   }, 100);
-  RUN_TIMERS[id] = iv;
+  RUN_TIMERS[id] = { iv, devs: devs.map((d) => d.id), runnerId: runner.id };
   return id;
 }
 /* 자동 알림 — 공통 '리포트 · 알림' 의 채널 · 발송 조건을 그대로 따른다
@@ -237,16 +274,84 @@ function runAlert(run, api) {
   autoAlert({ reportCfg: api.reportCfg, addReportHist: api.addReportHist, domain: "MQA", hasFail: fails.length > 0, hasReg: reg.length > 0,
     text: run.planName + " " + run.id + " 완료 — " + (reg.length ? "퇴행 " + reg.length + "건 (" + causeTxt + ")" : "실패 " + fails.length + "건") + (pr != null ? " · PASS " + pr + "%" : "") });
 }
+/* ── 성능 측정 실행 (목업) — 러너 1곳의 단말 n대에서 동시에: 설치 · 조건 맞추기 → 항목별 반복 측정 → 집계 · 판정
+   실행 · 대기 · 점유 규칙은 기능 실행과 같다 (1단말 1작업 · 러너별 대기열).
+   같은 PC 의 다른 단말은 잡지 않는다 — 시작 시간 · 프레임 · 메모리 · CPU 는 단말 안에서 재는 값이라 PC 부하에 거의 흔들리지 않는다 */
+const PERF_TIMERS = {};
+const P_SETUP = 2500, P_STEP = 450;
+export function startPerfRun({ plan, sys, env, build, trigger, api, runs, ctx, runner, devs, excluded, existingId }) {
+  const id = existingId || nextRunId(runs);
+  const perf = { ...PF.PERF0, ...(plan.perf || {}), cond: { ...PF.PERF_COND0, ...((plan.perf || {}).cond || {}) } };
+  const cs = casesOfPlan(plan, ctx.cases, ctx.suites);
+  const items = PF.itemKeys(perf, cs).filter((it) => it.kind !== "app");
+  const all = flatDevices(ctx.runners);
+  const subs = [...devs.map((d) => ({ d, why: "" })), ...(excluded || []).map((x) => ({ d: x.d, why: x.why }))].map(({ d, why }, k) => {
+    return { devId: d.id, model: d.model, tier: d.tier || "", sdk: d.sdk, runnerId: d.runnerId, runner: d.runnerName, power: !!d.power, st: why ? "실행 불가" : "대기", why, batt: 52 + ((k * 17 + 11) % 44), temp: Math.round((31 + ((k * 7) % 5) * 0.8) * 10) / 10, items: [], prog: 0, total: items.length * (perf.cond.iters + perf.cond.warmup) };
+  });
+  const cur = { id, purpose: "성능", planId: plan.id, planName: plan.name, systemId: sys.id, sysName: sys.name, env: env.env, build: build.ver, trigger, status: "실행 중", startedAt: nowStamp(), endedAt: "", elapsed: 0, phase: "설치 · 조건 맞추기",
+    runnerId: runner.id, devIds: devs.map((d) => d.id), device: devsLabel(devs, runner), devId: devs[0] ? devs[0].id : "", perf, cond: perf.cond, cases: [], subs, app: null,
+    log: [{ lv: "INFO", t: "성능 측정 — 단말 " + subs.length + "대 · 항목 " + items.length + "개 · 반복 " + perf.cond.iters + "회 (첫 " + perf.cond.warmup + "회 버림)" }, ...subs.filter((x) => x.st === "실행 불가").map((x) => ({ lv: "FAIL", t: x.model + " 실행 불가 — " + x.why }))] };
+  if (existingId) { cur.log.unshift({ lv: "INFO", t: "단말이 비어 대기열에서 시작" }); api.updateMqaRun(id, JSON.parse(JSON.stringify(cur))); } else api.addMqaRun(JSON.parse(JSON.stringify(cur)));
+  const locked = devs;
+  locked.forEach((d) => api.lockMqaDevice(d.id, "실행 " + id + " (성능 측정)"));
+  const push = () => api.updateMqaRun(id, JSON.parse(JSON.stringify({ status: cur.status, endedAt: cur.endedAt, elapsed: cur.elapsed, phase: cur.phase, subs: cur.subs, app: cur.app, log: cur.log, verdict: cur.verdict })));
+  let v = 0, tick = 0;
+  const finishSub = (sub) => {
+    const dev = all.find((d) => d.id === sub.devId) || sub;
+    /* 사용 흐름 항목 — 케이스가 측정 중 실패하면(요소를 못 찾는 등) 그 구간 값은 내지 않는다 ('측정 실패') */
+    const failOf = (it) => { if (it.kind !== "case") return null; const c = (ctx.cases || []).find((x) => x.id === it.key); if (!c) return null; const body = simBody(c, build, env); const fi = body.findIndex((x) => x.res.st === "fail"); return fi >= 0 ? "케이스 실패 — 스텝 " + (fi + 1) + " · " + body[fi].res.msg : null; };
+    sub.items = items.map((it) => { const ms = PF.metricsFor(perf, it.kind); const fail = failOf(it); const m = PR.measureItem(it, ms, { ...dev, tier: sub.tier, power: sub.power, sdk: sub.sdk }, perf.cond, {}, Math.random, { fail }); const j = fail ? { over: [], judged: false } : PR.judgeItem(perf, it.key, m.vals);
+      return { key: it.key, label: it.label, kind: it.kind, vals: m.vals, iters: m.iters, cv: m.cv, phases: m.phases, jankCause: m.jankCause, fail: m.fail || null, over: j.over, judged: j.judged, trace: PR.traceName(id, sub, it) }; });
+    sub.st = "완료"; sub.prog = sub.total;
+    const ov = sub.items.reduce((n, it) => n + it.over.length, 0); const fl = sub.items.filter((it) => it.fail).length;
+    cur.log.push({ lv: ov || fl ? "FAIL" : "PASS", t: sub.model + " 측정 완료 — " + (ov ? "기준 초과 " + ov + "건" : "기준 이내") + (fl ? " · 측정 실패 " + fl + "건 (케이스 실패)" : "") });
+  };
+  const iv = setInterval(() => {
+    v += 100 * SPEED; cur.elapsed = v; tick++;
+    cur.subs.forEach((sub) => {
+      if (sub.st === "대기" && v >= P_SETUP) {
+        /* 환경 검사 — 배터리 하한 · 온도 상한. 걸리면 '환경 오류' (불합격 아님) */
+        if (sub.batt < perf.cond.minBatt) { sub.st = "환경 오류"; sub.why = "배터리 " + sub.batt + "% — 하한 " + perf.cond.minBatt + "% 미만"; cur.log.push({ lv: "INFO", t: sub.model + " 환경 오류 — " + sub.why }); return; }
+        sub.st = "실행 중"; cur.log.push({ lv: "INFO", t: sub.model + " 조건 맞춤 — " + (perf.cond.clearData ? "데이터 초기화 · " : "") + perf.cond.compile + " · 배터리 " + sub.batt + "% · " + sub.temp + "℃" });
+      }
+      if (sub.st === "실행 중") { sub.prog = Math.min(sub.total, Math.floor((v - P_SETUP) / P_STEP)); if (sub.prog >= sub.total) finishSub(sub); }
+    });
+    const live = cur.subs.find((x) => x.st === "실행 중");
+    if (live) { const per = perf.cond.iters + perf.cond.warmup; const it = items[Math.min(items.length - 1, Math.floor(live.prog / per))]; cur.phase = (it ? it.label : "") + " · " + ((live.prog % per) + 1) + "/" + per + "회"; }
+    const done = cur.subs.every((x) => x.st !== "대기" && x.st !== "실행 중");
+    if (done) {
+      clearInterval(iv); delete PERF_TIMERS[id];
+      if ((perf.metrics || []).includes("size")) cur.app = PR.appSize(perf, build.ver);
+      cur.status = "완료"; cur.phase = ""; cur.endedAt = nowStamp(); cur.verdict = PR.runVerdict(cur);
+      cur.log.push({ lv: "INFO", t: "완료 · 단말 반납 — " + cur.verdict });
+      push();
+      locked.forEach((d) => api.releaseMqaDevice(d.id)); drain(runner.id);
+      if (api.notify) api.notify({ icon: "play", text: plan.name + " 성능 측정 완료 — " + cur.verdict + (PR.overCount(cur) ? " (기준 초과 " + PR.overCount(cur) + "건)" : ""), to: { domain: "MQA", view: "mqa-result-detail", run: id } });
+      return;
+    }
+    if (tick % 5 === 0) push();
+  }, 100);
+  PERF_TIMERS[id] = { iv, locked, runnerId: runner.id };
+  return id;
+}
+function stopPerfRun(run, api) {
+  if (run.status === "대기 중") return cancelQueued(run, api);
+  const t = PERF_TIMERS[run.id]; if (t) clearInterval(t.iv); delete PERF_TIMERS[run.id];
+  api.updateMqaRun(run.id, { status: "중단", phase: "", endedAt: nowStamp(), subs: (run.subs || []).map((x) => (x.st === "대기" || x.st === "실행 중" ? { ...x, st: "중단" } : x)), log: [...(run.log || []), { lv: "INFO", t: "사용자가 중단 · 단말 반납" }] });
+  (t ? t.locked : []).forEach((d) => api.releaseMqaDevice(d.id)); drain(run.runnerId);
+}
 export function stopRun(run, api) {
-  if (run.status === "대기 중") {   // 대기열에서 빼기
-    const q = QUEUE[run.devId] || []; QUEUE[run.devId] = q.filter((x) => x.id !== run.id);
-    api.updateMqaRun(run.id, { status: "중단", endedAt: nowStamp(), log: [...(run.log || []), { lv: "INFO", t: "대기 중 취소" }] });
-    return;
-  }
-  clearInterval(RUN_TIMERS[run.id]); delete RUN_TIMERS[run.id];
+  if (run.purpose === "성능") return stopPerfRun(run, api);
+  if (run.status === "대기 중") return cancelQueued(run, api);
+  const tm = RUN_TIMERS[run.id]; if (tm) clearInterval(tm.iv); delete RUN_TIMERS[run.id];
   api.updateMqaRun(run.id, { status: "중단", phase: "", endedAt: nowStamp(), cases: run.cases.map((c) => (c.st === "대기" || c.st === "실행 중" ? { ...c, st: "건너뜀" } : c)), log: [...(run.log || []), { lv: "INFO", t: "사용자가 중단 · 단말 반납" }] });
-  api.releaseMqaDevice(run.devId);
-  drain(run.devId);
+  (run.devIds || [run.devId]).forEach((d) => api.releaseMqaDevice(d));
+  drain(run.runnerId);
+}
+/* 대기열에서 빼기 — 러너별 대기열 */
+function cancelQueued(run, api) {
+  const q = QUEUE[run.runnerId] || []; QUEUE[run.runnerId] = q.filter((x) => x.id !== run.id);
+  api.updateMqaRun(run.id, { status: "중단", endedAt: nowStamp(), log: [...(run.log || []), { lv: "INFO", t: "대기 중 취소" }] });
 }
 /* 실행 시작 — 계획 · 실패만 다시 · 예약이 모두 이 함수를 지난다 */
 const useRunner = () => {
@@ -254,28 +359,27 @@ const useRunner = () => {
   const ctx = { systems: app.mqaSystems || [], cases: app.mqaCases || [], suites: app.mqaSuites || [], runners: app.mqaRunners || [] };
   const launch = (plan, { trigger = "수동", only, note, build } = {}) => {
     const { sy, e } = envOfPlan(ctx.systems, plan);
-    const b = build || buildOf(e, plan.buildId); const dev = devOf(ctx.runners, plan.devId);
-    const items = SL.runItems(plan, ctx.cases, ctx.suites, only);   // (스위트, 케이스) 순서 — '실패만 다시' 는 그 스위트를 처음부터
-    if (dev && dev.state === "사용 중" && /^편집 세션/.test(dev.busy || "") && trigger !== "수동") app.releaseMqaDevice(dev.id);
-    const args = { plan, items, sys: sy, env: e, build: b, dev, trigger, note, partial: !!only, api: app, runs: app.mqaRuns };
-    /* 🔑 API 스텝만 있는 실행은 단말을 기다리지 않는다 — 기기를 안 쓰는데 점유할 이유가 없다.
-       클라우드 Device Farm 은 동시 실행 1개당 월 비용이 붙어서 그냥 낭비가 아니라 돈이 샌다.
-       (Full-Code 케이스는 무엇을 하는지 모르므로 단말이 필요하다고 본다 — 모르면 잡는 쪽이 안전하다) */
-    const needs = (c) => c.level === "Full-Code" || L.needsDevice(c.steps);
-    const useDev = items.some((it) => !it.skip && needs(it.c));
-    if (useDev && dev && dev.state === "사용 중" && /^실행 /.test(dev.busy || "")) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 대기열
-    return startRun(args);
+    const b = build || buildOf(e, plan.buildId);
+    const { runner, devs: picked } = planDevs(ctx.runners, plan);
+    /* 편집 세션이 잡은 단말은 자동 실행이면 끊고 쓴다. 못 쓰는 단말은 이번 회차에서 제외(기록), 다른 실행이 쓰는 단말은 대기열 */
+    if (trigger !== "수동") picked.filter((d) => d.state === "사용 중" && /^편집 세션/.test(d.busy || "")).forEach((d) => app.releaseMqaDevice(d.id));
+    const usable = picked.filter((d) => !deviceBlock(freeOf(d, trigger !== "수동", true), b));
+    const excluded = picked.filter((d) => !usable.includes(d)).map((d) => ({ d, model: d.model, why: deviceBlock(d, b) }));
+    const items = plan.purpose === "성능" ? [] : SL.runItems(plan, ctx.cases, ctx.suites, only);   // (스위트, 케이스) 순서 — '실패만 다시' 는 그 스위트를 처음부터
+    const args = { plan, items, sys: sy, env: e, build: b, runner, devs: usable, excluded, trigger, note, partial: !!only, api: app, runs: app.mqaRuns, ctx };
+    if (usable.some((d) => d.state === "사용 중" && /^실행 /.test(d.busy || ""))) return enqueueRun(args);   // 다른 실행이 쓰는 중 → 러너 대기열
+    return plan.purpose === "성능" ? startPerfRun(args) : startRun(args);
   };
   /* 자동 실행(예약 · 새 버전) — 그 순간의 상태로 판단한다. 편집 세션은 끊고 시작, 그 밖의 문제는 건너뛰지 않고 '실행 불가' 로 기록 */
   const autoRun = (p, trigger, build) => {
     const blk = planBlock(p, ctx, true, true, build, true);
     if (blk) {
-      const { sy, e } = envOfPlan(ctx.systems, p); const bd = build || buildOf(e, p.buildId); const dv = devOf(ctx.runners, p.devId);
-      app.addMqaRun({ id: nextRunId(app.mqaRuns), planId: p.id, planName: p.name, systemId: p.systemId, sysName: sy ? sy.name : "", env: p.env, build: bd ? bd.ver : "", devId: p.devId, device: dv ? devLabel(dv) : "—", trigger, status: "실행 불가", startedAt: nowStamp(), endedAt: nowStamp(), gate: p.gate, note: blk, cases: [], log: [{ lv: "FAIL", t: "실행 불가 — " + blk }] });
+      const { sy, e } = envOfPlan(ctx.systems, p); const bd = build || buildOf(e, p.buildId); const pdv = planDevs(ctx.runners, p);
+      app.addMqaRun({ id: nextRunId(app.mqaRuns), ...(p.purpose === "성능" ? { purpose: "성능" } : {}), planId: p.id, planName: p.name, systemId: p.systemId, sysName: sy ? sy.name : "", env: p.env, build: bd ? bd.ver : "", runnerId: p.runnerId, devIds: p.devIds || [], devId: (p.devIds || [])[0] || "", device: devsLabel(pdv.devs, pdv.runner), subs: [], trigger, status: "실행 불가", startedAt: nowStamp(), endedAt: nowStamp(), gate: p.gate, note: blk, cases: [], log: [{ lv: "FAIL", t: "실행 불가 — " + blk }] });
       return { blocked: blk };
     }
-    const dv = devOf(ctx.runners, p.devId);
-    const pre = dv && /^편집 세션/.test(dv.busy || "") ? dv.busy + " 을(를) 종료하고 시작" : "";
+    const ed = planDevs(ctx.runners, p).devs.find((d) => /^편집 세션/.test(d.busy || ""));
+    const pre = ed ? ed.busy + " 을(를) 종료하고 시작" : "";
     return { id: launch(p, { trigger, note: pre, build }), pre };
   };
   return { app, ctx, launch, autoRun };
@@ -287,8 +391,9 @@ const Empty = ({ icon: Icon, title, hint, children }) => (
 );
 
 /* ═══════════ 실행 계획 ═══════════ */
-const P0 = (sys) => ({ name: "", systemId: sys ? sys.id : 0, env: sys && sys.envs[0] ? sys.envs[0].env : "", buildId: "", suiteIds: [], devId: "", retry: 1, onfail: "계속 진행", gate: 90, status: "초안", schedule: SCHED0 });
-const PLAN_KEYS = ["name", "systemId", "env", "buildId", "suiteIds", "devId", "retry", "onfail", "gate", "status", "schedule"];
+/* purpose — 기능 검증 | 성능 측정. 만든 뒤에는 바꾸지 않는다 (이력 · 추이가 섞이지 않게 — 대상 앱 · 환경과 같은 규칙) */
+const P0 = (sys) => ({ name: "", purpose: "기능", systemId: sys ? sys.id : 0, env: sys && sys.envs[0] ? sys.envs[0].env : "", buildId: "", suiteIds: [], runnerId: "", devIds: [], retry: 1, onfail: "계속 진행", gate: 90, status: "초안", schedule: SCHED0, perf: PF.PERF0 });
+const PLAN_KEYS = ["name", "purpose", "systemId", "env", "buildId", "suiteIds", "runnerId", "devIds", "retry", "onfail", "gate", "status", "schedule", "perf"];
 /* 스케줄은 의미 있는 값만 비교한다 — 공통 스케줄 컴포넌트는 처음 그릴 때(개발 모드의 StrictMode 재실행 포함)
    ev 를 { newBuild: false } 처럼 채워 내보내므로, 원본 {} 와 글자 그대로 비교하면 바꾸지 않아도 '미저장 변경' 이 뜬다 */
 const normSched = (s) => { const x = { ...SCHED0, ...(s || {}) }; return { mode: x.mode, freq: x.freq, time: x.time, dow: +x.dow, dom: +x.dom, cron: x.cron, tz: x.tz, active: x.active !== false, newBuild: !!(x.ev && x.ev.newBuild) }; };
@@ -312,10 +417,10 @@ export function MqaPlanScreen() {
   const create = () => {
     if (!nf.name.trim()) { flash("계획 이름을 입력하세요"); return; }
     if (mqaPlans.some((x) => x.name === nf.name.trim())) { flash("같은 이름의 계획이 이미 있습니다"); return; }
-    if (!nf.suiteIds.length) { flash("스위트를 1개 이상 고르세요"); return; }
+    if (nf.purpose !== "성능" && !nf.suiteIds.length) { flash("스위트를 1개 이상 고르세요"); return; }
     const id = Math.max(0, ...mqaPlans.map((x) => x.id)) + 1;
     addMqaPlan({ ...P0(mqaSystems[0]), ...nf, name: nf.name.trim(), id }); setSelId(id); setD(null); setAddOpen(false);
-    flash(nf.name.trim() + " 계획 생성 (초안) — 실행 단말을 지정하세요");
+    flash(nf.name.trim() + " 계획 생성 (초안) — " + (nf.purpose === "성능" ? "러너 · 단말 · 측정 항목 · 지표를 정하세요" : "러너 · 단말을 지정하세요"));
   };
   const del = (p) => { if (!window.confirm(p.name + " 계획을 삭제할까요?")) return; removeMqaPlan(p.id); setSelId(null); setD(null); flash(p.name + " 삭제됨"); };
   const save = () => { updateMqaPlan(sel.id, { ...pickPlan(d), name: d.name.trim() || sel.name }); setD(null); flash("계획 저장됨"); };
@@ -327,13 +432,18 @@ export function MqaPlanScreen() {
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5"><h3 className="font-semibold text-slate-900">새 실행 계획</h3><button onClick={() => setAddOpen(false)} className="text-slate-500 hover:text-slate-800"><X size={18} /></button></div>
         <div className="space-y-3.5 p-5">
           <Field label="계획 이름"><Input value={nf.name} onChange={(e) => setNf({ ...nf, name: e.target.value })} placeholder="예: 주문 회귀 (스테이징)" /></Field>
+            <Field label="목적" hint="만든 뒤에는 바꿀 수 없습니다">
+              <div className="grid grid-cols-2 gap-2">{[["기능", "기능 검증", "케이스가 통과하는지"], ["성능", "성능 측정", "시작 시간 · 프레임 · 메모리 등을 반복 측정"]].map(([k, t, ds]) => (
+                <button key={k} onClick={() => setNf({ ...nf, purpose: k })} className={"rounded-lg border px-3 py-2 text-left " + (nf.purpose === k ? "border-sky-500 bg-sky-100" : "border-slate-300 bg-slate-100 hover:bg-slate-200")}><div className={"text-xs font-medium " + (nf.purpose === k ? "text-sky-700" : "text-slate-800")}>{t}</div><div className="mt-0.5 text-xs text-slate-500">{ds}</div></button>
+              ))}</div>
+            </Field>
             <Field label="대상 앱 · 환경" hint="만든 뒤에는 바꿀 수 없습니다 — 다른 환경은 새 계획으로 만드세요">
               <Select value={nf.systemId + "|" + nf.env} onChange={(e) => { const [s, en] = e.target.value.split("|"); setNf({ ...nf, systemId: +s, env: en }); }}>
                 {mqaSystems.flatMap((sy) => sy.envs.map((en) => <option key={sy.id + en.env} value={sy.id + "|" + en.env}>{sy.name} · {en.env}</option>))}
               </Select>
             </Field>
-            <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites.filter((s) => s.systemId === nf.systemId)} value={nf.suiteIds} onChange={(v) => setNf({ ...nf, suiteIds: v })} /></Field>
-            <div className="text-xs text-slate-500">초안으로 만들어집니다 — 실행 단말 · 예약은 상세에서 정합니다.</div>
+            <Field label={"스위트 (다중 선택)" + (nf.purpose === "성능" ? " — 앱 시작 · 유휴만 잴 거면 비워도 됩니다" : "")}><SuitePick suites={mqaSuites.filter((s) => s.systemId === nf.systemId)} value={nf.suiteIds} onChange={(v) => setNf({ ...nf, suiteIds: v })} /></Field>
+            <div className="text-xs text-slate-500">초안으로 만들어집니다 — {nf.purpose === "성능" ? "러너 · 단말 · 측정 항목 · 지표 · 합격 기준" : "러너 · 단말 · 예약"}은 상세에서 정합니다.</div>
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3.5"><Btn onClick={() => setAddOpen(false)}>취소</Btn><Btn kind="primary" icon={Plus} onClick={create}>계획 생성</Btn></div>
       </div>
@@ -366,12 +476,12 @@ export function MqaPlanScreen() {
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-3 space-y-3">
           <Btn kind="primary" icon={Plus} className="w-full" onClick={() => { setNf(P0(mqaSystems[0])); setAddOpen(true); }}>새 실행 계획</Btn>
-          {mqaPlans.map((p) => { const ps = envOfPlan(mqaSystems, p); const pd = devOf(mqaRunners, p.devId); return (
+          {mqaPlans.map((p) => { const ps = envOfPlan(mqaSystems, p); const pd = planDevs(mqaRunners, p); return (
             <Card key={p.id} className={"cursor-pointer p-3 " + (sel.id === p.id ? SEL_CARD : SEL_IDLE)}>
               <div onClick={() => choose(p)}>
-                <div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-900">{p.name}</span><div className="flex items-center gap-1.5"><Badge kind={p.status === "활성" ? "pass" : "draft"}>{p.status}</Badge><button onClick={(ev) => { ev.stopPropagation(); del(p); }} className="text-slate-500 hover:text-red-600" title="계획 삭제"><X size={13} /></button></div></div>
+                <div className="flex items-center justify-between"><span className="text-sm font-semibold text-slate-900">{p.name}</span><div className="flex items-center gap-1.5"><Badge kind={p.purpose === "성능" ? "active" : "info"}>{p.purpose === "성능" ? "성능" : "기능"}</Badge><Badge kind={p.status === "활성" ? "pass" : "draft"}>{p.status}</Badge><button onClick={(ev) => { ev.stopPropagation(); del(p); }} className="text-slate-500 hover:text-red-600" title="계획 삭제"><X size={13} /></button></div></div>
                 <div className="mt-1 text-xs text-slate-500">{ps.sy ? ps.sy.name : "—"} · {p.env}</div>
-                <div className="mt-0.5 text-xs text-slate-500">{pd ? pd.model : "단말 미지정"} · {schedText(p.schedule)}</div>
+                <div className="mt-0.5 text-xs text-slate-500">{pd.runner ? devsLabel(pd.devs, pd.runner) : "러너 미지정"} · {schedText(p.schedule)}</div>
               </div>
             </Card>
           ); })}
@@ -389,7 +499,7 @@ export function MqaPlanScreen() {
             {/* 무엇을 */}
             <div className="space-y-3.5">
               <div className="text-xs font-semibold text-slate-500">무엇을</div>
-              <Field label="대상 앱 · 환경"><ReadonlyField value={(sy ? sy.name : "—") + " · " + d.env + (e && e.prod ? " (운영)" : "")} title="만든 뒤에는 바꿀 수 없습니다 — 다른 환경은 새 계획으로 만드세요" /></Field>
+              <Field label="목적 · 대상 앱 · 환경"><ReadonlyField value={(d.purpose === "성능" ? "성능 측정" : "기능 검증") + " · " + (sy ? sy.name : "—") + " · " + d.env + (e && e.prod ? " (운영)" : "")} title="만든 뒤에는 바꿀 수 없습니다 — 다른 목적 · 환경은 새 계획으로 만드세요" /></Field>
               <Field label="테스트할 앱 버전" hint="최신 = 빌드 번호가 가장 높은 버전">
                 <Select value={d.buildId || ""} onChange={(ev) => set({ buildId: ev.target.value })}>
                   <option value="">{BV.buildLabel(e, "")}</option>
@@ -399,7 +509,7 @@ export function MqaPlanScreen() {
               </Field>
               <Field label="스위트 (다중 선택)"><SuitePick suites={mqaSuites.filter((s) => s.systemId === d.systemId)} value={d.suiteIds} onChange={(v) => set({ suiteIds: v })} /></Field>
               <div className={"rounded-lg border px-3 py-2 text-xs " + (cs.length ? "border-slate-200 bg-slate-50 text-slate-600" : "border-amber-200 bg-amber-50 text-amber-700")}>
-                {cs.length ? <>대상 케이스 <b className="font-semibold text-sky-700">{cs.length}건</b> <span className="font-mono text-slate-500">{cs.map((c) => c.id).join(", ")}</span></> : "조건에 맞는 승인 케이스가 없습니다 — 실행해도 0건입니다"}
+                {cs.length ? <>대상 케이스 <b className="font-semibold text-sky-700">{cs.length}건</b> <span className="font-mono text-slate-500">{cs.map((c) => c.id).join(", ")}</span></> : d.purpose === "성능" ? "스위트 없음 — 앱 시작 · 유휴만 잽니다" : "조건에 맞는 승인 케이스가 없습니다 — 실행해도 0건입니다"}
                 {notes.filter((n) => n.block).map((n) => <div key={n.s.id} className="mt-0.5 text-amber-700">{n.s.name} 실행 불가 — {n.block}</div>)}
               </div>
               {verOff.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><AlertTriangle size={12} className="mr-1 inline" />{verOff.length}건은 v{b.ver}에서 아직 확인되지 않았습니다(다른 버전에서 만들고, 이 버전에서 통과한 적 없음) — 요소를 못 찾을 수 있습니다 <span className="font-mono">{verOff.map((c) => c.id).join(", ")}</span></div>}
@@ -408,16 +518,16 @@ export function MqaPlanScreen() {
             {/* 어디서 · 어떻게 · 언제 */}
             <div className="space-y-3.5">
               <div className="text-xs font-semibold text-slate-500">어디서 · 어떻게</div>
-              <Field label="실행 단말" hint="계획마다 단말 1대 — 그 단말에서 케이스를 순서대로 돌립니다">
-                <DeviceSelect devs={allDevs} value={d.devId} onChange={(v) => set({ devId: v })} build={b} soft />
-              </Field>
+              <PlanDevices runners={mqaRunners} runnerId={d.runnerId} devIds={d.devIds} onChange={(v) => set(v)} onGoDevices={() => goTo("mqa-devices")} perf={d.purpose === "성능"} />
+              {d.purpose === "성능" ? <PerfConfig perf={d.perf} onChange={(v) => set({ perf: v })} devs={allDevs.filter((x) => (d.devIds || []).includes(x.id))} cases={cs} hasSuites={(d.suiteIds || []).length > 0} /> : (<>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="재시도"><Select value={d.retry} onChange={(ev) => set({ retry: +ev.target.value })}><option value={0}>안 함</option><option value={1}>1회</option><option value={2}>2회</option></Select></Field>
                 <Field label="실패 시"><Select value={d.onfail} onChange={(ev) => set({ onfail: ev.target.value })}><option>계속 진행</option><option>첫 실패 시 중단</option></Select></Field>
                 <Field label="품질 게이트 (%)"><Input type="number" value={d.gate} onChange={(ev) => set({ gate: +ev.target.value || 0 })} /></Field>
               </div>
+              </>)}
               <div className={"rounded-lg border px-3 py-2 text-xs " + (blk ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800")}>
-                {blk ? <><AlertTriangle size={12} className="mr-1 inline" />지금 실행할 수 없음 — {blk}{/단말|러너|USB|자동화 준비/.test(blk) && <button onClick={() => goTo("mqa-devices")} className="ml-2 text-sky-700">테스트 기기로</button>}</> : <><CheckCircle2 size={12} className="mr-1 inline" />실행 준비됨 — {sy ? sy.name : ""} {e ? envText({ ...e, build: b ? b.ver : "" }) : ""} · {(devOf(mqaRunners, d.devId) || {}).model}</>}
+                {blk ? <><AlertTriangle size={12} className="mr-1 inline" />지금 실행할 수 없음 — {blk}{/단말|러너|USB|자동화 준비/.test(blk) && <button onClick={() => goTo("mqa-devices")} className="ml-2 text-sky-700">테스트 기기로</button>}</> : <><CheckCircle2 size={12} className="mr-1 inline" />실행 준비됨 — {sy ? sy.name : ""} {e ? envText({ ...e, build: b ? b.ver : "" }) : ""} · {devsLabel(planDevs(mqaRunners, d).devs, planDevs(mqaRunners, d).runner)}</>}
               </div>
             </div>
           </div>
@@ -463,7 +573,7 @@ export function MqaRunScreen({ nav }) {
   const [selId, setSelId] = useState(null);
   const sel = rows.find((r) => r.id === selId) || running[0] || waiting[0] || null;
   const blk = plan ? planBlock(plan, ctx, false) : "활성 계획이 없습니다";
-  const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); setSelId(id); const dv = devOf(ctx.runners, plan.devId); flash(dv && dv.state === "사용 중" ? id + " 단말 대기열에 추가 — 앞선 실행이 끝나면 시작" : id + " 시작"); };
+  const go = () => { if (blk) { flash(blk); return; } const id = launch(plan); setSelId(id); const busy = planDevs(ctx.runners, plan).devs.some((x) => x.state === "사용 중" && /^실행 /.test(x.busy || "")); flash(busy ? id + " 러너 대기열에 추가 — 앞선 실행이 끝나면 시작" : id + " 시작"); };
   const scheduledPlans = active.filter((p) => isTimed(p.schedule) || isOnNewBuild(p.schedule));
   const fire = (p) => { const r = autoRun(p, "예약"); if (r.id) setSelId(r.id); flash(r.blocked ? "예약 실행 불가 — " + r.blocked : r.id + " 예약 실행 시작" + (r.pre ? " · 편집 세션 종료" : "")); };
   const stop = (r) => { if (!window.confirm(r.id + (r.status === "대기 중" ? " 을(를) 대기열에서 뺄까요?" : " 실행을 중단할까요?"))) return; stopRun(r, app); flash(r.id + (r.status === "대기 중" ? " 대기 취소" : " 중단")); };
@@ -476,7 +586,7 @@ export function MqaRunScreen({ nav }) {
     ["오늘 실행 불가", blockedToday, blockedToday ? "text-red-600" : "text-slate-400"],
   ];
   const Kpi = ({ k }) => <Card className="p-3 text-center"><div className={"text-2xl font-bold " + k[2]}>{k[1]}</div><div className="mt-0.5 text-xs text-slate-500">{k[0]}</div></Card>;
-  const prog = (r) => { const n = (r.cases || []).length; const d = (r.cases || []).filter((c) => ["통과", "경고", "실패", "건너뜀"].includes(c.st)).length; return [d, n]; };
+  const prog = (r) => { if (r.purpose === "성능") return perfProg(r); const n = (r.cases || []).length; const d = (r.cases || []).filter((c) => ["통과", "경고", "실패", "건너뜀"].includes(c.st)).length; return [d, n]; };
   return (
     <div className="space-y-4">
       <PageToolbar desc="지금 실행 · 단말 대기열 · 진행 상황">
@@ -490,15 +600,15 @@ export function MqaRunScreen({ nav }) {
             <div className="min-w-0 flex-1"><Select value={plan ? plan.id : ""} onChange={(e) => setPid(+e.target.value)} disabled={!mqaPlans.length}>{!mqaPlans.length && <option value="">실행 계획 없음</option>}{mqaPlans.map((p) => <option key={p.id} value={p.id} disabled={p.status !== "활성"}>{p.name}{p.status !== "활성" ? " (초안)" : ""}</option>)}</Select></div>
             <Btn kind="primary" icon={Play} disabled={!!blk} onClick={go} title={blk || ""}>실행</Btn>
           </div>
-          {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e, plan.buildId); const dv = devOf(ctx.runners, plan.devId); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}{plan.buildId ? " (고정)" : " (최신)"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{dv ? devLabel(dv) : "단말 미지정"}{dv && dv.state === "사용 중" && <span className="text-amber-700"> · 사용 중 (대기열에 들어감)</span>}</span><span>· 케이스 {casesOfPlan(plan, ctx.cases, ctx.suites).length}건</span>{blk && <span className="text-amber-700">⚠ {blk}</span>}</div>; })()}
+          {plan && (() => { const { sy, e } = envOfPlan(ctx.systems, plan); const b = buildOf(e, plan.buildId); const pdv = planDevs(ctx.runners, plan); const dvBusy = pdv.devs.some((x) => x.state === "사용 중"); return <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{sy ? sy.name : "—"} · {plan.env} · 앱 v{b ? b.ver : "—"}{plan.buildId ? " (고정)" : " (최신)"}</Badge><span className="flex items-center gap-1"><Smartphone size={12} />{devsLabel(pdv.devs, pdv.runner)}{dvBusy && <span className="text-amber-700"> · 사용 중인 단말 있음</span>}</span>{plan.purpose === "성능" ? <span>· 성능 측정 · 항목 {PF.itemKeys(plan.perf || PF.PERF0, casesOfPlan(plan, ctx.cases, ctx.suites)).filter((x) => x.kind !== "app").length}개</span> : <span>· 케이스 {casesOfPlan(plan, ctx.cases, ctx.suites).length}건</span>}{blk && <span className="text-amber-700">⚠ {blk}</span>}</div>; })()}
           <Card className="overflow-hidden">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-200 text-left text-xs text-slate-500"><th className="px-4 py-2 font-medium">실행</th><th className="font-medium">단말</th><th className="font-medium">상태</th><th className="font-medium">진행</th><th className="pr-4" /></tr></thead>
               <tbody>
                 {!rows.length && <tr><td colSpan={5} className="py-8 text-center text-xs text-slate-500">진행 중이거나 대기 중인 실행이 없습니다</td></tr>}
-                {rows.map((r) => { const [d, n] = prog(r); const q = r.status === "대기 중" ? queueOf(r.devId).indexOf(r.id) + 1 : 0; return (
+                {rows.map((r) => { const [d, n] = prog(r); const q = r.status === "대기 중" ? queueOf(r.runnerId).indexOf(r.id) + 1 : 0; return (
                   <tr key={r.id} onClick={() => setSelId(r.id)} className={"cursor-pointer border-b border-slate-100 " + (sel && sel.id === r.id ? SEL_ROW : "hover:bg-slate-50")}>
-                    <td className="px-4 py-2.5"><div className="font-mono text-xs text-sky-600">{r.id}</div><div className="text-slate-800">{r.planName}</div><div className="text-xs text-slate-500">{r.trigger}</div></td>
+                    <td className="px-4 py-2.5"><div className="font-mono text-xs text-sky-600">{r.id}</div><div className="text-slate-800">{r.planName}{r.purpose === "성능" && <span className="ml-1.5 rounded bg-sky-50 px-1.5 text-xs text-sky-700">성능</span>}</div><div className="text-xs text-slate-500">{r.trigger}</div></td>
                     <td className="text-xs text-slate-600">{String(r.device || "").split(" — ")[0]}</td>
                     <td><Badge kind={RUN_K[r.status]}>{r.status}</Badge>{q > 0 && <div className="mt-0.5 text-xs text-slate-500">{q}번째</div>}</td>
                     <td style={{ minWidth: 110 }}>{r.status === "실행 중" ? <div><div className="mb-0.5 flex justify-between text-xs text-slate-500"><span>{d}/{n}</span><span>{mmss(r.elapsed)}</span></div><div className="h-1.5 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500" style={{ width: (n ? (d / n) * 100 : 0) + "%" }} /></div></div>
@@ -517,11 +627,11 @@ export function MqaRunScreen({ nav }) {
           <Card className="p-4">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-800"><Calendar size={15} className="text-sky-600" />예약 실행</div>
             {!scheduledPlans.length && <div className="text-xs text-slate-500">예약된 계획이 없습니다.</div>}
-            <div className="space-y-1.5">{scheduledPlans.map((p) => { const b = planBlock(p, ctx, true, true); const dv = devOf(ctx.runners, p.devId); return (
+            <div className="space-y-1.5">{scheduledPlans.map((p) => { const b = planBlock(p, ctx, true, true); const pdv = planDevs(ctx.runners, p); return (
               <div key={p.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs">
                 <span className="min-w-0 flex-1 truncate font-medium text-slate-800">{p.name}</span>
                 <span className="shrink-0 text-slate-600">{isTimed(p.schedule) ? <><Clock size={11} className="mr-1 inline" />{nextRun(p.schedule).slice(5)}</> : <><Zap size={11} className="mr-1 inline" />새 버전 지정 시</>}</span>
-                <span className="shrink-0 text-slate-500">{dv ? dv.model : "—"}</span>
+                <span className="shrink-0 text-slate-500">{devsLabel(pdv.devs, null)}</span>
                 {b ? <span className="shrink-0 text-amber-700" title={b}>점검 필요</span> : <span className="shrink-0 text-emerald-700">점검 정상</span>}
                 {isTimed(p.schedule) && <MockBtn onClick={() => fire(p)} title="목업 전용 — 예약 시각이 된 것처럼 실행합니다">지금 시각으로</MockBtn>}
               </div>
@@ -542,6 +652,7 @@ export function MqaRunScreen({ nav }) {
 function RunDetail({ run, onStop, onOpen }) {
   const [lvl, setLvl] = useState("ALL");
   if (!run) return <Card className="flex items-center justify-center p-8 text-xs text-slate-500" style={{ minHeight: 320 }}>진행 중인 실행이 없습니다 — 계획을 골라 [실행]을 누르세요.</Card>;
+  if (run.purpose === "성능") return <PerfRunDetail run={run} onStop={onStop} onOpen={onOpen} />;
   const cur = run.cases.find((c) => c.st === "실행 중") || null;
   const [d, n] = [run.cases.filter((c) => ["통과", "경고", "실패", "건너뜀"].includes(c.st)).length, run.cases.length];
   const live = run.status === "실행 중";
@@ -557,7 +668,7 @@ function RunDetail({ run, onStop, onOpen }) {
           {(run.status === "완료" || run.status === "중단") && <Btn icon={FileText} onClick={onOpen}>결과 보기</Btn>}
         </div>
       </div>
-      {run.status === "대기 중" && <div className="px-4 py-6 text-center text-xs text-slate-500"><Clock size={18} className="mx-auto mb-2 text-slate-400" />단말이 다른 실행에 사용 중입니다 — 대기열 {queueOf(run.devId).indexOf(run.id) + 1}번째, 앞선 실행이 끝나면 자동으로 시작합니다.</div>}
+      {run.status === "대기 중" && <div className="px-4 py-6 text-center text-xs text-slate-500"><Clock size={18} className="mx-auto mb-2 text-slate-400" />고른 단말 중 다른 실행에 사용 중인 단말이 있습니다 — 대기열 {queueOf(run.runnerId).indexOf(run.id) + 1}번째, 앞선 실행이 끝나면 자동으로 시작합니다.</div>}
       {run.status === "실행 불가" && <div className="px-4 py-6 text-xs text-red-700">{run.note}<div className="mt-1 text-slate-500">예약 시각에 실행 조건을 만족하지 못해 실행하지 않았습니다.</div></div>}
       {(live || run.status === "완료" || run.status === "중단") && (<>
         <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-2 text-xs text-slate-500"><span>케이스 <span className="text-slate-800">{d}/{n}</span></span><div className="h-1.5 flex-1 rounded bg-slate-100"><div className="h-1.5 rounded bg-sky-500" style={{ width: (n ? (d / n) * 100 : 0) + "%" }} /></div>{live && <span className="text-slate-700">{run.phase}</span>}</div>
@@ -598,7 +709,7 @@ function RunDetail({ run, onStop, onOpen }) {
 /* 실행 이력 — FQA 와 같은 구성: 필터(상태 · 계획) / 표(실행 · 계획 · 앱 버전 · 대상·환경 · 단말 · 트리거 · 시각 · 상태 · 판정 · 결과)
    끝난 실행만(완료 · 중단 · 실행 불가). 진행 중 · 대기 중은 실행 화면에서 본다 */
 const TRIG_K = { "수동": "info", "예약": "pass", "새 버전": "warn" };
-const verdictOf = (r) => (r.status !== "완료" ? "-" : mergedCases(r).some((c) => c.st === "실패") ? "실패" : mergedCases(r).some((c) => c.st === "경고") ? "경고" : "통과");
+const verdictOf = (r) => (r.status !== "완료" ? "-" : r.purpose === "성능" ? (r.verdict || PR.runVerdict(r)) : mergedCases(r).some((c) => c.st === "실패") ? "실패" : mergedCases(r).some((c) => c.st === "경고") ? "경고" : "통과");
 export function MqaHistoryScreen({ nav }) {
   const { mqaRuns = [], mqaPlans = [] } = useApp();
   const [fSt, setFSt] = useState("전체 상태");
@@ -630,8 +741,8 @@ export function MqaHistoryScreen({ nav }) {
                 <td><Badge kind={TRIG_K[r.trigger] || "info"}>{r.trigger}</Badge></td>
                 <td><RunTime start={r.startedAt} end={r.endedAt} /></td>
                 <td><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td>
-                <td>{v === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={v === "통과" ? "pass" : v === "경고" ? "warn" : "fail"}>{v}</Badge>}</td>
-                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : p + "/" + n}</td>
+                <td>{v === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={v === "통과" || v === "합격" ? "pass" : v === "경고" ? "warn" : v === "판정 없음" ? "draft" : "fail"}>{v}</Badge>}</td>
+                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : r.purpose === "성능" ? (PR.overCount(r) ? <span className="text-red-700">기준 초과 {PR.overCount(r)}건</span> : "단말 " + r.device) : p + "/" + n}</td>
               </tr>
             ); })}
           </tbody>
@@ -696,6 +807,7 @@ function ResultDetail({ runId, back, backLabel, nav }) {
   const [open, setOpen] = useState(null);
   const [etab, setEtab] = useState("화면 캡처");
   if (!run) return <Empty icon={FileText} title="실행 결과가 없습니다" hint="실행 화면에서 계획을 실행하면 여기에서 결과를 봅니다." />;
+  if (run.purpose === "성능") return <PerfResultView run={run} back={back} backLabel={backLabel} nav={nav} />;
   const pr = passRate(run);
   const fails = run.cases.filter((c) => c.st === "실패");
   const plan = mqaPlans.find((p) => p.id === run.planId);
@@ -754,10 +866,12 @@ function ResultDetail({ runId, back, backLabel, nav }) {
         <Card className="col-span-4 overflow-hidden">
           <div className="border-b border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-800">케이스 <span className="text-xs font-normal text-slate-500">{mc.length}건{run.cases.length > mc.length ? " · 실행 " + run.cases.length + "회(여러 스위트)" : ""}</span></div>
           {/* 스위트 → 케이스 2단 — 스위트가 바뀌는 곳에 머리줄 (스위트 이전의 옛 실행은 머리줄 없이) */}
-          {run.cases.map((c, i) => { const jc = judgeOf(run, c, mqaRuns, tcNow(c.id)); const head = c.suiteName && (i === 0 || run.cases[i - 1].suiteId !== c.suiteId);
-            const sc = head ? run.cases.filter((x) => x.suiteId === c.suiteId) : []; return (
+          {run.cases.map((c, i) => { const jc = judgeOf(run, c, mqaRuns, tcNow(c.id)); /* 여러 단말에서 돈 회차는 단말 · 스위트마다 머리를 둔다 (웹의 브라우저 머리와 같은 모양) */
+            const multiDev = (run.devIds || []).length > 1;
+            const head = c.suiteName && (i === 0 || run.cases[i - 1].suiteId !== c.suiteId || run.cases[i - 1].devId !== c.devId);
+            const sc = head ? run.cases.filter((x) => x.suiteId === c.suiteId && x.devId === c.devId) : []; return (
             <Fragment key={c.key || c.id}>
-            {head && <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs"><span className="font-semibold text-slate-700">{c.suiteName}</span><span className="text-slate-500">{c.acctRole ? "계정 " + c.acctRole : ""}</span><span className="ml-auto text-slate-500">통과 {sc.filter((x) => x.st === "통과").length} · 실패 {sc.filter((x) => x.st === "실패").length}{sc.some((x) => x.st === "건너뜀") ? " · 건너뜀 " + sc.filter((x) => x.st === "건너뜀").length : ""}</span></div>}
+            {head && <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs">{multiDev && <span className="rounded bg-white px-1.5 text-slate-600 ring-1 ring-slate-200">{c.devModel}</span>}<span className="font-semibold text-slate-700">{c.suiteName}</span><span className="text-slate-500">{c.acctRole ? "계정 " + c.acctRole : ""}</span><span className="ml-auto text-slate-500">통과 {sc.filter((x) => x.st === "통과").length} · 실패 {sc.filter((x) => x.st === "실패").length}{sc.some((x) => x.st === "건너뜀") ? " · 건너뜀 " + sc.filter((x) => x.st === "건너뜀").length : ""}</span></div>}
             <button onClick={() => setOpen(c.key || c.id)} className={"w-full border-b border-slate-100 px-4 py-2 text-left text-xs " + (oc && (oc.key || oc.id) === (c.key || c.id) ? "bg-sky-50" : "hover:bg-slate-50")}>
               <div className="flex items-center gap-2"><span className="w-14 font-mono text-sky-600">{c.id}</span><span className="flex-1 truncate text-slate-800">{c.name}</span><Badge kind={CASE_K[c.st]}>{c.st}</Badge></div>
               {c.skipWhy && <div className="mt-0.5 truncate pl-16 text-slate-400" title={c.skipWhy}>{c.skipWhy}</div>}
@@ -834,7 +948,8 @@ function ResultDetail({ runId, back, backLabel, nav }) {
     </div>
   );
 }
-const completed = (runs) => (runs || []).filter((r) => r.status === "완료");
+/* 기능 집계용 — 성능 측정 실행은 케이스 판정이 없어 통과율 · 회귀 · 불안정에서 뺀다 (성능은 성능 추이에서) */
+const completed = (runs) => (runs || []).filter((r) => r.status === "완료" && r.purpose !== "성능");
 /* 회귀 비교 — 같은 계획의 두 실행을 케이스별로 맞대어 본다 (FQA 와 같은 구성)
    정합 규칙
      · 기본 비교는 '전체 실행' 끼리: 최신 전체 실행(B) ↔ 그 직전 전체 실행(A). '실패만 다시' 같은 부분 실행은 (부분) 표시
@@ -844,18 +959,23 @@ const completed = (runs) => (runs || []).filter((r) => r.status === "완료");
      · 퇴행 행에는 결과 화면과 같은 원인 판정(담당자 확정 우선) */
 const pctOf = (r) => { const p = passRate(r); return p == null ? "—" : p + "%"; };
 function Regression({ nav }) {
-  const { mqaRuns = [], mqaPlans = [], mqaCases = [], mqaSystems = [], mqaSuites = [], updateMqaRun } = useApp();
+  const { mqaRuns = [], mqaPlans = [], mqaCases = [], mqaSystems = [], mqaSuites = [], updateMqaRun, mqaRegFocus } = useApp();
   const [msg, flash] = useToast();
   const [aiOpen, setAiOpen] = useState(false);
   const plansWith = mqaPlans.filter((p) => completed(mqaRuns).filter((r) => r.planId === p.id).length >= 2);
-  const [pid, setPid] = useState(plansWith[0] ? plansWith[0].id : (mqaPlans[0] || {}).id);
+  /* 결과 화면의 '직전 회차와 비교' 로 오면 그 회차의 계획을 연다 */
+  const focusRun = mqaRegFocus ? mqaRuns.find((r) => r.id === mqaRegFocus) : null;
+  const [pid, setPid] = useState(focusRun ? focusRun.planId : plansWith[0] ? plansWith[0].id : (mqaPlans[0] || {}).id);
   const rs = completed(mqaRuns).filter((r) => r.planId === pid);
   const full = rs.filter((r) => !r.partial);
   const defB = full[0] || rs[0]; const defA = full.filter((r) => r !== defB)[0] || rs.filter((r) => r !== defB)[0];
   const [aId, setA] = useState(null); const [bId, setB] = useState(null);
   const A = rs.find((r) => r.id === aId) || defA; const B = rs.find((r) => r.id === bId) || defB;
   const Head = <PageToolbar desc="회귀 비교 · 같은 계획의 두 실행을 케이스별로" />;
-  const planSel = <Card className="p-3"><Field label="실행 계획 (비교 맥락)"><Select value={pid || ""} onChange={(e) => { setPid(+e.target.value); setA(null); setB(null); }}>{mqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field></Card>;
+  const planSel = <Card className="p-3"><Field label="실행 계획 (비교 맥락)"><Select value={pid || ""} onChange={(e) => { setPid(+e.target.value); setA(null); setB(null); }}>{mqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}{p.purpose === "성능" ? " (성능)" : ""}</option>)}</Select></Field></Card>;
+  /* 성능 계획 — 두 회차의 지표 차이 (기능의 통과 → 실패 전환 자리) */
+  const selPlan = mqaPlans.find((p) => p.id === pid);
+  if (selPlan && selPlan.purpose === "성능") return <div className="space-y-4"><PageToolbar desc="회귀 비교 · 같은 계획의 두 측정을 지표별로" /><PerfRegression key={pid} plan={selPlan} runs={mqaRuns} planSel={planSel} presetB={focusRun && focusRun.planId === pid ? focusRun.id : null} /></div>;
   if (rs.length < 2 || !A || !B) return <div className="space-y-4">{Head}{planSel}<Card className="p-8 text-center text-sm text-slate-500">이 계획에는 비교할 완료된 실행이 2건 이상 필요합니다 (현재 {rs.length}건).</Card></div>;
   const opt = (r) => r.id + " · v" + r.build + " · " + String(r.startedAt).slice(5) + " · " + pctOf(r) + (r.partial ? " (부분)" : "");
   const part = A.partial || B.partial;
@@ -1078,6 +1198,11 @@ export function MqaDashboardScreen({ nav }) {
   const defectN = new Set(scoped.flatMap((r) => Object.keys(r.defects || {}).map((k) => k + "@" + r.defects[k]))).size;
   const next = mqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
   const evPlans = mqaPlans.filter((p) => p.status === "활성" && !p.buildId && isOnNewBuild(p.schedule)).length;   // 버전 고정 계획은 새 버전에 돌지 않는다
+  /* 기능 · 성능 영역은 그 목적의 계획이 있을 때만 보인다 — 기능만 / 성능만 하는 조직에서 빈 카드가 나오지 않게.
+     계획 필터로 하나를 고르면 그 목적의 영역만 보인다. 단말 · 예약은 공통이라 늘 보인다 */
+  const selP = planF === "전체" ? null : mqaPlans.find((p) => p.id === planF);
+  const showFn = selP ? selP.purpose !== "성능" : mqaPlans.some((p) => p.purpose !== "성능");
+  const showPerf = selP ? selP.purpose === "성능" : mqaPlans.some((p) => p.purpose === "성능");
   const KPI = [
     ["자동화 TC", mqaCases.length, "text-slate-900", "승인 " + approved + (quar ? " · 격리 " + quar : "")],
     ["PASS율 (최근 실행)", lastFull && passRate(lastFull) != null ? passRate(lastFull) + "%" : "—", "text-emerald-600", lastFull ? lastFull.id + " · v" + lastFull.build : "실행 없음"],
@@ -1101,18 +1226,22 @@ export function MqaDashboardScreen({ nav }) {
   const lastSt = (id) => { const r = full.find((x) => mergedCases(x).some((c) => c.id === id && ["통과", "실패", "경고"].includes(c.st))); return r ? mergedCases(r).find((c) => c.id === id).st : null; };
   const suiteHealth = mqaSuites.map((su) => { const cs = SL.suiteCases(su, mqaCases); const rated = cs.map((c) => lastSt(c.id)).filter(Boolean); return { name: su.name, tc: cs.length, pass: rated.length ? Math.round((rated.filter((x) => x === "통과").length / rated.length) * 100) : null }; });
   /* 단말별 PASS율 — FQA 의 '브라우저별' 자리 */
-  const byDev = devs.map((d) => { const rs = full.filter((r) => r.devId === d.id); const cs = rs.flatMap((r) => mergedCases(r)).filter((c) => ["통과", "실패", "경고"].includes(c.st)); return { d, runs: rs.length, p: cs.length ? Math.round((cs.filter((c) => c.st === "통과").length / cs.length) * 100) : null }; });
-  const recent = scoped.slice(0, 5);
+  /* 단말별 — 실행 행(케이스 × 단말) 기준. 여러 단말에서 돈 회차는 그 단말의 행만 센다 */
+  const byDev = devs.map((d) => { const rs = full.filter((r) => (r.devIds || [r.devId]).includes(d.id)); const cs = rs.flatMap((r) => (r.cases || []).filter((c) => (c.devId || r.devId) === d.id)).filter((c) => ["통과", "실패", "경고"].includes(c.st)); return { d, runs: rs.length, p: cs.length ? Math.round((cs.filter((c) => c.st === "통과").length / cs.length) * 100) : null }; });
+  const recent = scoped.filter((r) => r.purpose !== "성능").slice(0, 5);
+  const KPI_V = KPI.filter((k) => showFn || ["사용 가능 단말", "다음 예약"].includes(k[0]));
   return (
     <div className="space-y-4">
-      <PageToolbar desc="자동화 현황 · 스위트 · 단말 건강도 (실행 · 케이스 · 테스트 기기에서 파생)">
-        <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{mqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></div>
+      <PageToolbar desc="기능 검증 · 성능 측정 현황 (실행 · 케이스 · 테스트 기기에서 파생)">
+        <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{[["기능", "기능 검증"], ["성능", "성능 측정"]].map(([k, lb]) => { const ps = mqaPlans.filter((p) => (p.purpose === "성능" ? "성능" : "기능") === k); return ps.length ? <optgroup key={k} label={lb}>{ps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null; })}</Select></div>
         <input type="date" value={from} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
         <span className="text-slate-500">~</span>
         <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
       {filtered && <div className="text-xs text-slate-500">필터: {planF === "전체" ? "전체 계획" : (mqaPlans.find((p) => p.id === planF) || {}).name} · {from} ~ {to} · 실행 {scoped.length}건</div>}
-      <div className="grid grid-cols-6 gap-3">{KPI.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      {showFn && showPerf && <div className="flex items-center gap-2 text-sm font-semibold text-slate-700"><span className="h-4 w-1 rounded bg-sky-500" />기능 검증</div>}
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(" + KPI_V.length + ", minmax(0, 1fr))" }}>{KPI_V.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
+      {showFn && <>
       <Card className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold text-slate-800">실패 원인 분포 <span className="text-xs font-normal text-slate-500">전체 실행 기준</span></span><span className="text-xs text-slate-500">누가 고칠 일인가 기준 · 담당자 확정 우선</span></div>
         {causeTot === 0 ? <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">기간 내 실패가 없습니다</div> : (<>
@@ -1171,6 +1300,9 @@ export function MqaDashboardScreen({ nav }) {
           </tbody></table>
         </Card>
       </div>
+      </>}
+      {/* 성능 측정 — 성능 계획이 있을 때만. 기능 지표와 섞지 않는다 (같은 기간 필터) */}
+      {showPerf && <PerfDashSection plans={selP ? [selP] : mqaPlans} runs={mqaRuns.filter((r) => dOf(r) >= from && dOf(r) <= to)} nav={nav} title={showFn ? "성능 측정" : ""} />}
       <Toast msg={msg} />
     </div>
   );
