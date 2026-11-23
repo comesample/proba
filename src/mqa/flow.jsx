@@ -11,7 +11,7 @@
 import { useState, useEffect, Fragment } from "react";
 import { Plus, X, Save, Play, Square, ClipboardList, CheckCircle2, XCircle, AlertTriangle, Clock, Smartphone, History, ChevronLeft, RefreshCw, Code2, FileText, Calendar, Activity, GitCompare, Download, Monitor, Zap, TrendingUp, Sparkles, Bug } from "lucide-react";
 import { ShareBox, autoAlert } from "../common/ReportShare.jsx";
-import { Card, Badge, Btn, Field, Input, Select, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
+import { Card, Badge, Btn, Field, Input, Select, Seg, Toast, useToast, PageToolbar, Portal, SEL_CARD, SEL_IDLE, SEL_ROW, nowStamp, RunTime } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import * as L from "./caseLogic.js";
 import * as SL from "./suiteLogic.js";
@@ -1183,12 +1183,15 @@ export function MqaDashboardScreen({ nav }) {
   const iso = (d) => { const z = (n) => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); };
   const [today] = useState(() => iso(new Date()));
   const [defFrom] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return iso(d); });
+  /* 기능 · 성능 전환 — 두 목적의 계획이 모두 있을 때만 보인다. 한쪽만 있으면 그쪽으로 고정 */
+  const hasFn = mqaPlans.some((p) => p.purpose !== "성능"), hasPerf = mqaPlans.some((p) => p.purpose === "성능");
+  const [purF, setPurF] = useState(() => (hasFn || !hasPerf ? "기능" : "성능"));
   const [planF, setPlanF] = useState("전체");
   const [from, setFrom] = useState(defFrom); const [to, setTo] = useState(today);
-  const setRange = (nf, nt) => { if (nf > nt) nf = nt; const d = new Date(nt); d.setMonth(d.getMonth() - 6); const mf = iso(d); if (nf < mf) { nf = mf; flash("기간은 최대 6개월까지 지정할 수 있습니다"); } setFrom(nf); setTo(nt); };
+  const minFromOf = (t) => { const d = new Date(t); d.setMonth(d.getMonth() - 6); return iso(d); };
+  const setRange = (nf, nt) => { if (nf > nt) nf = nt; const mf = minFromOf(nt); if (nf < mf) { nf = mf; flash("기간은 최대 6개월까지 지정할 수 있습니다"); } setFrom(nf); setTo(nt); };
   const dOf = (r) => String(r.startedAt || "").slice(0, 10);
   const scoped = mqaRuns.filter((r) => (planF === "전체" || r.planId === planF) && dOf(r) >= from && dOf(r) <= to);
-  const filtered = planF !== "전체" || from !== defFrom || to !== today;
   const done = completed(scoped); const full = done.filter((r) => !r.partial);
   const lastFull = full[0];
   const devs = flatDevices(mqaRunners);
@@ -1196,13 +1199,12 @@ export function MqaDashboardScreen({ nav }) {
   const hist = caseHistory(scoped);
   const unstable = hist.filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
   const defectN = new Set(scoped.flatMap((r) => Object.keys(r.defects || {}).map((k) => k + "@" + r.defects[k]))).size;
-  const next = mqaPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
-  const evPlans = mqaPlans.filter((p) => p.status === "활성" && !p.buildId && isOnNewBuild(p.schedule)).length;   // 버전 고정 계획은 새 버전에 돌지 않는다
-  /* 기능 · 성능 영역은 그 목적의 계획이 있을 때만 보인다 — 기능만 / 성능만 하는 조직에서 빈 카드가 나오지 않게.
-     계획 필터로 하나를 고르면 그 목적의 영역만 보인다. 단말 · 예약은 공통이라 늘 보인다 */
+  const purPlans = mqaPlans.filter((p) => (p.purpose === "성능" ? "성능" : "기능") === purF);
+  const next = purPlans.filter((p) => p.status === "활성" && isTimed(p.schedule)).map((p) => ({ p, at: nextRun(p.schedule) })).sort((a, b) => (a.at < b.at ? -1 : 1))[0];
+  const evPlans = purPlans.filter((p) => p.status === "활성" && !p.buildId && isOnNewBuild(p.schedule)).length;   // 버전 고정 계획은 새 버전에 돌지 않는다
+  /* 한 번에 한 목적만 — 계획 목록도 그 목적의 계획만. 단말 · 예약 KPI 는 공통이라 늘 보인다 */
   const selP = planF === "전체" ? null : mqaPlans.find((p) => p.id === planF);
-  const showFn = selP ? selP.purpose !== "성능" : mqaPlans.some((p) => p.purpose !== "성능");
-  const showPerf = selP ? selP.purpose === "성능" : mqaPlans.some((p) => p.purpose === "성능");
+  const showFn = purF === "기능", showPerf = purF === "성능";
   const KPI = [
     ["자동화 TC", mqaCases.length, "text-slate-900", "승인 " + approved + (quar ? " · 격리 " + quar : "")],
     ["PASS율 (최근 실행)", lastFull && passRate(lastFull) != null ? passRate(lastFull) + "%" : "—", "text-emerald-600", lastFull ? lastFull.id + " · v" + lastFull.build : "실행 없음"],
@@ -1233,13 +1235,12 @@ export function MqaDashboardScreen({ nav }) {
   return (
     <div className="space-y-4">
       <PageToolbar desc="기능 검증 · 성능 측정 현황 (실행 · 케이스 · 테스트 기기에서 파생)">
-        <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{[["기능", "기능 검증"], ["성능", "성능 측정"]].map(([k, lb]) => { const ps = mqaPlans.filter((p) => (p.purpose === "성능" ? "성능" : "기능") === k); return ps.length ? <optgroup key={k} label={lb}>{ps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup> : null; })}</Select></div>
-        <input type="date" value={from} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+        {hasFn && hasPerf && <Seg options={["기능", "성능"]} value={purF} onChange={(v) => { setPurF(v); setPlanF("전체"); }} />}
+        <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{purPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></div>
+        <input type="date" value={from} min={minFromOf(to)} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
         <span className="text-slate-500">~</span>
-        <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+        <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
-      {filtered && <div className="text-xs text-slate-500">필터: {planF === "전체" ? "전체 계획" : (mqaPlans.find((p) => p.id === planF) || {}).name} · {from} ~ {to} · 실행 {scoped.length}건</div>}
-      {showFn && showPerf && <div className="flex items-center gap-2 text-sm font-semibold text-slate-700"><span className="h-4 w-1 rounded bg-sky-500" />기능 검증</div>}
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(" + KPI_V.length + ", minmax(0, 1fr))" }}>{KPI_V.map((k) => <Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 truncate text-xs text-slate-500">{k[3]}</div></Card>)}</div>
       {showFn && <>
       <Card className="p-4">

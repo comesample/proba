@@ -25,7 +25,6 @@ export function FqaDashboardScreen({ nav }) {
   const inPlan = (r) => planF === "전체" || r.planId === planF;
   const inPeriod = (r) => { const ds = dOf(r); if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return true; return ds >= from && ds <= to; };
   const fruns = fqaRuns.filter((r) => inPlan(r) && inPeriod(r));   // 계획·기간으로 스코프한 실행 집합
-  const filtered = planF !== "전체" || from !== defFrom || to !== today;
   const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
   const rate = (r) => (r && r.total ? Math.round((r.pass / r.total) * 1000) / 10 : 0);
   const byDate = (a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || ""));
@@ -84,11 +83,10 @@ export function FqaDashboardScreen({ nav }) {
     <div className="space-y-4">
       <PageToolbar desc="자동화 현황 · 스위트 건강도 (실행·케이스·결함에서 파생)">
         <div style={{ width: 200 }}><Select value={planF} onChange={(e) => setPlanF(e.target.value === "전체" ? "전체" : +e.target.value)}><option value="전체">전체 계획</option>{fqaPlans.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></div>
-        <input type="date" value={from} min={minFromOf(to)} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+        <input type="date" value={from} min={minFromOf(to)} max={to} onChange={(e) => setRange(e.target.value, to)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
         <span className="text-slate-500">~</span>
-        <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-slate-100 px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
+        <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
-      {filtered && <div className="text-xs text-slate-500">필터: {planF === "전체" ? "전체 계획" : planNow(planF)} · {from} ~ {to} · 실행 {fruns.length}건</div>}
       <div className="grid grid-cols-6 gap-3">
         {KPI.map((k) => (<Card key={k[0]} className="p-4"><div className="text-xs text-slate-500">{k[0]}</div><div className={"mt-1 text-3xl font-bold " + k[2]}>{k[1]}</div><div className="mt-1 text-xs text-slate-500">{k[3]}</div></Card>))}
       </div>

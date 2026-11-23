@@ -836,7 +836,6 @@ export function Dashboard() {
   const trigKind = KIND.trigger;
   const stKind = KIND.runStatus;
   const planNames = [...new Set(runs.map((r) => r.planName))];
-  const filtered = planF !== "전체" || from !== defFrom || to !== today;
   const chartData = doneRuns.slice().sort((a, b) => (parseD(a.startedAt) || 0) - (parseD(b.startedAt) || 0)).map((r) => ({ d: (r.startedAt || "").slice(5, 10).replace("-", "/"), score: r.score, pass: r.passRate }));
   const kpis = [
     { label: "총 평가 실행", value: String(fruns.length), sub: "완료 " + doneRuns.length + " · 오류 " + errRuns },
@@ -852,7 +851,6 @@ export function Dashboard() {
         <span className="text-slate-500">~</span>
         <input type="date" value={to} min={from} max={today} onChange={(e) => setRange(from, e.target.value)} className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-sm text-slate-800 outline-none focus:border-sky-500" />
       </PageToolbar>
-      {filtered && <div className="flex items-center gap-2 text-xs text-slate-500"><Badge kind="active">필터</Badge><span>{planF === "전체" ? "전체 계획" : planF} · {from} ~ {to} — 실행 {fruns.length}건</span><button onClick={() => { setPlanF("전체"); setFrom(defFrom); setTo(today); }} className="text-slate-500 hover:text-sky-700">초기화</button></div>}
       <div className="grid grid-cols-4 gap-4">
         {kpis.map((k) => (
           <Card key={k.label} className="p-4">
