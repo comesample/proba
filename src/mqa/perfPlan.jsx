@@ -9,7 +9,7 @@ import * as PF from "./perfLogic.js";
 const chip = (on) => "rounded-lg border px-2.5 py-1 text-xs " + (on ? "border-sky-500 bg-sky-100 text-sky-700" : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50");
 
 /* devs = 계획이 고른 단말 (러너 · 단말은 기능 계획과 같은 칸에서 고른다 — PlanDevices) */
-export function PerfConfig({ perf, onChange, devs, cases, hasSuites }) {
+export function PerfConfig({ perf, onChange, devs, cases, hasSuites, runs, planId }) {
   const p = { ...PF.PERF0, ...(perf || {}), items: { ...PF.PERF0.items, ...((perf || {}).items || {}) }, cond: { ...PF.PERF_COND0, ...((perf || {}).cond || {}) } };
   const set = (patch) => onChange({ ...p, ...patch });
   const setItems = (patch) => set({ items: { ...p.items, ...patch } });
@@ -20,6 +20,10 @@ export function PerfConfig({ perf, onChange, devs, cases, hasSuites }) {
   const rows = PF.itemKeys(p, cases);
   const setCrit = (key, mid, v) => { const b = { ...(p.criteria || {}) }; const r = { ...(b[key] || {}) }; if (v === "") delete r[mid]; else r[mid] = +v; b[key] = r; set({ criteria: b }); };
   const gaps = PF.capGaps(p, devs, perfCaps);
+  const devIds = (devs || []).map((x) => x.id);
+  const range = (key, mid) => PF.recentRange(runs, planId, devIds, key, mid);
+  /* 기준이 하나도 없으면 판정 없이 기록만 된다 — 계획 화면에서 알린다 (크래시 · ANR 의 기본 0 은 기준으로 치지 않는다) */
+  const noCrit = rows.length > 0 && !Object.values(p.criteria || {}).some((r) => Object.values(r || {}).some((v) => v !== "" && v != null));
   return (
     <div className="space-y-3.5">
       <Field label="측정 항목">
@@ -38,7 +42,7 @@ export function PerfConfig({ perf, onChange, devs, cases, hasSuites }) {
         <Field label="첫 회 버림" hint="캐시 · 컴파일 영향을 덜어냅니다"><Select value={p.cond.warmup} onChange={(e) => setCond({ warmup: +e.target.value })}><option value={0}>안 함</option><option value={1}>1회</option><option value={2}>2회</option></Select></Field>
       </div>
       {/* 합격 기준 = 성능 계획의 게이트 — 하나라도 넘으면 불합격. 빈 칸은 판정하지 않고 값만 기록한다 (크래시 · ANR 은 빈 칸도 0) */}
-      <Field label="합격 기준" hint="기준값을 넘으면 불합격 · 빈 칸은 판정 없이 기록만 (크래시 · ANR 은 0)">
+      <Field label="합격 기준" hint="기준값을 넘으면 불합격 · 빈 칸은 판정 없이 기록만 (크래시 · ANR 은 0) · 괄호는 최근 3회 측정 범위">
         {rows.length === 0 ? <div className="rounded-lg border border-dashed border-slate-300 px-3 py-3 text-center text-xs text-slate-500">측정 항목을 고르면 기준값을 정할 수 있습니다</div> : (
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-xs">
@@ -46,13 +50,14 @@ export function PerfConfig({ perf, onChange, devs, cases, hasSuites }) {
                 <tr key={r.key} className="border-b border-slate-100 last:border-0">
                   <td className="whitespace-nowrap px-2 py-1.5 text-slate-700">{r.label}</td>
                   <td className="px-2 py-1.5"><div className="flex flex-wrap gap-2">{ms.length === 0 ? <span className="text-slate-400">고른 지표 중 이 항목에 해당하는 것이 없습니다</span> : ms.map((m) => (
-                    <label key={m.id} className="flex items-center gap-1 text-slate-500">{m.label}<input type="number" value={((p.criteria || {})[r.key] || {})[m.id] != null ? p.criteria[r.key][m.id] : ""} placeholder={m.zero ? "0" : ""} onChange={(e) => setCrit(r.key, m.id, e.target.value)} className="w-16 rounded border border-slate-300 px-1 py-0.5 text-right text-slate-800" />{m.unit}</label>
+                    <label key={m.id} className="flex items-center gap-1 text-slate-500">{m.label}<input type="number" value={((p.criteria || {})[r.key] || {})[m.id] != null ? p.criteria[r.key][m.id] : ""} placeholder={m.zero ? "0" : ""} onChange={(e) => setCrit(r.key, m.id, e.target.value)} className="w-16 rounded border border-slate-300 px-1 py-0.5 text-right text-slate-800" />{m.unit}{(() => { const g = range(r.key, m.id); return g ? <span className="text-slate-400" title={"최근 " + g.n + "회 측정 범위"}>({g.lo === g.hi ? g.lo : g.lo + "~" + g.hi})</span> : null; })()}</label>
                   ))}</div></td>
                 </tr>
               ); })}</tbody>
             </table>
           </div>
         )}
+        {noCrit && <div className="mt-1.5 text-xs text-amber-700"><AlertTriangle size={12} className="mr-1 inline" />합격 기준이 없어 판정 없이 기록만 됩니다</div>}
       </Field>
       <div>
         <button onClick={() => setCondOpen(!condOpen)} className="flex items-center gap-1 text-xs font-medium text-slate-600">{condOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}측정 조건 <span className="font-normal text-slate-400">— 데이터 초기화 {p.cond.clearData ? "함" : "안 함"} · {p.cond.compile} · 온도 {p.cond.maxTemp}℃ 이하 · 배터리 {p.cond.minBatt}% 이상 · 흔들림 {p.cond.cvWarn}/{p.cond.cvBad}%</span></button>

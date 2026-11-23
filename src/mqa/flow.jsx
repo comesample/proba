@@ -388,7 +388,7 @@ const normSched = (s) => { const x = { ...SCHED0, ...(s || {}) }; return { mode:
 const pickPlan = (p) => Object.fromEntries(PLAN_KEYS.map((k) => [k, p[k]]));
 const cmpPlan = (p) => JSON.stringify(Object.fromEntries(PLAN_KEYS.map((k) => [k, k === "schedule" ? normSched(p[k]) : p[k]])));
 export function MqaPlanScreen() {
-  const { mqaPlans = [], addMqaPlan, updateMqaPlan, removeMqaPlan, mqaSystems = [], mqaSuites = [], mqaCases = [], mqaRunners = [], setNavGuard, goTo } = useApp();
+  const { mqaPlans = [], addMqaPlan, updateMqaPlan, removeMqaPlan, mqaSystems = [], mqaSuites = [], mqaCases = [], mqaRunners = [], mqaRuns = [], setNavGuard, goTo } = useApp();
   const [msg, flash] = useToast();
   const [selId, setSelId] = useState(mqaPlans[0] ? mqaPlans[0].id : null);
   const sel = mqaPlans.find((p) => p.id === selId) || mqaPlans[0] || null;
@@ -507,7 +507,7 @@ export function MqaPlanScreen() {
             <div className="space-y-3.5">
               <div className="text-xs font-semibold text-slate-500">어디서 · 어떻게</div>
               <PlanDevices runners={mqaRunners} runnerId={d.runnerId} devIds={d.devIds} onChange={(v) => set(v)} onGoDevices={() => goTo("mqa-devices")} perf={d.purpose === "성능"} />
-              {d.purpose === "성능" ? <PerfConfig perf={d.perf} onChange={(v) => set({ perf: v })} devs={allDevs.filter((x) => (d.devIds || []).includes(x.id))} cases={cs} hasSuites={(d.suiteIds || []).length > 0} /> : (<>
+              {d.purpose === "성능" ? <PerfConfig perf={d.perf} onChange={(v) => set({ perf: v })} devs={allDevs.filter((x) => (d.devIds || []).includes(x.id))} cases={cs} hasSuites={(d.suiteIds || []).length > 0} runs={mqaRuns} planId={d.__id} /> : (<>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="재시도"><Select value={d.retry} onChange={(ev) => set({ retry: +ev.target.value })}><option value={0}>안 함</option><option value={1}>1회</option><option value={2}>2회</option></Select></Field>
                 <Field label="실패 시"><Select value={d.onfail} onChange={(ev) => set({ onfail: ev.target.value })}><option>계속 진행</option><option>첫 실패 시 중단</option></Select></Field>

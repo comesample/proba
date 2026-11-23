@@ -51,6 +51,14 @@ export const perfBlock = (perf, cases) => {
   if (!(perf.metrics || []).length) return "지표를 1개 이상 고르세요";
   return "";
 };
+/* 합격 기준 입력 도움 — 이 계획의 최근 완료 회차(최대 3회)에서 잰 값의 범위. 고른 단말 전체에서 최소~최대.
+   측정 실패 · 측정 불가 값은 뺀다. 없으면 null */
+export const recentRange = (runs, planId, devIds, key, mid, n = 3) => {
+  const rs = (runs || []).filter((r) => r.planId === planId && r.purpose === "성능" && r.status === "완료").sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))).slice(0, n);
+  const vs = [];
+  rs.forEach((r) => key === "app" ? (r.app && r.app.size != null && vs.push(r.app.size)) : (r.subs || []).filter((s) => s.st === "완료" && (devIds || []).includes(s.devId)).forEach((s) => { const it = (s.items || []).find((x) => x.key === key); if (it && !it.fail && it.vals && it.vals[mid] != null) vs.push(it.vals[mid]); }));
+  return vs.length ? { lo: Math.min(...vs), hi: Math.max(...vs), n: rs.length } : null;
+};
 /* 기기 능력이 모자라 못 재는 지표 — 막지 않고 알린다 (그 단말에서는 그 지표가 '측정 불가') */
 /* 합격 기준값 — 비어 있으면 판정하지 않는다. 크래시 · ANR 만 비어 있어도 0 */
 export const criterionOf = (perf, key, mid) => { const v = (((perf || {}).criteria || {})[key] || {})[mid]; if (v != null && v !== "") return +v; const m = metricOf(mid); return m && m.zero ? 0 : null; };

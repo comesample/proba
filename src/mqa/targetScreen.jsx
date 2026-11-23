@@ -157,7 +157,7 @@ export function MqaTargetScreen() {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     const lower = f.name.toLowerCase();
-    if (lower.endsWith(".aab")) { flash("AAB 파일은 아직 지원하지 않습니다 — APK 파일로 올려 주세요"); return; }
+    if (lower.endsWith(".aab")) { flash("AAB 는 기기에 바로 설치할 수 없습니다 — APK 파일로 올려 주세요"); return; }
     if (!lower.endsWith(".apk")) { flash("Android 앱 설치 파일(.apk)만 올릴 수 있습니다"); return; }
     const info = readAppFile(f.name, app, sys.id);
     if ((app.builds || []).some((b) => b.code === info.code)) { flash("빌드 번호 " + info.code + " 은(는) 이미 올라와 있습니다 — 같은 빌드입니다"); return; }
@@ -279,7 +279,7 @@ export function MqaTargetScreen() {
   return (
     <div className="space-y-4">
       {header}
-      <input ref={fileRef} type="file" accept=".apk,.aab" className="hidden" onChange={onFile} />
+      <input ref={fileRef} type="file" accept=".apk" className="hidden" onChange={onFile} />
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-3 space-y-3">
           <Btn kind="primary" icon={Plus} className="w-full" onClick={() => { setTf({ name: "", env: "스테이징" }); setModal("target"); }}>대상 추가</Btn>
