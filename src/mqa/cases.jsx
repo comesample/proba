@@ -19,7 +19,7 @@ import * as SL from "./suiteLogic.js";
 import * as BV from "./builds.js";
 import { flatDevices, deviceBlock, devLabel, pickDefault, osName } from "./devices.js";
 import { EnvSelect, DeviceSelect, ReadonlyField, FieldRow, envText } from "./workPickers.jsx";
-import { ExcelImport as TcExcelImport, FilePick, readText } from "../common/TcImport.jsx";
+import { ExcelImport as TcExcelImport, ScriptImport } from "../common/TcImport.jsx";
 
 /* ───────── 공통 ───────── */
 const ST_K = { "초안": "draft", "검토중": "warn", "승인": "pass" };
@@ -1127,65 +1127,33 @@ const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useS
    아는 키워드(AppiumLibrary)만 있으면 Low-Code(스텝)로, 반복·조건·모르는 키워드가 있으면 Full-Code로.
    사용자 키워드(*** Keywords ***)는 따로 등록하지 않고 호출 자리에 펼쳐 넣는다 */
 export function RobotImport({ onImport, onCancel }) {
-  const [msg, flash] = useToast();
-  const [parsed, setParsed] = useState(null);
-  const [off, setOff] = useState({});
   const [opt, setOpt] = useImportOpt(false);
-  const load = (list) => {
+  /* 해석 — 파일 여러 개(테스트 + 키워드) 또는 붙여넣은 코드 하나 */
+  const analyze = (list) => {
     const acc = { files: list.map((x) => x.name), tests: [], keywords: [], notes: [] };
     list.forEach(({ name, text }) => { const r = L.parseRobot(text, name); acc.tests.push(...r.tests); acc.keywords.push(...r.keywords); acc.notes.push(...r.notes); });
-    acc.notes = [...new Set(acc.notes)];
-    if (!acc.tests.length) { flash("테스트를 찾지 못했습니다 — Robot Framework 테스트 파일인지 확인하세요"); return; }
-    setParsed(acc); setOff({});
+    if (!acc.tests.length) return { error: "테스트를 찾지 못했습니다 — Robot Framework 테스트 코드인지 확인하세요" };
+    const kwMap = Object.fromEntries(acc.keywords.map((k) => [k.name, k]));
+    const notes = [...new Set(acc.notes), ...(acc.keywords.length ? ["키워드 " + acc.keywords.map((k) => k.name).join(", ") + " — 따로 등록하지 않고 호출한 자리에 내용을 펼쳐 넣습니다. 로그인처럼 여러 케이스가 쓰는 앞 단계는 가져온 뒤 스위트 앞 순서 케이스로 두세요."] : [])];
+    return { files: acc.files, notes, keywords: acc.keywords, rows: acc.tests.map((t, i) => ({ key: i, name: t.name, tags: t.tags, t, ...L.robotTestToSteps(t, kwMap) })) };
   };
-  const onFiles = async (fs) => {
-    const ok = fs.filter((f) => /\.(robot|resource|txt)$/i.test(f.name));
-    if (!ok.length) { flash(".robot 또는 .resource 파일을 올려 주세요"); return; }
-    load(await Promise.all(ok.map(async (f) => ({ name: f.name, text: await readText(f) }))));
+  const toItem = (x, res) => {
+    const { t, steps, reasons, expanded, raws } = x;
+    const notes = [expanded.length ? "키워드 " + expanded.join(", ") + " 의 내용을 펼쳐 넣었습니다" : "",
+                   (raws || []).length ? "코드 스텝으로 보존: " + raws.join(", ") : ""].filter(Boolean);
+    const base = { name: t.name, tags: t.tags.join(","), origin: "스크립트 임포트", proc: [], note: notes.join(" · ") };
+    if (!reasons.length) return { ...base, steps, level: "Low-Code" };
+    const used = res.keywords.filter((k) => t.lines.some((tk) => tk[0] === k.name));
+    const script = ["*** Settings ***", "Library    AppiumLibrary", "Resource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)", "", "*** Test Cases ***", ...t.raw, ...(used.length ? ["", "*** Keywords ***", ...used.flatMap((k) => k.raw)] : [])].join("\n");
+    return { ...base, steps: [], level: "Full-Code", code: script, note: "Full-Code로 가져옴 — " + reasons.join(" · ") };
   };
-  const kwMap = parsed ? Object.fromEntries(parsed.keywords.map((k) => [k.name, k])) : {};
-  const judged = parsed ? parsed.tests.map((t, i) => ({ i, t, ...L.robotTestToSteps(t, kwMap) })) : [];
-  const go = () => {
-    const chosen = judged.filter((x) => !off[x.i]);
-    if (!chosen.length) { flash("가져올 테스트를 골라 주세요"); return; }
-    const items = chosen.map(({ t, steps, reasons, expanded, raws }) => {
-      const notes = [expanded.length ? "키워드 " + expanded.join(", ") + " 의 내용을 펼쳐 넣었습니다" : "",
-                     (raws || []).length ? "코드 스텝으로 보존: " + raws.join(", ") : ""].filter(Boolean);
-      const base = { name: t.name, tags: t.tags.join(","), origin: "스크립트 임포트", proc: [], note: notes.join(" · ") };
-      if (!reasons.length) return { ...base, steps, level: "Low-Code" };
-      const used = parsed.keywords.filter((k) => t.lines.some((tk) => tk[0] === k.name));
-      const script = ["*** Settings ***", "Library    AppiumLibrary", "Resource    proba.resource    # 앱 실행 · 계정 변수 (실행 시 자동 주입)", "", "*** Test Cases ***", ...t.raw, ...(used.length ? ["", "*** Keywords ***", ...used.flatMap((k) => k.raw)] : [])].join("\n");
-      return { ...base, steps: [], level: "Full-Code", code: script, note: "Full-Code로 가져옴 — " + reasons.join(" · ") };
-    });
-    onImport(items, opt);
-  };
-  return (
-    <div className="space-y-3">
-      <Hdr icon={FileCode} title="스크립트 임포트" desc="Robot Framework (.robot · .resource) → Low-Code(스텝) 또는 Full-Code" />
-      <Card className="space-y-3 p-4">
-        {!parsed ? <FilePick accept=".robot,.resource,.txt" multiple onFiles={onFiles} onSample={() => load([L.SAMPLE_ROBOT])} hint="테스트 파일(.robot)과 키워드 파일(.resource)을 함께 올리세요" /> : (<>
-          <div className="flex items-center justify-between text-xs"><span className="text-slate-600"><FileCode size={13} className="mr-1 inline" />{parsed.files.join(", ")}</span><button onClick={() => setParsed(null)} className="text-sky-600">다른 파일</button></div>
-          {parsed.notes.map((n) => <div key={n} className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">{n}</div>)}
-          {parsed.keywords.length > 0 && <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">키워드 {parsed.keywords.map((k) => k.name).join(", ")} — 따로 등록하지 않고 호출한 자리에 내용을 펼쳐 넣습니다. 로그인처럼 여러 케이스가 쓰는 절차는 가져온 뒤 <span className="text-slate-800">전제조건 케이스</span>로 정리하세요.</div>}
-          <div className="max-h-72 overflow-auto rounded-lg border border-slate-200">
-            <table className="w-full text-xs">
-              <thead><tr className="sticky top-0 bg-slate-50 text-left text-slate-500"><th className="w-8 px-2 py-2"></th><th className="font-medium">테스트</th><th className="font-medium">가져오는 방식</th><th className="font-medium">태그</th></tr></thead>
-              <tbody>{judged.map((x) => (
-                <tr key={x.i} className="border-t border-slate-100 align-top">
-                  <td className="px-2 py-2"><input type="checkbox" checked={!off[x.i]} onChange={(e) => setOff({ ...off, [x.i]: !e.target.checked })} className="accent-sky-600" /></td>
-                  <td className="py-2 text-slate-800">{x.t.name}</td>
-                  {/* 🔑 코드 스텝 건수를 같이 보여준다 — 비율이 높으면 "Low-Code" 라는 말이 거짓말이 된다 */}
-                  <td className="py-2">{x.reasons.length ? <><Badge kind="warn">Full-Code로</Badge><span className="ml-1.5 text-slate-500">{x.reasons.join(" · ")}</span></> : <><Badge kind="pass">Low-Code로</Badge><span className="ml-1.5 text-slate-500">{x.steps.length}개{(() => { const r = x.steps.filter((s) => s.act === "코드 스텝").length; return r ? " · 코드 스텝 " + r + "건" : ""; })()}{x.expanded.length ? " · 키워드 펼침: " + x.expanded.join(", ") : ""}</span>{(() => { const r = x.steps.filter((s) => s.act === "코드 스텝").length; return r && r * 2 > x.steps.length ? <span className="ml-1.5 text-amber-700">절반 넘게 원본입니다 — Full-Code 가 나을 수 있습니다</span> : null; })()}</>}</td>
-                  <td className="py-2 text-slate-500">{x.t.tags.join(", ") || "—"}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-          <ImportTarget opt={opt} setOpt={setOpt} />
-          <div className="flex items-center justify-between border-t border-slate-200 pt-3"><span className="text-xs text-slate-500">가져온 케이스는 모두 <span className="text-slate-700">초안</span>이고, 자연어 절차는 비어 있습니다.</span><div className="flex gap-2"><Btn onClick={onCancel}>취소</Btn><Btn kind="primary" icon={Upload} onClick={go}>가져오기</Btn></div></div>
-        </>)}
-      </Card>
-      <Toast msg={msg} />
-    </div>
-  );
+  /* 🔑 코드 스텝 건수를 같이 보여준다 — 비율이 높으면 "Low-Code" 라는 말이 거짓말이 된다 */
+  const renderMode = (x) => { const r = x.steps.filter((s) => s.act === "코드 스텝").length; return x.reasons.length
+    ? <><Badge kind="warn">Full-Code로</Badge><span className="ml-1.5 text-slate-500">{x.reasons.join(" · ")}</span></>
+    : <><Badge kind="pass">Low-Code로</Badge><span className="ml-1.5 text-slate-500">{x.steps.length}개{r ? " · 코드 스텝 " + r + "건" : ""}{x.expanded.length ? " · 키워드 펼침: " + x.expanded.join(", ") : ""}</span>{r && r * 2 > x.steps.length ? <span className="ml-1.5 text-amber-700">절반 넘게 원본입니다 — Full-Code 가 나을 수 있습니다</span> : null}</>; };
+  return <ScriptImport title="스크립트 임포트" desc="Robot Framework (.robot · .resource) → Low-Code(스텝) 또는 Full-Code"
+    accept=".robot,.resource,.txt" fileRe={/\.(robot|resource|txt)$/i} fileErr=".robot 또는 .resource 파일을 올려 주세요" fileHint="테스트 파일(.robot)과 키워드 파일(.resource)을 함께 올리세요"
+    pasteName="붙여넣은 코드" pastePh={"*** Test Cases ***\n장바구니 담기\n    Click Element    id=btn_add_cart\n    ..."} sample={L.SAMPLE_ROBOT}
+    analyze={analyze} renderMode={renderMode} extra={<ImportTarget opt={opt} setOpt={setOpt} />}
+    onGo={(rows, res) => onImport(rows.map((x) => toItem(x, res)), opt)} onCancel={onCancel} footNote="가져온 케이스는 모두 초안이고, 자연어 절차는 비어 있습니다." />;
 }

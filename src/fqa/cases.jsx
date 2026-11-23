@@ -9,8 +9,8 @@ import { SURF_K, TAGS, TAG_DESC, nextTcId, surfacesOf, tagList } from "./logic.j
 import * as SL from "./suiteLogic.js";
 import { FqaRecordScreen } from "./recordScreen.jsx";
 import { ExcelImport } from "../common/TcImport.jsx";
+import { FqaSpecImportScreen } from "./specImportScreen.jsx";
 import { SAMPLE_TC_WEB } from "./aiLogic.js";
-import { stepsToCode } from "./stepLogic.js";
 /* ═══════════ 9. 테스트케이스 (통합 저장소) ═══════════ */
 export function FqaCasesScreen() {
   const { fqaCases, fqaSuites, updateFqaSuite, addFqaCase, setFqaCaseStatus, removeFqaCase, commitFqaCase, fqaEditTc, setFqaEditTc, fqaSuiteFocus, setFqaSuiteFocus, goTo, navTick } = useApp();
@@ -78,14 +78,13 @@ export function FqaCasesScreen() {
     flash(tgt.length + "건 태그 변경"); setTagModal(null); setPicked(new Set());
   };
   const Back = () => <button onClick={() => { if (editorDirty.current && !window.confirm("저장하지 않은 변경이 있습니다. 목록으로 나가시겠습니까?")) return; editorDirty.current = false; setMode("목록"); }} className="mb-3 inline-flex items-center gap-1 text-xs text-sky-600"><ChevronLeft size={14} />테스트케이스 목록</button>;
-  /* 직접 작성 — 빈 케이스를 만들고 에디터를 연다.
-     스크립트로 시작하면 Full-Code로 진입한다(외부에서 쓰던 코드를 그대로 붙여넣는 경로). */
+  /* 직접 작성 — 빈 케이스를 만들고 에디터를 연다. 스텝(Low-Code)으로만 시작한다 (MQA 와 같은 규칙)
+     코드로 시작하는 길은 '스크립트 임포트' 하나 — 붙여넣은 코드도 바꿀 수 있으면 스텝으로 들어온다 */
   const createBlank = () => {
     const name = (blank.name || "").trim();
     if (!name) { flash("TC 이름을 입력하세요"); return; }
     // 목록에 넣지 않는다 — 다른 경로처럼 첫 저장 때 생성된다(열기만 하고 안 쓰면 남지 않음)
-    const c = { id: nextTcId(fqaCases), origin: "직접 작성", name, tags: "", status: "초안", level: blank.level, dataset: "-", steps: [] };
-    if (blank.level === "Full-Code") c.code = stepsToCode([], c);   // 주입 계약이 담긴 골격
+    const c = { id: nextTcId(fqaCases), origin: "직접 작성", name, tags: "", status: "초안", level: "Low-Code", dataset: "-", steps: [] };
     setBlank(null); setSel(c); setMode("edit");
   };
   if (mode === "레코딩") return <div><Back /><FqaRecordScreen onEdit={(c) => { setSel(c); setMode("edit"); }} onDone={(m) => { setMode("목록"); flash(m); }} /></div>;
@@ -96,6 +95,7 @@ export function FqaCasesScreen() {
     setMode("목록"); flash(items.length + "건 가져옴 (초안) · 스텝은 각 케이스에서 AI로 만드세요");
   };
   if (mode === "tc-import") return <div><Back /><ExcelImport sample={SAMPLE_TC_WEB} onImport={doImport} onCancel={() => setMode("목록")} target={<div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">스텝은 가져온 뒤 각 케이스에서 <span className="text-slate-700">AI로 스텝 만들기</span>로 만듭니다.</div>} /></div>;
+  if (mode === "spec-import") return <div><Back /><FqaSpecImportScreen onDone={(m) => { setMode("목록"); flash(m); }} onCancel={() => setMode("목록")} /></div>;
   if (mode === "api-import") return <div><Back /><FqaApiImportScreen onDone={(m) => { setMode("목록"); flash(m); }} /></div>;
   // 편집 대상은 스토어에서 다시 찾는다 — sel은 스냅샷이라, 저장 후 새 리비전이 에디터에 반영되지 않는다
   const selCase = sel ? (fqaCases.find((c) => c.id === sel.id) || sel) : null;
@@ -115,7 +115,7 @@ export function FqaCasesScreen() {
           {addOpen && (
             <div className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-slate-300 bg-white py-1 shadow-xl">
               {/* TC 임포트만 스텝 없이 절차로 들어온다 (초안) — 스텝은 에디터에서 AI로 만든다 */}
-              {[["직접 작성", Pencil, "빈 케이스", true], ["레코딩 (웹)", Video, "레코딩", true], ["API 임포트", FileText, "api-import", true], ["TC 임포트 (Excel · CSV)", FileText, "tc-import", true]].map(([l, Ic, m, ok]) => (
+              {[["직접 작성", Pencil, "빈 케이스", true], ["레코딩 (웹)", Video, "레코딩", true], ["API 임포트", FileText, "api-import", true], ["TC 임포트 (Excel · CSV)", FileText, "tc-import", true], ["스크립트 임포트 (.spec.ts)", Code2, "spec-import", true]].map(([l, Ic, m, ok]) => (
                 <button key={l} disabled={!ok} onClick={() => { if (!ok) return; setAddOpen(false); if (m === "빈 케이스") { setBlank({ name: "", level: "Low-Code" }); return; } setMode(m); }} className={"flex w-full items-center gap-2 px-3 py-2 text-sm " + (ok ? "text-slate-800 hover:bg-slate-100" : "cursor-not-allowed text-slate-500")}><Ic size={14} className={ok ? "text-sky-600" : "text-slate-400"} />{l}{!ok && <span className="ml-auto text-slate-500" style={{ fontSize: 10 }}>준비 중</span>}</button>
               ))}
             </div>
@@ -190,7 +190,7 @@ export function FqaCasesScreen() {
               <tr><td colSpan={9} className="px-4 py-10 text-center">
                 {fqaCases.length === 0 ? (<>
                   <div className="text-sm font-medium text-slate-700">등록된 테스트케이스가 없습니다</div>
-                  <div className="mt-1.5 text-xs text-slate-500">직접 작성 · 레코딩하거나, API 명세나 기존 TC(Excel · CSV)를 임포트할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
+                  <div className="mt-1.5 text-xs text-slate-500">직접 작성 · 레코딩하거나, API 명세 · 기존 TC(Excel · CSV) · Playwright 스크립트를 임포트할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
 
                 </>) : (<>
                   <div className="text-sm text-slate-700">조건에 맞는 케이스가 없습니다</div>
@@ -250,17 +250,7 @@ export function FqaCasesScreen() {
             </div>
             <div className="space-y-3.5 px-5 py-4">
               <Field label="TC 이름"><Input value={blank.name} onChange={(e) => setBlank({ ...blank, name: e.target.value })} placeholder="예: 쿠폰 중복 적용 차단" /></Field>
-              {/* 외부(VS Code 등)에서 쓰던 스크립트를 그대로 올리는 경로 — 이 경우 Full-Code로 진입한다 */}
-              <Field label="작성 방식">
-                <div className="grid grid-cols-2 gap-2">
-                  {[["Low-Code", "스텝으로 작성", "액션·로케이터를 한 줄씩"], ["Full-Code", "스크립트 붙여넣기", "Playwright 코드를 그대로"]].map(([lv, t, d]) => (
-                    <button key={lv} onClick={() => setBlank({ ...blank, level: lv })} className={"rounded-lg border px-3 py-2 text-left " + (blank.level === lv ? "border-sky-500 bg-sky-100" : "border-slate-300 bg-slate-100 hover:bg-slate-200")}>
-                      <div className={"text-xs font-medium " + (blank.level === lv ? "text-sky-700" : "text-slate-800")}>{t}</div>
-                      <div className="mt-0.5 text-xs text-slate-500">{d}</div>
-                    </button>
-                  ))}
-                </div>
-              </Field>
+              <div className="text-xs text-slate-500">스텝으로 작성합니다. 쓰던 Playwright 코드가 있으면 <button onClick={() => { setBlank(null); setMode("spec-import"); }} className="text-sky-600">스크립트 임포트</button>로 가져오세요.</div>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3.5"><Btn onClick={() => setBlank(null)}>취소</Btn><Btn kind="primary" icon={Code2} onClick={createBlank}>에디터 열기</Btn></div>
           </div>
