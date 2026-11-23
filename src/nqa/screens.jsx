@@ -915,11 +915,13 @@ function NqaResultView({ run, back }) {
   );
 }
 export function NqaHistoryScreen() {
-  const { nqaScenarios, nqaRuns } = useApp();
+  const { nqaScenarios, nqaRuns, pendingSelect, setPendingSelect } = useApp();
   const runs = (nqaRuns || []).filter((r) => r.status === "완료");
   const [detail, setDetail] = useState(null);
   const [fPlan, setFPlan] = useState("all");
   const [fVerdict, setFVerdict] = useState("all");
+  /* 대시보드 KPI 에서 넘어온 경우 — 필터를 걸거나(합격률) 그 회차를 바로 연다(성능 회귀) */
+  useEffect(() => { if (pendingSelect && pendingSelect.kind === "nqaHistory") { setFPlan(pendingSelect.plan || "all"); setFVerdict(pendingSelect.verdict || "all"); setDetail(pendingSelect.runId ? runs.find((r) => r.id === pendingSelect.runId) || null : null); setPendingSelect(null); } }, [pendingSelect]);
   const scnName = (id) => ((nqaScenarios || []).find((p) => p.id === id) || {}).name || "-";
   const regMap = {};
   const byPlan = {};
@@ -967,7 +969,7 @@ export function NqaHistoryScreen() {
 }
 
 export function NqaDashboardScreen({ nav }) {
-  const { nqaRuns, nqaScenarios, nqaSystems, defects } = useApp();
+  const { nqaRuns, nqaScenarios, nqaSystems, defects, goList } = useApp();
   const scns = nqaScenarios || [];
   const [fPlan, setFPlan] = useState("all");
   const allCompleted = (nqaRuns || []).filter((r) => r.status === "완료");
@@ -1004,6 +1006,17 @@ export function NqaDashboardScreen({ nav }) {
   const sutOfScn = (id) => { const p = scns.find((x) => x.id === id) || {}; return (nqaSystems || []).find((x) => x.id === p.sutId) || {}; };
   const maxP95 = Math.max(1, ...asc.map((r) => (r.result || {}).p95 || 0));
   const latestOf = (pid) => desc.find((r) => r.scnId === pid);
+  /* KPI 를 누르면 그 값을 조치할 화면으로 (0 이면 누를 곳이 없다) — 다른 대시보드와 같은 규칙
+     합격률 → 실행 이력 (불합격이 있으면 불합격만) · 결함 → 결함 목록(부하 · 해결 전) · 회귀 → 가장 최근 회귀 회차 결과 · 진행 중 → 측정 실행 */
+  const failN = judged.length - passN;
+  const regLast = desc.find((r) => (regMap[r.id] || {}).regression);
+  const go = {
+    rate: recent.length ? () => goList("nqa-history", { kind: "nqaHistory", plan: fPlan, verdict: failN ? "불합격" : "all" }) : null,
+    def: openDef ? () => goList("defects", { kind: "defects", dom: "NQA", st: "해결 전" }) : null,
+    reg: regLast ? () => goList("nqa-history", { kind: "nqaHistory", plan: fPlan, runId: regLast.id }) : null,
+    run: running.length || queuedN ? () => nav && nav("nqa-run") : null,
+  };
+  const Kpi = ({ onClick, children }) => (onClick ? <button onClick={onClick} className="rounded-xl border border-hairline bg-white p-4 text-left transition hover:border-sky-500 hover:bg-slate-50">{children}</button> : <Card className="p-4">{children}</Card>);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -1011,10 +1024,10 @@ export function NqaDashboardScreen({ nav }) {
         <div className="w-56 shrink-0"><Select value={fPlan} onChange={(e) => setFPlan(e.target.value)}><option value="all">전체 부하 테스트</option>{scns.map((p) => <option key={p.id} value={String(p.id)}>{p.name}</option>)}</Select></div>
       </div>
       <div className="grid grid-cols-4 gap-3">
-        <Card className="p-4"><div className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 size={14} className="text-sky-600" />SLA 합격률</div><div className="mt-1 text-2xl font-semibold text-slate-900">{rate == null ? "—" : rate}{rate != null && <span className="text-sm text-slate-500">%</span>}</div>{noJudgeN > 0 && <div className="text-xs text-amber-600">판정 없음 {noJudgeN}건 제외</div>}<div className="text-xs text-slate-500">최근 {recent.length}회 중 {passN} 합격</div></Card>
-        <Card className="p-4"><div className="flex items-center gap-2 text-xs text-slate-500"><Bug size={14} className="text-red-600" />미해결 성능 결함</div><div className={"mt-1 text-2xl font-semibold " + (openDef > 0 ? "text-red-700" : "text-slate-900")}>{openDef}</div><div className="text-xs text-slate-500">SLA 불합격 결함 (Open)</div></Card>
-        <Card className="p-4"><div className="flex items-center gap-2 text-xs text-slate-500"><TrendingUp size={14} className="text-amber-600" />성능 회귀</div><div className={"mt-1 text-2xl font-semibold " + (regCount > 0 ? "text-amber-700" : "text-slate-900")}>{regCount}</div><div className="text-xs text-slate-500">마지막 합격 대비 p95 +10% 초과</div></Card>
-        <Card className="p-4"><div className="flex items-center gap-2 text-xs text-slate-500"><Activity size={14} className="text-sky-600" />진행 중 실행</div><div className={"mt-1 text-2xl font-semibold " + (running.length > 0 ? "text-sky-600" : "text-slate-900")}>{running.length}</div><div className="text-xs text-slate-500">대기 {queuedN} · 한 번에 하나</div></Card>
+        <Kpi onClick={go.rate}><div className="flex items-center gap-2 text-xs text-slate-500"><CheckCircle2 size={14} className="text-sky-600" />SLA 합격률</div><div className="mt-1 text-2xl font-semibold text-slate-900">{rate == null ? "—" : rate}{rate != null && <span className="text-sm text-slate-500">%</span>}</div>{noJudgeN > 0 && <div className="text-xs text-amber-600">판정 없음 {noJudgeN}건 제외</div>}<div className="text-xs text-slate-500">최근 {recent.length}회 중 {passN} 합격</div></Kpi>
+        <Kpi onClick={go.def}><div className="flex items-center gap-2 text-xs text-slate-500"><Bug size={14} className="text-red-600" />미해결 성능 결함</div><div className={"mt-1 text-2xl font-semibold " + (openDef > 0 ? "text-red-700" : "text-slate-900")}>{openDef}</div><div className="text-xs text-slate-500">SLA 불합격 결함 · 해결 전</div></Kpi>
+        <Kpi onClick={go.reg}><div className="flex items-center gap-2 text-xs text-slate-500"><TrendingUp size={14} className="text-amber-600" />성능 회귀</div><div className={"mt-1 text-2xl font-semibold " + (regCount > 0 ? "text-amber-700" : "text-slate-900")}>{regCount}</div><div className="text-xs text-slate-500">마지막 합격 대비 p95 +10% 초과</div></Kpi>
+        <Kpi onClick={go.run}><div className="flex items-center gap-2 text-xs text-slate-500"><Activity size={14} className="text-sky-600" />진행 중 실행</div><div className={"mt-1 text-2xl font-semibold " + (running.length > 0 ? "text-sky-600" : "text-slate-900")}>{running.length}</div><div className="text-xs text-slate-500">대기 {queuedN} · 한 번에 하나</div></Kpi>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Card className="p-4 space-y-2">
