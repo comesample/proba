@@ -615,7 +615,7 @@ export function NqaRunScreen({ nav }) {
     addNqaRun({ id: "RUN-" + when.replace(/[-T:]/g, "").slice(0, 12), scnId: scn.id, no: (nqaRuns || []).filter((r) => r.scnId === scn.id).length + 1, status: "예약", scheduledAt: at, by: currentUser || "이민준" });
     setResv(false); flash("예약됨 · " + at);
   };
-  const promote = (r) => { const p = scns.find((x) => x.id === r.scnId) || {}; const target = simResult(p, p.sla || {}); const fits = !anyRunning; updateNqaRun(r.id, { status: fits ? "실행중" : "대기", startedAt: fits ? nqaNow() : "", durationSec: durMinOf(s) * 60, simStart: fits ? Date.now() : null, target, queuedAt: Date.now() }); flash(fits ? "실행 시작 · " + (p.name || "부하 테스트") : "러너 여유 없음 — 대기열에 추가됨"); };
+  const promote = (r) => { const p = scns.find((x) => x.id === r.scnId) || {}; const target = simResult(p, p.sla || {}); const fits = !anyRunning; updateNqaRun(r.id, { status: fits ? "실행중" : "대기", startedAt: fits ? nqaNow() : "", durationSec: durMinOf(p) * 60, simStart: fits ? Date.now() : null, target, queuedAt: Date.now() }); flash(fits ? "실행 시작 · " + (p.name || "부하 테스트") : "러너 여유 없음 — 대기열에 추가됨"); };
   const cancelResv = (r) => { removeNqaRun(r.id); flash("예약 취소됨"); };
   if (!scns.length) return (
     <div className="space-y-4">

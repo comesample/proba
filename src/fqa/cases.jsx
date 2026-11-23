@@ -8,6 +8,8 @@ import { FqaEditorScreen } from "./editor.jsx";
 import { SURF_K, TAGS, TAG_DESC, nextTcId, surfacesOf, tagList } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 import { FqaRecordScreen } from "./recordScreen.jsx";
+import { ExcelImport } from "../common/TcImport.jsx";
+import { SAMPLE_TC_WEB } from "./aiLogic.js";
 import { stepsToCode } from "./stepLogic.js";
 /* ═══════════ 9. 테스트케이스 (통합 저장소) ═══════════ */
 export function FqaCasesScreen() {
@@ -87,6 +89,13 @@ export function FqaCasesScreen() {
     setBlank(null); setSel(c); setMode("edit");
   };
   if (mode === "레코딩") return <div><Back /><FqaRecordScreen onEdit={(c) => { setSel(c); setMode("edit"); }} onDone={(m) => { setMode("목록"); flash(m); }} /></div>;
+  /* TC 임포트 — 수동 TC 문서(Excel · CSV) → 자연어 절차만 있는 초안. 스텝은 각 케이스에서 'AI로 스텝 만들기'
+     파일의 '분류' · '사전조건' 으로 스위트를 만들지 않는다 — 스위트는 실행 흐름이라 가져온 뒤 스위트에서 넣는다 (사전조건은 참고용 원문으로 남긴다) */
+  const doImport = (items) => {
+    items.forEach((it, i) => addFqaCase({ id: nextTcId(fqaCases, i), origin: "TC 임포트", name: it.name, tags: "", status: "초안", level: "Low-Code", dataset: "-", steps: [], proc: it.proc, pre: it.pre || "" }));
+    setMode("목록"); flash(items.length + "건 가져옴 (초안) · 스텝은 각 케이스에서 AI로 만드세요");
+  };
+  if (mode === "tc-import") return <div><Back /><ExcelImport sample={SAMPLE_TC_WEB} onImport={doImport} onCancel={() => setMode("목록")} target={<div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">스텝은 가져온 뒤 각 케이스에서 <span className="text-slate-700">AI로 스텝 만들기</span>로 만듭니다.</div>} /></div>;
   if (mode === "api-import") return <div><Back /><FqaApiImportScreen onDone={(m) => { setMode("목록"); flash(m); }} /></div>;
   // 편집 대상은 스토어에서 다시 찾는다 — sel은 스냅샷이라, 저장 후 새 리비전이 에디터에 반영되지 않는다
   const selCase = sel ? (fqaCases.find((c) => c.id === sel.id) || sel) : null;
@@ -105,8 +114,8 @@ export function FqaCasesScreen() {
           <Btn kind="primary" icon={Plus} onClick={() => setAddOpen(!addOpen)} >새 TC</Btn>
           {addOpen && (
             <div className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-slate-300 bg-white py-1 shadow-xl">
-              {/* 모든 경로는 '실행 가능한 스텝'을 만든다 — 스텝 없는 TC는 만들지 않는다 */}
-              {[["직접 작성", Pencil, "빈 케이스", true], ["레코딩 (웹)", Video, "레코딩", true], ["API 임포트", FileText, "api-import", true]].map(([l, Ic, m, ok]) => (
+              {/* TC 임포트만 스텝 없이 절차로 들어온다 (초안) — 스텝은 에디터에서 AI로 만든다 */}
+              {[["직접 작성", Pencil, "빈 케이스", true], ["레코딩 (웹)", Video, "레코딩", true], ["API 임포트", FileText, "api-import", true], ["TC 임포트 (Excel · CSV)", FileText, "tc-import", true]].map(([l, Ic, m, ok]) => (
                 <button key={l} disabled={!ok} onClick={() => { if (!ok) return; setAddOpen(false); if (m === "빈 케이스") { setBlank({ name: "", level: "Low-Code" }); return; } setMode(m); }} className={"flex w-full items-center gap-2 px-3 py-2 text-sm " + (ok ? "text-slate-800 hover:bg-slate-100" : "cursor-not-allowed text-slate-500")}><Ic size={14} className={ok ? "text-sky-600" : "text-slate-400"} />{l}{!ok && <span className="ml-auto text-slate-500" style={{ fontSize: 10 }}>준비 중</span>}</button>
               ))}
             </div>
@@ -181,7 +190,7 @@ export function FqaCasesScreen() {
               <tr><td colSpan={9} className="px-4 py-10 text-center">
                 {fqaCases.length === 0 ? (<>
                   <div className="text-sm font-medium text-slate-700">등록된 테스트케이스가 없습니다</div>
-                  <div className="mt-1.5 text-xs text-slate-500">레코딩으로 만들거나 직접 작성할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
+                  <div className="mt-1.5 text-xs text-slate-500">직접 작성 · 레코딩하거나, API 명세나 기존 TC(Excel · CSV)를 임포트할 수 있습니다. 실행하려면 <span className="text-slate-500">승인</span> 상태여야 합니다.</div>
 
                 </>) : (<>
                   <div className="text-sm text-slate-700">조건에 맞는 케이스가 없습니다</div>

@@ -5,7 +5,8 @@ import { ShareBox } from "../common/ReportShare.jsx";
 import { Badge, Btn, Card, Field, PageToolbar, Portal, SEL_CARD, SEL_ROW, Select, Toast, backTo, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import { C } from "../common/theme.js";
-import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, causeOf, healKey, healNote, healOf, healUsable, histOf, surfacesOf } from "./logic.js";
+import { FlakyTable } from "../common/FlakyTable.jsx";
+import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, caseFlaky, causeOf, healKey, healNote, healOf, healUsable, histOf, surfacesOf } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 import * as RL from "./runLogic.js";
 /* ═══════════ 7. 결과 상세 ═══════════ */
@@ -162,28 +163,19 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
       artifacts: [{ k: "shot", label: "스크린샷", file: "screenshot.png", size: "220 KB" }, { k: "har", label: "네트워크 HAR", file: "session.har", size: "1.2 MB" }, { k: "trace", label: "Playwright 트레이스", file: "trace.zip", size: "3 MB" }],
     });
   };
-  const FLAKY = fqaCases.filter((c) => histOf(fqaRuns, c.id).length >= 1).map((c) => {
-    const h = histOf(fqaRuns, c.id); const fails = h.filter((v) => v === "FAIL").length; const passes = h.filter((v) => v === "PASS").length; const warns = h.filter((v) => v === "WARN").length;
-    const flips = h.slice(1).reduce((n, v, i) => n + (v !== h[i] ? 1 : 0), 0);
-    let trail = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === "FAIL") trail++; else break; }
-    const rate = Math.round((fails / h.length) * 100);
-    const persistent = h.length >= 3 && fails / h.length >= 0.6 && trail >= 2;
-    /* 불안정 = 재시도 통과(WARN) 또는 PASS/FAIL 교차.
-       🔑 표본 수 조건은 두 경로에 똑같이 건다 — 1회 실행의 재시도 통과 하나로
-          "이 케이스는 불안정하다"고 단정하면 안 된다(화면에 적어 둔 기준과도 어긋난다). */
-    const flaky = !persistent && h.length >= 3 && (warns > 0 || (fails > 0 && passes > 0));
-    const streak = persistent ? ("최근 " + trail + "회 연속 실패 · " + rate + "% 실패") : (warns > 0 ? ("재시도 통과(flaky) " + warns + "회" + (flips >= 1 ? " · PASS/FAIL 교차 " + flips + "회" : "")) : ("PASS/FAIL 교차 " + flips + "회 · " + rate + "% 실패"));
-    return { heal: healOf(fqaRuns, fqaCases, c.id), cause: causeOf(fqaRuns, c.id), id: c.id, name: c.name, suite: SL.suiteNamesOf(fqaSuites, c.id).join(" · ") || "—", runs: h.length, fails, rate, flips, warns, unstable: fails + warns, urate: Math.round(((fails + warns) / h.length) * 100), flaky, persistent, quarantined: !!c.quarantined, streak };
-  }).filter((r) => r.flaky || r.persistent);
-  const flakyN = FLAKY.filter((r) => r.flaky).length;
-  const persistN = FLAKY.filter((r) => r.persistent).length;
+  /* 불안정 — 판정은 logic.caseFlaky (MQA 와 같은 규칙 · 대시보드와 같은 함수), 표는 공용 FlakyTable */
+  const FLAKY = caseFlaky(fqaRuns, fqaCases, defects).map((h) => {
+    const cause = causeOf(fqaRuns, h.id);
+    return { ...h, suite: SL.suiteNamesOf(fqaSuites, h.id).join(" · ") || "—", heal: healOf(fqaRuns, fqaCases, h.id), cause: cause ? { text: cause } : null, causeKey: cause, rate: Math.round((h.fails / h.runs) * 100),
+      streak: h.regressed ? "버전 " + h.w[h.w.length - 1].ver + " 이후 계속 실패" : h.trail >= 2 ? "최근 " + h.trail + "회 연속 실패" : "" };
+  });
   const hasDefFQA = (id) => defects.some((d) => d.tc === id && d.domain === "FQA");
   const regFail = (r) => {
     if (hasDefFQA(r.id)) { flash(r.id + " 이미 결함 등록됨"); return; }
     /* 이 화면의 [결함 등록] 은 결과 화면을 거치지 않는다 — 보정 제안을 여기서 안 실으면
        로케이터가 낡아 생긴 지속 실패가 제품 결함으로 등록된다. */
     openModal("jira", {
-      domain: "FQA", sev: "Major", tc: r.id, labels: "fqa, flaky, persistent" + (r.cause ? ", cause:" + r.cause : "") + (r.heal ? ", locator-changed" : ""),
+      domain: "FQA", sev: "Major", tc: r.id, labels: "fqa, flaky, persistent" + (r.causeKey ? ", cause:" + r.causeKey : "") + (r.heal ? ", locator-changed" : ""),
       title: "지속 실패: " + r.name,
       desc: "케이스 '" + r.name + "' (" + r.id + ")\n최근 " + r.runs + "회 중 " + r.fails + "회 실패 (" + r.rate + "%)\n" + (r.streak || "") + healNote(r.heal),
       steps: "1. 케이스 '" + r.name + "' 반복 실행\n2. 실패 재현 확인",
@@ -439,36 +431,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
       )}
       {mode === "불안정" && (
         <>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="text-slate-500">최근 실행 이력 기준(TC별 누적)</span>
-            <span className="text-slate-500">·</span>
-            <span className="text-amber-700">Flaky {flakyN}건</span>
-            <span className="text-red-700">지속 실패 {persistN}건</span>
-          </div>
-          <Card className="overflow-hidden">
-            <table className="w-full text-sm">
-              <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">TC</th><th className="font-medium">문제 빈도</th><th className="font-medium">유형</th><th className="font-medium">최근 추세</th><th></th></tr></thead>
-              <tbody>
-                {FLAKY.length === 0 && (<tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">불안정·지속 실패로 분류된 TC가 없습니다.</td></tr>)}
-                {FLAKY.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-200 text-slate-700 hover:bg-slate-100">
-                    <td className="px-4 py-3"><div className="font-mono text-xs text-sky-600">{r.id}</div><div className="flex items-center gap-1.5 text-slate-800">{r.name}{r.quarantined && <Badge kind="draft">격리됨</Badge>}</div><div className="text-xs text-slate-500">{r.suite}</div></td>
-                    <td className="pr-4" style={{ minWidth: 150 }}><div className="mb-0.5 text-xs text-slate-500">{r.unstable}/{r.runs}회 · {r.urate}%</div><div className="h-1.5 rounded bg-slate-100" style={{ width: 130 }}><div className="h-1.5 rounded" style={{ width: r.urate + "%", background: r.flaky ? C.warn : C.err }} /></div></td>
-                    <td><div className="flex flex-wrap items-center gap-1">{r.flaky ? <Badge kind="warn">Flaky</Badge> : <Badge kind="fail">지속 실패</Badge>}{r.cause && <Badge kind={CAUSE_K[r.cause] || "draft"}>{r.cause}</Badge>}{r.heal && <Badge kind="active">보정</Badge>}</div></td>
-                    <td className="text-xs text-slate-500">{r.streak}</td>
-                    <td className="pr-4 text-right whitespace-nowrap">{/* 🔑 격리 여부를 먼저 본다. flaky 로만 분기하면 격리된 케이스가 지속 실패로
-                        재분류되는 순간 해제 버튼이 사라져 되돌릴 방법이 없어진다(앱에 다른 해제 경로가 없다). */}
-                    {r.quarantined
-                      ? <button onClick={() => toggleQuar(r)} className="mr-3 text-xs text-sky-600 hover:text-sky-700">격리 해제</button>
-                      : r.flaky
-                        ? <button onClick={() => toggleQuar(r)} className="mr-3 text-xs text-amber-700 hover:text-amber-800">격리</button>
-                        : (hasDefFQA(r.id) ? <span className="mr-3 text-xs text-slate-500">등록됨</span> : <button onClick={() => regFail(r)} className="mr-3 text-xs text-red-700 hover:text-red-800">결함 등록</button>)}<button onClick={() => (nav ? nav("fqa-cases", r.id) : flash(r.id + " 테스트케이스로 이동"))} className="text-xs text-slate-500 hover:text-sky-600">TC 보기</button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-          <div className="text-xs text-slate-500">판정 기준: <span className="text-slate-500">최근 실행 4회</span>를 TC별 누적 · 결과 교차(PASS/FAIL 혼재)=<span className="text-amber-700">Flaky→격리</span>, 연속 실패=<span className="text-red-700">지속 실패→결함</span>. 격리된 TC는 <span className="text-slate-700">실행 대상에서 빠지며</span>, 그동안 이력이 쌓이지 않으므로 복귀는 사람이 판단해 해제해야 합니다. <span className="text-slate-500">※ 3회 이상 실행된 TC만 분류합니다.</span></div>
+          <FlakyTable rows={FLAKY} verLabel="빌드" onQuar={toggleQuar} onDefect={regFail} onOpen={(r) => (nav ? nav("fqa-cases", r.id) : flash(r.id + " 테스트케이스로 이동"))} />
         </>
       )}
       <Toast msg={msg} />

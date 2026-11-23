@@ -19,6 +19,7 @@ import * as BV from "./builds.js";
 import { flatDevices, deviceBlock, devLabel, osName, runnerState, runnerOfDev } from "./devices.js";
 import { envText, DeviceSelect, MockBtn, ReadonlyField } from "./workPickers.jsx";
 import { ScheduleConfig } from "../common/ScheduleConfig.jsx";
+import { FlakyTable, FLAKY_WINDOW } from "../common/FlakyTable.jsx";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine } from "recharts";
 import { C, TOOLTIP } from "../common/theme.js";
 
@@ -611,7 +612,7 @@ export function MqaHistoryScreen({ nav }) {
           <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">실행</th><th className="font-medium">계획</th><th className="font-medium">앱 버전</th><th className="font-medium">대상·환경</th><th className="font-medium">단말</th><th className="font-medium">트리거</th><th className="font-medium">시각</th><th className="font-medium">상태</th><th className="font-medium">판정</th><th className="pr-4 font-medium">결과</th></tr></thead>
           <tbody>
             {hist.length === 0 && <tr><td colSpan={10} className="px-4 py-6 text-center text-sm text-slate-500">조건에 맞는 이력이 없습니다</td></tr>}
-            {hist.map((r) => { const v = verdictOf(r); const mc = mergedCases(r); const n = mc.length; const p = mc.filter((c) => c.st === "통과").length; const pr = passRate(r); return (
+            {hist.map((r) => { const v = verdictOf(r); const mc = mergedCases(r); const n = mc.length; const p = mc.filter((c) => c.st === "통과").length; return (
               <tr key={r.id} onClick={() => nav && nav("mqa-result-detail", r.id)} className="cursor-pointer border-b border-slate-200 text-slate-700 hover:bg-slate-100">
                 <td className="px-4 py-3 font-mono text-xs text-sky-600">{r.id}</td>
                 {/* 🔑 부분 실행 표시 — 회귀 비교·대시보드에는 이미 있는데 이 표에만 없었다.
@@ -624,7 +625,7 @@ export function MqaHistoryScreen({ nav }) {
                 <td><RunTime start={r.startedAt} end={r.endedAt} /></td>
                 <td><Badge kind={RUN_K[r.status]}>{r.status}</Badge></td>
                 <td>{v === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={v === "통과" ? "pass" : "fail"}>{v}</Badge>}</td>
-                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : r.status === "완료" ? <>{p}/{n}{pr != null && <span className={"ml-1.5 font-medium " + (gateOk(r) ? "text-emerald-700" : "text-red-700")}>{pr}%</span>}</> : p + "/" + n}</td>
+                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : p + "/" + n}</td>
               </tr>
             ); })}
           </tbody>
@@ -996,7 +997,7 @@ function RegAiPanel({ A, B, rows, summ, cls, devDiff, part, runs, cases, systems
    · 🔑 '실패만 다시' 같은 부분 실행은 빼고 전체 실행만 본다 — 다른 집계와 같은 규칙이다.
      안 빼면 "고쳐서 다시 돌려 통과" 가 같은 버전 안의 통과/실패 혼재로 읽혀 '불안정' 이 되고,
      화면이 '격리' 를 권한다. 수정을 확인한 행위가 케이스를 빼라는 권고로 바뀐다. */
-export const FLAKY_WINDOW = 5;
+export { FLAKY_WINDOW };   // 두 도메인 같은 값 (common/FlakyTable.jsx)
 export const caseHistory = (runs) => {
   const m = {};
   completed(runs).filter((r) => !r.partial).slice().reverse().forEach((r) => mergedCases(r).forEach((c) => {
@@ -1017,44 +1018,22 @@ export const caseHistory = (runs) => {
     return { ...h, w, runs: w.length, fails: f, trail, regressed, kind, lastFail, hasDefect: w.some((x) => x.defect) };
   });
 };
-const KIND_K = { "불안정": "warn", "지속 실패": "fail", "결함": "fail", "실패": "draft" };
 function Flaky({ nav }) {
   const { mqaRuns = [], mqaCases = [], mqaSuites = [], updateMqaCase, updateMqaRun, setMqaEditTc, goTo } = useApp();
   const [msg, flash] = useToast();
   const caseNow = (id) => mqaCases.find((c) => c.id === id);
   const rows = caseHistory(mqaRuns).filter((h) => ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => b.fails / b.runs - a.fails / a.runs);
-  const flakyN = rows.filter((r) => r.kind === "불안정").length, persistN = rows.filter((r) => r.kind !== "불안정").length;
   const causeOf = (h) => { if (!h.lastFail) return null; const run = mqaRuns.find((r) => r.id === h.lastFail.run); const c = run && mergedCases(run).find((x) => x.id === h.id); const j = run && c ? judgeOf(run, c, mqaRuns, caseNow(h.id)) : null; return j ? { ...j, kind: h.lastFail.judged || j.kind, fixed: !!h.lastFail.judged } : null; };
   const toggleQuar = (h) => { const c = caseNow(h.id); if (!c) return; updateMqaCase(h.id, { quarantined: !c.quarantined }); flash(c.quarantined ? h.id + " 격리 해제 — 다음 실행부터 대상에 들어갑니다" : h.id + " 격리 — 실행 계획 대상에서 빠집니다"); };
   const regDefect = (h) => { const run = mqaRuns.find((r) => r.id === h.lastFail.run); const no = "BUG-" + (1300 + Math.floor(Math.random() * 90)); updateMqaRun(run.id, { defects: { ...(run.defects || {}), [h.id]: no } }); flash(no + " 결함 초안 생성 — " + run.id + " 실패 화면 · 로그 첨부 (목업)"); };
   const suiteOf = (id) => SL.suiteNamesOf(mqaSuites, id).join(" · ");
+  /* 공용 표(common/FlakyTable)에 맞춰 행을 만든다 — 판정은 caseHistory, 원인은 결과 화면과 같은 judgeOf */
+  const healOf = (h) => { if (!h.lastFail) return null; const run = mqaRuns.find((r) => r.id === h.lastFail.run); const c = run && mergedCases(run).find((x) => x.id === h.id); return (c && c.heal) || null; };
+  const view = rows.map((h) => { const j = causeOf(h); return { ...h, suite: suiteOf(h.id), quarantined: !!(caseNow(h.id) || {}).quarantined, warns: 0, w: h.w.map((x) => ({ st: x.st, run: x.run, ver: "v" + x.build })), cause: j ? { text: j.cause, note: j.fixed ? "확정" : j.by + " 제안" } : null, heal: healOf(h) }; });
   return (
     <div className="space-y-4">
       <PageToolbar desc="불안정(Flaky) · 테스트케이스 기준" />
-      <div className="flex flex-wrap items-center gap-3 text-sm"><span className="text-slate-500">최근 실행 {FLAKY_WINDOW}회 기준 (TC별)</span><span className="text-slate-500">·</span><span className="text-amber-700">불안정 {flakyN}건</span><span className="text-red-700">지속 실패 · 결함 {persistN}건</span></div>
-      <Card className="overflow-hidden">
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-slate-200 text-left text-slate-500"><th className="px-4 py-2.5 font-medium">TC</th><th className="font-medium">문제 빈도</th><th className="font-medium">유형</th><th className="font-medium">최근 추세</th><th></th></tr></thead>
-          <tbody>
-            {!rows.length && <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-500">불안정 · 지속 실패로 분류된 TC가 없습니다.</td></tr>}
-            {rows.map((h) => { const c = caseNow(h.id) || {}; const j = causeOf(h); const pct = Math.round((h.fails / h.runs) * 100); return (
-              <tr key={h.id} className="border-b border-slate-200 text-slate-700 hover:bg-slate-100">
-                <td className="px-4 py-3"><div className="font-mono text-xs text-sky-600">{h.id}</div><div className="flex items-center gap-1.5 text-slate-800">{h.name}{c.quarantined && <Badge kind="draft">격리됨</Badge>}</div><div className="text-xs text-slate-500">{suiteOf(h.id)}</div></td>
-                <td className="pr-4" style={{ minWidth: 150 }}><div className="mb-0.5 text-xs text-slate-500">실패 {h.fails}/{h.runs}회 · {pct}%</div><div className="h-1.5 rounded bg-slate-100" style={{ width: 130 }}><div className={"h-1.5 rounded " + (h.kind === "불안정" ? "bg-amber-500" : "bg-red-500")} style={{ width: pct + "%" }} /></div></td>
-                <td><div className="flex flex-wrap items-center gap-1"><Badge kind={KIND_K[h.kind]}>{h.kind}</Badge>{h.regressed && <Badge kind="info">버전 변경 후</Badge>}{j && <span className="text-xs text-slate-500">{j.cause}{j.fixed ? " · 확정" : " · " + j.by + " 제안"}</span>}</div></td>
-                <td><div className="flex items-end gap-1">{h.w.map((x, i) => (<Fragment key={i}>{i > 0 && h.w[i - 1].build !== x.build && <span className="mx-0.5 h-4 w-px bg-slate-300" title={"앱 v" + h.w[i - 1].build + " → v" + x.build} />}<span title={x.run + " · v" + x.build + " · " + x.st} className={"inline-block h-3 w-3 rounded-sm " + (x.st === "통과" ? "bg-emerald-500" : "bg-red-500")} /></Fragment>))}</div><div className="mt-0.5 text-[10px] text-slate-400">{[...new Set(h.w.map((x) => "v" + x.build))].join(" → ")}</div></td>
-                <td className="pr-4 text-right whitespace-nowrap">
-                  {c.quarantined ? <button onClick={() => toggleQuar(h)} className="mr-3 text-xs text-sky-600 hover:text-sky-700">격리 해제</button>
-                    : h.kind === "불안정" ? <button onClick={() => toggleQuar(h)} className="mr-3 text-xs text-amber-700 hover:text-amber-800">격리</button>
-                    : h.hasDefect ? <span className="mr-3 text-xs text-slate-500">결함 등록됨</span> : <button onClick={() => regDefect(h)} className="mr-3 text-xs text-red-700 hover:text-red-800">결함 등록</button>}
-                  <button onClick={() => { setMqaEditTc(h.id); goTo("mqa-cases"); }} className="text-xs text-sky-600">케이스 열기</button>
-                </td>
-              </tr>
-            ); })}
-          </tbody>
-        </table>
-      </Card>
-      <div className="text-xs text-slate-500">판정 기준: 최근 실행 {FLAKY_WINDOW}회를 TC별로 봅니다 · <span className="text-amber-700">같은 앱 버전 안에서 통과/실패 혼재 = 불안정 → 격리</span> · <span className="text-red-700">연속 2회 실패 또는 버전 변경 후 계속 실패 = 지속 실패 → 결함</span> · 담당자가 앱 결함으로 확정한 실패는 결함으로 분류</div>
+      <FlakyTable rows={view} verLabel="앱 버전" onQuar={toggleQuar} onDefect={regDefect} onOpen={(h) => { setMqaEditTc(h.id); goTo("mqa-cases"); }} />
       <Toast msg={msg} />
     </div>
   );
@@ -1171,7 +1150,7 @@ export function MqaDashboardScreen({ nav }) {
           <div className="mb-3 flex items-center justify-between"><span className="flex items-center gap-2 text-sm font-semibold text-slate-800"><AlertTriangle size={15} className="text-amber-600" />빈발 실패 Top</span><button onClick={() => nav && nav("mqa-flaky")} className="text-xs text-sky-600">전체 보기</button></div>
           <div className="space-y-2">
             {!unstable.length && <div className="rounded-lg bg-slate-100 px-3 py-6 text-center text-xs text-slate-500">불안정 · 지속 실패 TC가 없습니다</div>}
-            {unstable.slice(0, 4).map((h) => <div key={h.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"><div><span className="font-mono text-xs text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span><div className="text-xs text-slate-500">최근 {h.runs}회 중 {h.fails}회 실패 · {Math.round((h.fails / h.runs) * 100)}%</div></div><Badge kind={KIND_K[h.kind]}>{h.kind}</Badge></div>)}
+            {unstable.slice(0, 4).map((h) => <div key={h.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"><div><span className="font-mono text-xs text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span><div className="text-xs text-slate-500">최근 {h.runs}회 중 실패 {h.fails}회</div></div><Badge kind={h.kind === "불안정" ? "warn" : "fail"}>{h.kind}</Badge></div>)}
           </div>
         </Card>
         <Card className="overflow-hidden">

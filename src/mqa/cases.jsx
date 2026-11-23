@@ -19,6 +19,7 @@ import * as SL from "./suiteLogic.js";
 import * as BV from "./builds.js";
 import { flatDevices, deviceBlock, devLabel, pickDefault, osName } from "./devices.js";
 import { EnvSelect, DeviceSelect, ReadonlyField, FieldRow, envText } from "./workPickers.jsx";
+import { ExcelImport as TcExcelImport, FilePick, readText } from "../common/TcImport.jsx";
 
 /* ───────── 공통 ───────── */
 const ST_K = { "초안": "draft", "검토중": "warn", "승인": "pass" };
@@ -38,7 +39,6 @@ const envBuildObj = (e) => BV.latestBuild(e);
 const envBuild = (e) => (envBuildObj(e) || {}).ver || "";
 // apiBase 를 같이 넘긴다 — 디버그 실행에서 API 스텝이 이 값을 본다(없으면 실패)
 const envsOf = (sys) => ((sys && sys.envs) || []).map((e) => ({ env: e.env, build: envBuild(e), buildObj: envBuildObj(e), builds: BV.buildsOf(e), prod: e.prod, apiBase: e.apiBase || "" }));
-const readText = (f) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result || "")); r.onerror = () => res(""); r.readAsText(f); });
 const taCls = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500";
 const Hdr = ({ icon: Icon, title, desc, badge }) => (
   <div className="mb-1 flex items-center gap-2"><Icon size={16} className="text-sky-600" /><span className="text-sm font-semibold text-slate-900">{title}</span>{badge && <Badge kind="active">{badge}</Badge>}{desc && <span className="text-xs text-slate-500">{desc}</span>}</div>
@@ -782,9 +782,11 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
             <div className="space-y-3 p-5">
               {qa === "run" && runRes && (<>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge kind="info">{dbg ? envText(dbg) : dbgEnv}</Badge><span>{dev ? devLabel(dev) : "—"}</span><span className="text-slate-500">· 집계되지 않음</span></div>
-                {preOpts.length > 0 && <div className="flex items-center gap-2 text-xs text-slate-600"><span className="shrink-0">시작 상태</span>
-                  <div className="min-w-0 flex-1"><Select value={String(preSuId)} onChange={(e) => setPreSuId(+e.target.value)}><option value="0">이 케이스만</option>{preOpts.map((su) => <option key={su.id} value={String(su.id)}>{su.name} — 앞 {su.items.indexOf(tc.id)}건 먼저 ({su.items.slice(0, su.items.indexOf(tc.id)).join(", ")})</option>)}</Select></div>
+                {/* 시작 상태 — 포함된 스위트의 앞 케이스를 자동으로 먼저 돈다. 고를 것이 둘 이상일 때만 바꿀 수 있다 */}
+                {preOpts.length > 1 && <div className="flex items-center gap-2 text-xs text-slate-600"><span className="shrink-0">시작 상태</span>
+                  <div className="min-w-0 flex-1"><Select value={String(preSuId)} onChange={(e) => setPreSuId(+e.target.value)}>{preOpts.map((su) => <option key={su.id} value={String(su.id)}>{su.name} — 앞 {su.items.indexOf(tc.id)}건 먼저 ({su.items.slice(0, su.items.indexOf(tc.id)).join(", ")})</option>)}</Select></div>
                   <Btn icon={Play} disabled={!runRes.done} onClick={() => runOne(preSuId)}>다시 실행</Btn></div>}
+                {preOpts.length === 1 && <div className="text-xs text-slate-500">시작 상태: {preOpts[0].name} 앞 {preOpts[0].items.indexOf(tc.id)}건 먼저</div>}
                 {!verified && <div className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-800">v{build}에서는 처음 확인합니다 (만든 버전 v{d.baseBuild}) — 화면이 달라 요소를 못 찾을 수 있습니다</div>}
                 <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200">
                   {runRes.steps.map((x, i) => x.head ? (
@@ -869,7 +871,7 @@ export function MqaCaseEditor({ tc, isNew, onDirty, onOpen }) {
         </Modal>
       )}
       {pick && <PickModal step={d.steps.find((s) => s.id === pick)} ctx={pickCtx} build={build} device={dev} onPick={onPick} onClose={() => { setPick(null); setFocusStep(null); }} />}
-      {gen && <GenModal tc={tc} d={{ ...d, proc: L.compactProc(d.proc, []).proc }} sys={sys} env={dbg} dev={dev} onApply={applyGen} onClose={() => setGen(false)} />}
+      {gen && <GenModal tc={tc} d={{ ...d, proc: L.compactProc(d.proc, []).proc }} sys={sys} env={dbg} dev={dev} pre={preOpts.find((x) => x.id === preSuId) ? { suite: preOpts.find((x) => x.id === preSuId), cases: preCasesOf(preSuId) } : null} onApply={applyGen} onClose={() => setGen(false)} />}
       <Toast msg={msg} />
     </div>
   );
@@ -890,7 +892,7 @@ const AI_SEND = [
   { k: "보내지 않음", c: "text-emerald-700", v: "화면 캡처 이미지 · 계정과 변수의 값 (이름만) · 앱 설치 파일" },
 ];
 const unitText = (u) => u.act + (u.loc ? " · " + u.loc : "") + (u.val ? " · \"" + u.val + "\"" : "");
-function GenModal({ tc, d, env, dev, onApply, onClose }) {
+function GenModal({ tc, d, env, dev, pre, onApply, onClose }) {
   const { lockMqaDevice, releaseMqaDevice } = useApp();
   const [phase, setPhase] = useState("setup");   // setup | run | done | stopped
   const envName = env ? env.env : "";
@@ -917,7 +919,9 @@ function GenModal({ tc, d, env, dev, onApply, onClose }) {
     if (d.steps.length && !window.confirm("지금 스텝을 새로 만든 스텝으로 바꿉니다. 계속할까요?")) return;
     lockMqaDevice(dev.id, "AI 생성 " + tc.id); held.current = dev.id;
     setUnits(L.draftSteps(d.proc).map((s) => ({ ...s, gs: "대기" })));
-    const pr = [{ label: "앱 v" + buildObj.ver + " 설치 · 데이터 초기화 · 실행", gs: "진행" }];   // 스위트 앞 케이스 먼저 실행은 U5
+    /* 시작 상태 — 앱을 실행하고, 이 케이스가 든 스위트의 앞 케이스를 먼저 돈다 (디버그 실행과 같은 규칙) */
+    const pr = [{ label: "앱 v" + buildObj.ver + " 설치 · 데이터 초기화 · 실행", gs: "진행" },
+      ...(pre ? pre.cases.map((c) => ({ label: c.id + " " + c.name + " 실행 (앞 단계 · " + pre.suite.name + ")", gs: "대기" })) : [])];
     setPrep(pr); setPhase("run");
     let t = 700;
     pr.forEach((_, i) => { later(() => setPrep((x) => x.map((p, j) => (j === i ? { ...p, gs: "완료" } : j === i + 1 ? { ...p, gs: "진행" } : p))), t); t += 700; });
@@ -974,6 +978,7 @@ function GenModal({ tc, d, env, dev, onApply, onClose }) {
               <div className="space-y-1.5 rounded-lg border border-slate-200 p-3 text-sm">
                 <FieldRow label="작업 환경"><span className="text-slate-800">{env ? envText(env) : "—"}</span></FieldRow>
                 <FieldRow label="작업 단말"><span className="text-slate-800">{dev ? devLabel(dev) : "—"}</span></FieldRow>
+                <FieldRow label="시작 상태"><span className="text-slate-800">{pre ? pre.suite.name + " 앞 " + pre.cases.length + "건 먼저" : "앱 첫 화면"}</span></FieldRow>
                 <div className="pt-1 text-xs text-slate-500">에디터 상단에서 고른 작업 조건을 그대로 씁니다.</div>
               </div>
               <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">단말에서 앱을 <b className="font-medium">실제로 조작</b>하며 절차 한 줄씩 스텝을 만듭니다. 장바구니 같은 스테이징 데이터가 생길 수 있습니다.</div>
@@ -1111,85 +1116,12 @@ function ImportTarget({ opt, setOpt }) {
     </div>
   );
 }
-const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", aiAfter: ai }); };
-function FilePick({ accept, multiple, onFiles, onSample, hint }) {
-  const ref = useRef(null);
-  return (
-    <div className="rounded-lg border border-dashed border-slate-300 py-10 text-center">
-      <input ref={ref} type="file" accept={accept} multiple={multiple} className="hidden" onChange={(e) => { const fs = [...(e.target.files || [])]; e.target.value = ""; if (fs.length) onFiles(fs); }} />
-      <Upload size={22} className="mx-auto text-slate-400" />
-      <div className="mt-2 text-sm text-slate-700">{hint}</div>
-      <div className="mt-3 flex justify-center gap-2"><Btn kind="primary" icon={Upload} onClick={() => ref.current && ref.current.click()}>파일 고르기</Btn><Btn onClick={onSample}>샘플 파일로 해보기</Btn></div>
-    </div>
-  );
-}
-
-/* ═══════════ 엑셀 가져오기 ═══════════
-   양식을 강제하지 않는다 — 올린 뒤 어느 열이 제목·절차·기대 결과인지 고르기만 한다.
-   목업: .csv 는 실제로 읽고, .xlsx 는 샘플 행을 보여준다 (실 구현은 서버에서 엑셀을 읽는다) */
-const COL_KEYS = [["name", "제목", true], ["pre", "사전조건", false], ["proc", "절차", true], ["exp", "기대 결과", false], ["suite", "스위트", false]];
-const COL_GUESS = { name: /시나리오|제목|케이스명|테스트명|이름|항목/, pre: /사전|전제/, proc: /절차|스텝|단계|수행/, exp: /기대|예상/, suite: /분류|스위트|모듈|카테고리|구분/ };
+/* TC 임포트 (Excel · CSV → 자연어 절차) — 화면은 FQA 와 공용(common/TcImport.jsx). MQA 는 대상 앱을 고른다 */
 export function ExcelImport({ onImport, onCancel }) {
-  const [msg, flash] = useToast();
-  const [rows, setRows] = useState(null);
-  const [file, setFile] = useState("");
-  const [note, setNote] = useState("");
-  const [map, setMap] = useState({});
-  const [off, setOff] = useState({});
   const [opt, setOpt] = useImportOpt(false);
-  const load = (r, name, n) => {
-    const hdr = r[0] || [];
-    const m = {}; COL_KEYS.forEach(([k]) => { const i = hdr.findIndex((h) => COL_GUESS[k].test(String(h))); m[k] = i >= 0 ? String(i) : ""; });
-    setRows(r); setFile(name); setNote(n || ""); setMap(m); setOff({});
-  };
-  const onFiles = async ([f]) => {
-    const low = f.name.toLowerCase();
-    if (low.endsWith(".csv")) { const r = L.parseCsv(await readText(f)); if (r.length < 2) { flash("읽을 행이 없습니다"); return; } load(r, f.name); }
-    else if (/\.xlsx?$/.test(low)) load(L.SAMPLE_EXCEL, f.name, "목업: 엑셀 파일 내용 대신 샘플 행을 보여줍니다 (실 구현은 서버에서 읽습니다)");
-    else flash("엑셀(.xlsx) 또는 CSV 파일을 올려 주세요");
-  };
-  const body = rows ? rows.slice(1) : [];
-  const items = body.map((r, i) => ({ i, ...L.rowToCase(r, map) })).filter((x) => x.name || x.proc.length);
-  const chosen = items.filter((x) => !off[x.i]);
-  const missing = COL_KEYS.filter(([k, , req]) => req && map[k] === "").map(([, t]) => t);
-  const go = () => {
-    if (missing.length) { flash(missing.join("·") + " 열을 골라 주세요"); return; }
-    if (!chosen.length) { flash("가져올 행을 골라 주세요"); return; }
-    onImport(chosen.map((x) => ({ name: x.name || "이름 없음", pre: x.pre, suite: x.suite, proc: x.proc, origin: "TC 임포트" })), opt);
-  };
-  return (
-    <div className="space-y-3">
-      <Hdr icon={FileText} title="TC 임포트" desc="Excel · CSV → 자연어 절차 · 양식은 자유, 열만 고르면 됩니다" />
-      <Card className="space-y-3 p-4">
-        {!rows ? <FilePick accept=".xlsx,.xls,.csv" onFiles={onFiles} onSample={() => load(L.SAMPLE_EXCEL, "sample_tc.xlsx")} hint="수동 TC 엑셀(.xlsx) 또는 CSV — 테스트 관리 도구(Jira Xray · Zephyr, TestRail 등)에서 내보낸 CSV도 됩니다" /> : (<>
-          <div className="flex items-center justify-between text-xs"><span className="text-slate-600"><FileText size={13} className="mr-1 inline" />{file} · {body.length}행</span><button onClick={() => setRows(null)} className="text-sky-600">다른 파일</button></div>
-          {note && <div className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-500">{note}</div>}
-          <div>
-            <div className="mb-1.5 text-xs font-medium text-slate-700">열 고르기 <span className="font-normal text-slate-500">· 이름이 비슷한 열은 자동으로 골랐습니다</span></div>
-            <div className="grid grid-cols-5 gap-2">{COL_KEYS.map(([k, t, req]) => <Field key={k} label={t + (req ? " *" : "")}><Select value={map[k]} onChange={(e) => setMap({ ...map, [k]: e.target.value })}><option value="">{req ? "선택" : "없음"}</option>{(rows[0] || []).map((h, i) => <option key={i} value={String(i)}>{h || "열 " + (i + 1)}</option>)}</Select></Field>)}</div>
-          </div>
-          <div className="max-h-72 overflow-auto rounded-lg border border-slate-200">
-            <table className="w-full text-xs">
-              <thead><tr className="sticky top-0 bg-slate-50 text-left text-slate-500"><th className="w-8 px-2 py-2"></th><th className="font-medium">제목</th><th className="font-medium">절차</th><th className="font-medium">기대 결과</th><th className="font-medium">스위트</th></tr></thead>
-              <tbody>{items.map((x) => (
-                <tr key={x.i} className="border-t border-slate-100 align-top">
-                  <td className="px-2 py-2"><input type="checkbox" checked={!off[x.i]} onChange={(e) => setOff({ ...off, [x.i]: !e.target.checked })} className="accent-sky-600" /></td>
-                  <td className="py-2 text-slate-800">{x.name || <span className="text-red-600">제목 없음</span>}</td>
-                  <td className="py-2 text-slate-600">{x.proc.length}단계 <span className="text-slate-400">{x.proc[0] ? "· " + x.proc[0].t : ""}</span></td>
-                  <td className="py-2 text-slate-600">{x.proc.some((p) => p.e) ? "있음" : "—"}</td>
-                  <td className="py-2 text-slate-600">{x.suite || "—"}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-          <ImportTarget opt={opt} setOpt={setOpt} />
-          <div className="flex items-center justify-between border-t border-slate-200 pt-3"><span className="text-xs text-slate-500">가져온 케이스는 모두 <span className="text-slate-700">초안</span>으로 들어옵니다.</span><div className="flex gap-2"><Btn onClick={onCancel}>취소</Btn><Btn kind="primary" icon={Upload} onClick={go}>{chosen.length}건 가져오기</Btn></div></div>
-        </>)}
-      </Card>
-      <Toast msg={msg} />
-    </div>
-  );
+  return <TcExcelImport sample={L.SAMPLE_EXCEL} onImport={(items) => onImport(items, opt)} onCancel={onCancel} target={<ImportTarget opt={opt} setOpt={setOpt} />} />;
 }
+const useImportOpt = (ai) => { const { mqaSystems = [] } = useApp(); return useState({ systemId: (mqaSystems[0] || {}).id || "", aiAfter: ai }); };
 
 /* ═══════════ .robot 가져오기 ═══════════
    아는 키워드(AppiumLibrary)만 있으면 Low-Code(스텝)로, 반복·조건·모르는 키워드가 있으면 Full-Code로.

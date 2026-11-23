@@ -5,7 +5,7 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import { Badge, Btn, Card, PageToolbar, Select, Toast, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import { C, TOOLTIP } from "../common/theme.js";
-import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, healKey, healUsable, histOf, lastOf } from "./logic.js";
+import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, caseFlaky, healKey, healUsable, lastOf } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 /* ═══════════ 8. FQA 대시보드 ═══════════ */
 const barColor = (p) => (p >= 90 ? C.sky : p >= 80 ? C.warn : C.err);
@@ -34,15 +34,8 @@ export function FqaDashboardScreen({ nav }) {
   const recent = fruns.slice().sort(byDate).slice(0, 5);
   const totalTc = fqaCases.length;
   const approved = fqaCases.filter((c) => c.status === "승인").length;
-  const flakyRows = fqaCases.filter((c) => histOf(fruns, c.id).length >= 1).map((c) => {
-    const h = histOf(fruns, c.id); const fails = h.filter((v) => v === "FAIL").length; const passes = h.filter((v) => v === "PASS").length; const warns = h.filter((v) => v === "WARN").length;
-    let trail = 0; for (let i = h.length - 1; i >= 0; i--) { if (h[i] === "FAIL") trail++; else break; }
-    const rt = Math.round((fails / h.length) * 100);
-    const persistent = h.length >= 3 && fails / h.length >= 0.6 && trail >= 2;
-    /* 불안정 화면(1964)과 같은 식이어야 한다 — 두 화면이 같은 TC 를 다르게 분류하면 안 된다 */
-    const flaky = !persistent && h.length >= 3 && (warns > 0 || (fails > 0 && passes > 0));
-    return { id: c.id, name: c.name, runs: h.length, fails, rate: rt, flaky, persistent };
-  }).filter((r) => r.flaky || r.persistent);
+  /* 불안정 화면과 같은 함수 — 두 화면이 같은 TC 를 다르게 분류하면 안 된다 */
+  const flakyRows = caseFlaky(fruns, fqaCases, defects).map((h) => ({ ...h, rate: Math.round((h.fails / h.runs) * 100) }));
   const unstableN = flakyRows.length;
   const topFail = flakyRows.slice().sort((a, b) => b.rate - a.rate).slice(0, 4);
   const openDef = defects.filter((d) => (d.domain || "LQA") === "FQA" && d.status !== "Resolved").length;
@@ -174,8 +167,8 @@ export function FqaDashboardScreen({ nav }) {
             {topFail.length === 0 && <div className="rounded-lg bg-slate-100 px-3 py-6 text-center text-xs text-slate-500">불안정·지속 실패 TC가 없습니다</div>}
             {topFail.map((h) => (
               <div key={h.id} className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm">
-                <div><span className="font-mono text-xs text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span><div className="text-xs text-slate-500">최근 {h.runs}회 중 {h.fails}회 실패 · {h.rate}%</div></div>
-                {h.flaky ? <Badge kind="warn">Flaky</Badge> : <Badge kind="fail">지속 실패</Badge>}
+                <div><span className="font-mono text-xs text-sky-600">{h.id}</span> <span className="text-slate-800">{h.name}</span><div className="text-xs text-slate-500">최근 {h.runs}회 중 실패 {h.fails}{h.warns ? " · 재시도 통과 " + h.warns : ""}회</div></div>
+                <Badge kind={h.kind === "불안정" ? "warn" : "fail"}>{h.kind}</Badge>
               </div>
             ))}
           </div>

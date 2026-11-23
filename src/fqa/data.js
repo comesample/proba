@@ -162,10 +162,13 @@ export const INIT_FQA_CASES = [
   ] },
   /* 로그인된 상태에서 시작하는 케이스 — 스텝에 로그인이 없다. 검증할 내용만 남는다.
      로그인은 스위트가 1번에 로그인 케이스(TC-0031)를 두어 해결한다 (쿠폰 스위트) */
-  { id: "TC-0156", origin: "레코딩", name: "쿠폰 적용 상태 반영", tags: "regression", status: "승인", level: "Low-Code", dataset: "-", quarantined: false, steps: [
-    { act: "이동", loc: "/my/coupons", val: "-" },
-    { act: "클릭", loc: "#btn_apply_coupon", val: "-" },
-    { act: "화면 검증", loc: "[data-testid=coupon_status]", val: 'text = "적용됨"' },
+  { id: "TC-0156", origin: "레코딩", name: "쿠폰 적용 상태 반영", tags: "regression", status: "승인", level: "Low-Code", dataset: "-", quarantined: false,
+    // 자연어 절차 — 스텝 n = 절차 번호 (레코딩 뒤 사람이 적어 둔 예)
+    proc: [{ t: "내 쿠폰 화면으로 간다", e: "" }, { t: "쿠폰 적용 버튼을 누른다", e: "쿠폰 상태가 '적용됨'으로 바뀐다" }],
+    steps: [
+    { n: 1, act: "이동", loc: "/my/coupons", val: "-" },
+    { n: 2, act: "클릭", loc: "#btn_apply_coupon", val: "-" },
+    { n: 2, act: "화면 검증", loc: "[data-testid=coupon_status]", val: 'text = "적용됨"' },
   ] },
 
   { id: "TC-0401", origin: "API 임포트", name: "사용자 조회", tags: "smoke", status: "승인", level: "Low-Code", dataset: "-", steps: [

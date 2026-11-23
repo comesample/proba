@@ -1,5 +1,6 @@
 // 원래 fqa/screens.jsx 의 일부를 옮긴 파일 — 내용 · 동작 변경 없음
 import { surfaceOf } from "./data.js";
+import { FLAKY_WINDOW } from "../common/FlakyTable.jsx";
 import { mergedTc } from "./suiteLogic.js";
 /* 이벤트 트리거는 정보성(읽기전용) — 감지 방식은 대상·환경 "배포 감지"에서 정의된 값을 상속만 표시.
    기능 테스트는 '배포된 앱'을 상대로 하므로 배포 완료가 유일하게 유효한 이벤트다.
@@ -43,6 +44,25 @@ const tcOf = (r, id) => mergedTc(r, id);
 const runsFor = (runs, id) => (runs || [])
   .filter((r) => r.status === "완료" && !r.partial && (tcOf(r, id) || {}).v && tcOf(r, id).v !== "SKIP")
   .sort((a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || "")));
+/* ── 불안정 판정 — MQA caseHistory 와 같은 규칙 (불안정 화면 · 대시보드 공통) ──
+   최근 FLAKY_WINDOW 회 · TC별 · 버전(run.ver)을 구분한다
+     · 같은 버전 안에서 통과/실패 혼재, 또는 재시도 통과(WARN) = 불안정
+     · 연속 2회 실패, 또는 버전이 바뀐 뒤 계속 실패 = 지속 실패 (결함이 등록돼 있으면 '결함' — 담당자가 확정한 실패)
+     · 2회 이상 실행된 TC만 분류한다 — 1회의 재시도 통과로 불안정이라 단정하지 않는다 */
+const ST_KO = { PASS: "통과", FAIL: "실패", WARN: "재시도 통과" };
+const caseFlaky = (runs, cases, defects) => (cases || []).map((c) => {
+  const w = runsFor(runs, c.id).slice(0, FLAKY_WINDOW).reverse().map((r) => ({ st: ST_KO[tcOf(r, c.id).v] || "통과", run: r.id, ver: r.ver && r.ver !== "-" ? r.ver : "버전 미상" }));
+  if (w.length < 2) return null;
+  const fails = w.filter((x) => x.st === "실패").length, warns = w.filter((x) => x.st === "재시도 통과").length;
+  const lastVer = w[w.length - 1].ver; const cur = w.filter((x) => x.ver === lastVer);
+  const mixed = warns > 0 || [...new Set(w.map((x) => x.ver))].some((v) => { const xs = w.filter((x) => x.ver === v); return xs.some((x) => x.st !== "실패") && xs.some((x) => x.st === "실패"); });
+  let trail = 0; for (let i = w.length - 1; i >= 0; i--) { if (w[i].st === "실패") trail++; else break; }
+  const regressed = cur.length > 0 && cur.every((x) => x.st === "실패") && w.some((x) => x.ver !== lastVer && x.st !== "실패");
+  const hasDefect = (defects || []).some((d) => d.tc === c.id && d.domain === "FQA");
+  const failing = trail >= 2 || regressed;
+  const kind = failing ? (hasDefect ? "결함" : "지속 실패") : mixed ? "불안정" : fails ? "실패" : "안정";
+  return { id: c.id, name: c.name, w, runs: w.length, fails, warns, trail, regressed, kind, hasDefect, quarantined: !!c.quarantined };
+}).filter((h) => h && ["불안정", "지속 실패", "결함"].includes(h.kind)).sort((a, b) => (b.fails + b.warns) / b.runs - (a.fails + a.warns) / a.runs);
 const histOf = (runs, id) => runsFor(runs, id).slice(0, 4).map((r) => tcOf(r, id).v).filter(Boolean).reverse();
 /* 🔑 이 케이스에 최근 붙은 보정 제안 — 케이스에 저장하지 않고 실행에서 파생한다.
    케이스에 박아 두면 과거 회차의 판정 근거가 지금 값으로 바뀐다(F5 위반).
@@ -164,4 +184,4 @@ const relPath = (u, base) => {
 /* 스위트는 ID 로 가리킨다 — 이름을 바꿔도 소속 · 계획이 끊기지 않는다. 화면에는 이름을 보여준다 */
 const suiteNm = (suites, id) => ((suites || []).find((x) => x.id === id) || {}).name || "—";
 
-export { CAUSE_BG, CAUSE_K, CAUSE_ORDER, CAUSE_TX, DEFAULT_SCHED, SURF_K, TAGS, TAG_DESC, causeOf, effWorkers, envCovers, envOpts, fqaEvents, healKey, healNote, healOf, healUsable, histOf, lastOf, nextTcId, outerChecks, refKey, schedKey, suiteNm, surfacesOf, tagList, tagMatch };
+export { CAUSE_BG, CAUSE_K, CAUSE_ORDER, CAUSE_TX, DEFAULT_SCHED, SURF_K, TAGS, TAG_DESC, caseFlaky, causeOf, effWorkers, envCovers, envOpts, fqaEvents, healKey, healNote, healOf, healUsable, histOf, lastOf, nextTcId, outerChecks, refKey, schedKey, suiteNm, surfacesOf, tagList, tagMatch };
