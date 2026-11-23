@@ -1,6 +1,6 @@
 // FQA 테스트케이스 에디터 — 자연어 절차 · 스텝(Low-Code) · 코드(Full-Code) · 디버그 실행 · 검토(승인/반려)
 import { Fragment, useEffect, useRef, useState } from "react";
-import { ArrowRight, CheckCircle2, Code2, Copy, GripVertical, History, Info, Lock, MoreHorizontal, MousePointerClick, Play, RefreshCw, Save, Send, Sparkles, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Code2, Copy, GripVertical, History, Info, Lock, MoreHorizontal, MousePointerClick, Play, RefreshCw, Save, Send, Sparkles, X, XCircle } from "lucide-react";
 import { Badge, Btn, Card, Input, Modal, Portal, SEL_CARD, Select, Toast, useToast } from "../common/ui.jsx";
 import * as PL from "../common/procLogic.js";
 import { useApp } from "../common/context.js";
@@ -64,11 +64,14 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const [codeOpen, setCodeOpen] = useState({});
   const toggleCode = (i) => setCodeOpen((m) => ({ ...m, [i]: !m[i] }));
   /* 드래그 — 절차가 있으면 놓은 자리 스텝의 절차로 옮겨진다 (스텝은 항상 절차 순서로 정렬) */
-  const reorder = (from, to) => { setSteps((prev) => { const arr = [...prev]; const tn = (arr[to] || {}).n; const [m] = arr.splice(from, 1); arr.splice(to, 0, proc.length && tn ? { ...m, n: tn } : m); return proc.length ? PL.sortByProc(arr, proc.length) : arr; }); setCodeOpen({}); };
+  const reorder = (from, to) => { setSteps((prev) => { const arr = [...prev]; const tn = (arr[to] || {}).n; const [m] = arr.splice(from, 1); arr.splice(to, 0, proc.length && tn ? { ...m, n: tn } : m); return proc.length ? PL.sortByProc(arr, proc.length) : arr; }); setCodeOpen({}); seal((steps[to] || {}).n); };
   /* ── 자연어 절차 편집 — 절차 번호가 바뀌면 스텝의 연결(n)도 같이 옮긴다 ── */
   const newStep = (n) => ({ ...(steps.length === 0 ? { act: "이동", loc: "/", val: "-" } : { act: "클릭", loc: "", val: "-" }), ...(n ? { n } : {}) });
-  const addStepTo = (n) => { setSteps(PL.sortByProc([...steps, newStep(n)], proc.length)); setCodeOpen({}); };
-  const updRow = (i, patch) => setProc(proc.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  const addStepTo = (n) => { setSteps(PL.sortByProc([...steps, newStep(n)], proc.length)); setCodeOpen({}); seal(n); };
+  /* 🔑 절차 문장 변경 확인 (MQA 와 같은 규칙) — 절차 행의 b = 그 절차의 스텝을 마지막으로 맞춘 시점의 문장.
+     지금 문장과 다르면 '확인 필요'. b 가 정해지는 때: AI 생성 반영 · 그 절차의 스텝을 고칠 때 · '확인함' · 처음 절차를 고치기 직전 */
+  const seal = (n) => { if (n >= 1) setProc((ps) => ps.map((p, j) => (j === n - 1 ? { ...p, b: PL.procKey(p) } : p))); };
+  const updRow = (i, patch) => setProc(proc.map((p, j) => (j === i ? { ...p, ...(p.b === undefined ? { b: PL.procKey(p) } : {}), ...patch } : p)));
   const addRow = (after) => { const at = after == null ? proc.length : after + 1; const rows = proc.slice(); rows.splice(at, 0, { t: "", e: "" }); setProc(rows); setSteps(steps.map((st) => (st.n > at ? { ...st, n: st.n + 1 } : st))); setFocusRow(at); };
   const delRow = (i) => {
     const k = i + 1; const moved = steps.filter((st) => st.n === k).length;
@@ -86,7 +89,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
     setGen(true);
   };
   const applyGen = (ns) => {
-    setProc(PL.compactProc(proc, []).proc); setSteps(ns); setCodeOpen({}); setGen(false);
+    setProc(PL.compactProc(proc, []).proc.map((p) => ({ ...p, b: PL.procKey(p) }))); setSteps(ns); setCodeOpen({}); setGen(false);
     if (!fqaCases.some((c) => c.id === tc.id)) setOrigin("AI 생성");
     const left = stepErrors(ns).length;
     flash("스텝 " + ns.length + "개 반영 (저장 전)" + (left ? " · 미확정 " + left + "개" : ""));
@@ -107,7 +110,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   };
   const onPick = (el) => {
     const r = AI.recommendWebLoc(el);
-    setSteps(steps.map((x, j) => (j === pickIdx ? { ...x, loc: r.loc } : x)));
+    setSteps(steps.map((x, j) => (j === pickIdx ? { ...x, loc: r.loc } : x))); seal((steps[pickIdx] || {}).n);
     setPickIdx(null); flash("요소를 채웠습니다 — " + r.kind + (r.stable ? "" : " · 깨지기 쉬움"));
   };
   const applyPaste = (replace) => {
@@ -263,7 +266,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   const saved = tc && fqaCases.some((c) => c.id === tc.id);
   const approveWhy = !saved ? "먼저 저장하세요" : dirty ? "저장한 뒤 승인할 수 있습니다" : errs.length ? "미확정 · 오류를 채워야 승인할 수 있습니다" : noBody ? "스텝이 없어 승인할 수 없습니다" : "";
   const setSt = (st, m) => { setFqaCaseStatus(tc.id, st); setStatus(st); flash(m); };
-  const approve = () => { if (approveWhy) { flash(approveWhy); return; } setSt("승인", tc.id + " 승인" + (usedIn.length ? " — 포함된 스위트 " + usedIn.length + "개에서 실행됩니다" : " — 스위트에 넣어야 실행 계획에서 돕니다")); };
+  const approve = () => { if (approveWhy) { flash(approveWhy); return; } if (changedN.length && !window.confirm("절차 " + changedN.join(", ") + "번 문장이 바뀌었는데 스텝은 확인되지 않았습니다.\n\n그래도 승인할까요?")) return; setSt("승인", tc.id + " 승인" + (usedIn.length ? " — 포함된 스위트 " + usedIn.length + "개에서 실행됩니다" : " — 스위트에 넣어야 실행 계획에서 돕니다")); };
   const reject = () => setSt("초안", tc.id + " 반려 — 초안으로 돌렸습니다");
   const unapprove = () => setSt("검토중", tc.id + " 검토중으로 — 실행 계획에서 빠집니다");
   /* 복제 — 사본은 '지금 편집 중인 내용'을 받는다. 원본에 미저장 변경이 있으면 먼저 저장한다. */
@@ -280,11 +283,13 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
   };
   /* 스텝 묶음 머리 — 절차가 있으면 스텝을 절차별로 묶어 보여준다. 스텝이 없는 절차도 머리를 보여 '+ 스텝' 자리를 준다 */
   const nOf = (st) => (st && st.n >= 1 && st.n <= proc.length ? st.n : proc.length + 1);   // 절차 밖 = 맨 뒤 '절차 미지정'
+  const changedN = proc.map((p, k) => (PL.procChanged(p, steps.some((x) => x.n === k + 1)) ? k + 1 : 0)).filter(Boolean);
   const ghead = (k, empty) => (
     <div key={"g" + k} className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-1.5 text-xs">
       <span className="shrink-0 font-medium text-slate-600">{k > proc.length ? "절차 미지정" : "절차 " + k}</span>
       {k <= proc.length && <span className="min-w-0 flex-1 truncate text-slate-700">{proc[k - 1].t || <span className="text-slate-400">(비어 있음)</span>}{proc[k - 1].e && <span className="text-slate-500"> → {proc[k - 1].e}</span>}</span>}
       {empty && <span className="shrink-0 text-slate-400">스텝 없음</span>}
+      {changedN.includes(k) && <span className="flex shrink-0 items-center gap-1 text-amber-700"><AlertTriangle size={12} />절차가 바뀌었습니다 — 아래 스텝이 맞는지 확인하세요{editable && <button onClick={() => seal(k)} className="ml-1 font-medium text-amber-800 underline">확인함</button>}</span>}
       {editable && k <= proc.length && <button onClick={() => addStepTo(k)} className="shrink-0 text-sky-600">+ 스텝</button>}
     </div>
   );
@@ -430,13 +435,14 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
               <div>
                 <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2">
                   <Badge kind={SURF_K[surfacesOf({ steps })] || "info"}>{surfacesOf({ steps })}</Badge>
+                  {changedN.length > 0 && <Badge kind="warn">절차 변경 {changedN.length}곳 · 확인 필요</Badge>}
                   {editable && !showProc && !proc.length && <button onClick={openProc} className="text-xs text-sky-600">+ 자연어 절차</button>}
                   <span className="ml-auto text-xs text-slate-500">경로는 <span className="font-mono text-slate-500">상대경로</span> — base URL은 실행 계획의 환경에서 주입</span>
                 </div>
                 <div>
                   {steps.length === 0 && !proc.length && <div className="px-3 py-10 text-center text-sm text-slate-500">스텝이 없습니다. 아래 <span className="text-sky-600">+ 스텝 추가</span>로 시작하세요.</div>}
                   {steps.map((s, i) => {
-                    const setStep = (patch) => setSteps(steps.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+                    const setStep = (patch) => { setSteps(steps.map((x, j) => (j === i ? { ...x, ...patch } : x))); seal(s.n); };
                     const isCode = s.act === "코드 스텝";
                     const isReq = s.act === "요청";
                     const isResp = s.act === "응답 검증";
@@ -513,7 +519,7 @@ export function FqaEditorScreen({ entry = "Low-Code", tc, onDirty, onOpen }) {
                             )}
                             {!badIdx.has(i + 1) && !isCode && !isReq && !isResp && s.act !== "이동" && AI.fragileLoc(s.loc) && <span className="shrink-0 text-xs text-amber-700" title="역할 · 이름 · 글자 · 위치로 찾는 로케이터 — 문구나 화면 구성이 바뀌면 깨질 수 있습니다. data-testid 를 권장합니다">깨지기 쉬움</span>}
                             {badIdx.has(i + 1) && <span className="shrink-0" title={stepErrors([s]).map((m) => m.replace(/^1번 /, "")).join(" · ")}><Badge kind="warn">미확정</Badge></span>}
-                            <button onClick={() => setSteps(steps.filter((_, j) => j !== i))} className="shrink-0 text-slate-500 hover:text-red-600" title="스텝 삭제"><X size={13} /></button>
+                            <button onClick={() => { setSteps(steps.filter((_, j) => j !== i)); seal(s.n); }} className="shrink-0 text-slate-500 hover:text-red-600" title="스텝 삭제"><X size={13} /></button>
                           </>
                         ) : (
                           <>

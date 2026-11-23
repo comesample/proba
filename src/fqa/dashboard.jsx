@@ -5,6 +5,7 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import { Badge, Btn, Card, PageToolbar, Select, Toast, useToast } from "../common/ui.jsx";
 import { useApp } from "../common/context.js";
 import { C, TOOLTIP } from "../common/theme.js";
+import { judgeWeb } from "../common/causeLogic.js";
 import { CAUSE_BG, CAUSE_ORDER, CAUSE_TX, caseFlaky, healKey, healUsable, lastOf } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 /* ═══════════ 8. FQA 대시보드 ═══════════ */
@@ -25,7 +26,7 @@ export function FqaDashboardScreen({ nav }) {
   const inPeriod = (r) => { const ds = dOf(r); if (!/^\d{4}-\d{2}-\d{2}$/.test(ds)) return true; return ds >= from && ds <= to; };
   const fruns = fqaRuns.filter((r) => inPlan(r) && inPeriod(r));   // 계획·기간으로 스코프한 실행 집합
   const filtered = planF !== "전체" || from !== defFrom || to !== today;
-  const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "오류": "fail" };
+  const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
   const rate = (r) => (r && r.total ? Math.round((r.pass / r.total) * 1000) / 10 : 0);
   const byDate = (a, b) => String(b.startedAt || "").localeCompare(String(a.startedAt || ""));
   // 집계는 전체 실행만 — 부분 실행(실패한 스위트 다시 실행)을 섞으면 실패가 과대 집계된다
@@ -65,17 +66,17 @@ export function FqaDashboardScreen({ nav }) {
   const healPend = healIds.filter((k) => !healState[k]).length;
   const healOk = healIds.filter((k) => healState[k] === "승인됨").length;
   /* 🔑 실패 원인 분포 — "무엇을 고칠까" 가 아니라 "어디에 투자할까" 를 답한다.
-     로케이터 비중이 낮으면 자가보정은 곁다리다. 이 숫자 없이 정하면 근거가 없다.
+     '누가 고칠 일인가'(구분) 기준으로 묶는다 — 결과 화면과 같은 판정 · 담당자 확정 우선 (MQA 대시보드와 같은 규칙)
      실행에서 파생하므로 기간·계획 필터를 그대로 따른다. */
-  const causeCnt = {};
-  finished.forEach((r) => SL.mergedTcs(r).forEach((t) => { if (t.cause) causeCnt[t.cause] = (causeCnt[t.cause] || 0) + 1; }));   // 케이스 기준으로 합쳐 센다
+  const causeCnt = {}, causeSub = {};
+  finished.forEach((r) => SL.mergedTcs(r).forEach((t) => { const j = judgeWeb(r, t); if (!j) return; causeCnt[j.kind] = (causeCnt[j.kind] || 0) + 1; (causeSub[j.kind] = causeSub[j.kind] || {})[j.cause] = ((causeSub[j.kind] || {})[j.cause] || 0) + 1; }));   // 케이스 기준으로 합쳐 센다
   const causeTot = Object.keys(causeCnt).reduce((a, k) => a + causeCnt[k], 0);
-  const causeRows = CAUSE_ORDER.filter((k) => causeCnt[k]).map((k) => ({ k, n: causeCnt[k], p: Math.round((causeCnt[k] / causeTot) * 100) }));
+  const causeRows = CAUSE_ORDER.filter((k) => causeCnt[k]).map((k) => ({ k, n: causeCnt[k], p: Math.round((causeCnt[k] / causeTot) * 100), sub: Object.entries(causeSub[k]).map(([c, n]) => c + " " + n).join(" · ") }));
   const KPI = [
     ["자동화 TC", totalTc, "text-slate-900", "저장소 등록"],
     ["PASS율(최근 실행)", lastRun ? rate(lastRun) + "%" : "—", "text-emerald-600", lastRun ? lastRun.id : "실행 없음"],
     ["승인 TC", approved + "/" + totalTc, "text-sky-600", "승인/전체"],
-    ["불안정 TC", unstableN, "text-amber-600", "Flaky+지속 실패"],
+    ["불안정 TC", unstableN, "text-amber-600", "불안정 + 지속 실패"],
     ["미해결 결함", openDef, "text-red-600", "기능 · Open"],
     ["보정 제안", healPend, "text-sky-600", healIds.length ? "미검토 · 승인 " + healOk + "/" + healIds.length : "제안 없음"],
   ];
@@ -94,21 +95,21 @@ export function FqaDashboardScreen({ nav }) {
       <Card className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-semibold text-slate-800">실패 원인 분포 <span className="text-xs font-normal text-slate-500">완료 실행 기준</span></span>
-          <span className="text-xs text-slate-500">러너가 에러 문장 규칙으로 자동 분류</span>
+          <span className="text-xs text-slate-500">누가 고칠 일인가 기준 · 담당자 확정 우선</span>
         </div>
         {causeTot === 0 ? (
-          <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">기간 내 실패·경고가 없습니다</div>
+          <div className="rounded-lg bg-slate-100 px-3 py-4 text-center text-xs text-slate-500">기간 내 실패가 없습니다</div>
         ) : (
           <>
             <div className="flex h-2 overflow-hidden rounded bg-slate-100">
-              {causeRows.map((c) => (<div key={c.k} style={{ width: c.p + "%" }} className={CAUSE_BG[c.k]} title={c.k + " " + c.n + "건"} />))}
+              {causeRows.map((c) => (<div key={c.k} style={{ width: c.p + "%" }} className={CAUSE_BG[c.k]} title={c.k + " " + c.n + "건 — " + c.sub} />))}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
               {causeRows.map((c) => (
                 <span key={c.k} className="flex items-center gap-1.5">
                   <span className={"inline-block h-2 w-2 rounded-sm " + CAUSE_BG[c.k]} />
                   <span className={CAUSE_TX[c.k]}>{c.k}</span>
-                  <span className="text-slate-500">{c.n}건 · {c.p}%</span>
+                  <span className="text-slate-500" title={c.sub}>{c.n}건 · {c.p}%</span>
                 </span>
               ))}
             </div>

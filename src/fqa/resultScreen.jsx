@@ -6,12 +6,13 @@ import { Badge, Btn, Card, Field, PageToolbar, Portal, SEL_CARD, SEL_ROW, Select
 import { useApp } from "../common/context.js";
 import { C } from "../common/theme.js";
 import { FlakyTable } from "../common/FlakyTable.jsx";
+import { KIND_WHO, judgeWeb } from "../common/causeLogic.js";
 import { CAUSE_K, CAUSE_ORDER, CAUSE_TX, caseFlaky, causeOf, healKey, healNote, healOf, healUsable, histOf, surfacesOf } from "./logic.js";
 import * as SL from "./suiteLogic.js";
 import * as RL from "./runLogic.js";
 /* ═══════════ 7. 결과 상세 ═══════════ */
 export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }) {
-  const { fqaRuns, addFqaRun, fqaSystems, defects, addDefect, openModal, fqaPlans, fqaCases, fqaSuites, updateFqaCase, commitFqaCase, setFqaEditTc, jiraConfig, setPendingSelect, goto, healState, setHeal } = useApp();
+  const { fqaRuns, addFqaRun, updateFqaRun, fqaSystems, defects, addDefect, openModal, fqaPlans, fqaCases, fqaSuites, updateFqaCase, commitFqaCase, setFqaEditTc, jiraConfig, setPendingSelect, goto, healState, setHeal } = useApp();
   const [msg, flash] = useToast();
   const [filt, setFilt] = useState("전체");
   const [selId, setSelId] = useState(null);
@@ -166,7 +167,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   /* 불안정 — 판정은 logic.caseFlaky (MQA 와 같은 규칙 · 대시보드와 같은 함수), 표는 공용 FlakyTable */
   const FLAKY = caseFlaky(fqaRuns, fqaCases, defects).map((h) => {
     const cause = causeOf(fqaRuns, h.id);
-    return { ...h, suite: SL.suiteNamesOf(fqaSuites, h.id).join(" · ") || "—", heal: healOf(fqaRuns, fqaCases, h.id), cause: cause ? { text: cause } : null, causeKey: cause, rate: Math.round((h.fails / h.runs) * 100),
+    return { ...h, suite: SL.suiteNamesOf(fqaSuites, h.id).join(" · ") || "—", heal: healOf(fqaRuns, fqaCases, h.id), cause: cause ? { text: cause.cause, note: cause.fixed ? "확정" : cause.by + " 제안" } : null, causeKey: cause ? cause.cause : null, rate: Math.round((h.fails / h.runs) * 100),
       streak: h.regressed ? "버전 " + h.w[h.w.length - 1].ver + " 이후 계속 실패" : h.trail >= 2 ? "최근 " + h.trail + "회 연속 실패" : "" };
   });
   const hasDefFQA = (id) => defects.some((d) => d.tc === id && d.domain === "FQA");
@@ -276,7 +277,7 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
                   <Fragment key={kOf(t)}>
                   {t.suiteName && (i === 0 || shown[i - 1].suiteId !== t.suiteId || shown[i - 1].brow !== t.brow) && <div className="border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-xs font-medium text-slate-600">{t.brow ? t.brow + " · " : ""}{t.suiteName}</div>}
                   <div onClick={() => setSelId(kOf(t))} className={"flex items-center justify-between border-b border-slate-200 px-4 py-2.5 cursor-pointer hover:bg-slate-100 " + (cur && kOf(cur) === kOf(t) ? SEL_ROW : "")}>
-                    <div><span className="font-mono text-xs text-sky-600">{t.id}</span>{t.rev != null && <span className="ml-1.5 font-mono text-slate-500" style={{ fontSize: 10 }}>rev {t.rev}</span>}<div className={"text-xs " + (t.v === "SKIP" ? "text-slate-400" : "text-slate-700")}>{t.name}</div>{t.skipWhy && <div className="text-slate-400" style={{ fontSize: 11 }}>{t.skipWhy}</div>}{(t.cause || rowSum(t)) && <div className="flex items-center gap-1.5" style={{ fontSize: 11 }}>{t.cause && <span className={CAUSE_TX[t.cause] || "text-slate-500"}>원인 · {t.cause}</span>}{t.cause && rowSum(t) && <span className="text-slate-300">·</span>}{rowSum(t) && <span className="text-slate-500">{rowSum(t)}</span>}</div>}</div>
+                    <div><span className="font-mono text-xs text-sky-600">{t.id}</span>{t.rev != null && <span className="ml-1.5 font-mono text-slate-500" style={{ fontSize: 10 }}>rev {t.rev}</span>}<div className={"text-xs " + (t.v === "SKIP" ? "text-slate-400" : "text-slate-700")}>{t.name}</div>{t.skipWhy && <div className="text-slate-400" style={{ fontSize: 11 }}>{t.skipWhy}</div>}{(judgeWeb(run, t) || rowSum(t)) && <div className="flex items-center gap-1.5" style={{ fontSize: 11 }}>{judgeWeb(run, t) && <span className={CAUSE_TX[judgeWeb(run, t).kind] || "text-slate-500"}>{judgeWeb(run, t).kind} · {judgeWeb(run, t).cause}{judgeWeb(run, t).fixed ? " · 확정" : ""}</span>}{judgeWeb(run, t) && rowSum(t) && <span className="text-slate-300">·</span>}{rowSum(t) && <span className="text-slate-500">{rowSum(t)}</span>}</div>}</div>
                     <div className="flex items-center gap-2">{t.v === "FAIL" && openDefectOf(t.id) && <Bug size={12} className="text-red-600" />}<span className="text-xs text-slate-500">{t.dur}</span>{healUsable(fqaCases, t) && <Badge kind="active">보정</Badge>}<Badge kind={vK[t.v]}>{vLabel(t.v)}</Badge></div>
                   </div>
                   </Fragment>
@@ -290,6 +291,19 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
                 {canRegister(cur) && <Btn kind="danger" icon={Bug} onClick={() => regDefect(cur)}>{isRegression(cur.id) ? "재발 결함 등록" : "결함 등록"}</Btn>}</div></div>
               <div className="mb-3 text-sm text-slate-700">{cur.name}{cur.suiteName && <span className="ml-1.5 text-xs text-slate-500">· 스위트 {cur.suiteName}{cur.brow ? " · " + cur.brow : ""}</span>}</div>
               {cur.v === "SKIP" && <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600"><b className="font-medium">건너뜀</b> — {cur.skipWhy}</div>}
+              {/* 원인 판정 — 규칙 · AI 제안, 담당자 확정 (MQA 와 같은 자리 · 같은 모양) */}
+              {(() => { const j = judgeWeb(run, cur); if (!j) return null; const confirm = (k) => { updateFqaRun(run.id, { judged: { ...(run.judged || {}), [cur.id]: k } }); flash(cur.id + " 원인 확정 — " + k); }; return (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-800">원인 판정</span>
+                    <Badge kind={CAUSE_K[j.kind]}>{j.kind}</Badge><span className="text-slate-700">{j.cause}</span>
+                    <span className="text-slate-500">{j.fixed ? "· 담당자 확정" : "· " + j.by + " 제안" + (j.conf ? " · 확신 " + j.conf : "")}</span>
+                    {!j.fixed && <div className="ml-auto flex items-center gap-1.5"><button onClick={() => confirm(j.kind)} className="rounded border border-slate-300 bg-white px-2 py-0.5 text-slate-700 hover:bg-slate-50">확정</button>
+                      <select value="" onChange={(e) => e.target.value && confirm(e.target.value)} className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-slate-700"><option value="">다른 원인</option>{CAUSE_ORDER.filter((k) => k !== j.kind && k !== "확인 필요").map((k) => <option key={k}>{k}</option>)}</select></div>}
+                  </div>
+                  <div className="mt-1 text-slate-600">근거: {j.basis} · {KIND_WHO[j.kind]}</div>
+                </div>
+              ); })()}
               {/* 🔑 실행 결과의 리비전 스탬프 — 없으면 "제품이 깨진 건가 케이스가 바뀐 건가"를 구분할 수 없어 회귀 분석이 거짓말을 한다.
                   케이스가 그 뒤에 수정되었으면 이 결과를 현재 케이스로 재현할 수 없다는 뜻이므로 그렇게 알린다. */}
               {cur.rev != null && curCase && (curCase.rev || 1) !== cur.rev && (
@@ -439,25 +453,26 @@ export function FqaResultScreen({ runId, mode = "상세", back, nav, backLabel }
   );
 }
 /* AI 회귀 분석 — LQA · MQA 와 같은 구성: 계산(결정적) → AI 추정(원인 · 권고) → 리포트 공유
-   원인 묶음은 러너가 붙인 실패 원인(로케이터 · 검증 · 타이밍 · 환경)을 그대로 쓴다 — AI 가 새로 분류하지 않는다 */
-const CAUSE_WHO = { "로케이터": "테스트 보정 대상 (QA)", "타이밍": "테스트 보정 대상 (QA)", "검증": "제품 결함 의심 (개발)", "환경": "환경 문제 (인프라)", "기타": "원인 확인 필요", "미분류": "원인 확인 필요" };
+   원인 묶음은 결과 화면과 같은 판정(judgeWeb · 담당자 확정 우선)을 '누가 고칠 일인가' 로 묶는다 — MQA 와 같은 구성 */
 function FqaRegAiPanel({ A, B, rows, summ, cls, rate, runDiff, cases, planName, flash, onClose, onOpen }) {
   const tcB = (id) => SL.mergedTc(B, id) || {};
-  const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행").map((r) => { const t = tcB(r.id); return { ...r, cause: t.cause || "미분류", heal: healUsable(cases, t) }; });
-  const groups = {}; reg.forEach((x) => { (groups[x.cause] = groups[x.cause] || { cause: x.cause, ids: [] }).ids.push(x.id); });
-  const G = [...CAUSE_ORDER, "미분류"].filter((k) => groups[k]).map((k) => groups[k]);
+  const reg = rows.filter((r) => cls(r.a, r.b).k === "퇴행").map((r) => { const t = tcB(r.id); const j = judgeWeb(B, t) || { kind: "확인 필요", cause: "판정 불가" }; return { ...r, kind: j.kind, cause: j.cause, heal: healUsable(cases, t) }; });
+  const groups = {}; reg.forEach((x) => { const g = (groups[x.kind] = groups[x.kind] || { kind: x.kind, causes: [], ids: [] }); g.ids.push(x.id); if (!g.causes.includes(x.cause)) g.causes.push(x.cause); });
+  const G = CAUSE_ORDER.filter((k) => groups[k]).map((k) => groups[k]);
+  const byCause = (c) => reg.filter((x) => x.cause === c).map((x) => x.id);
   const revN = rows.filter((r) => r.ra != null && r.rb != null && r.ra !== r.rb).length;
   const healN = reg.filter((x) => x.heal).length;
   const snap = [["빌드", A.ver || "-", B.ver || "-"], ["브라우저", A.brow || "API", B.brow || "API"], ["러너 (Playwright)", A.pw || "-", B.pw || "-"]];
   const conclusion = !reg.length
     ? (summ["개선"] ? "퇴행 없음 — 개선 " + summ["개선"] + "건, " + B.id + "는 " + A.id + "보다 나아졌습니다" : "퇴행 없음 — 두 실행의 품질이 같습니다")
-    : G.map((g) => "퇴행 " + g.ids.length + "건은 " + g.cause + " — " + CAUSE_WHO[g.cause]).join(" · ") + (runDiff ? " (" + runDiff + " — 실행 조건 영향 확인 필요)" : "");
+    : G.map((g) => "퇴행 " + g.ids.length + "건은 " + g.kind + " (" + g.causes.join(", ") + ") — " + KIND_WHO[g.kind]).join(" · ") + (runDiff ? " (" + runDiff + " — 실행 조건 영향 확인 필요)" : "");
   const recs = [];
   if (healN) recs.push("보정 제안 " + healN + "건 검토 · 승인 (결과 상세)");
-  if (groups["로케이터"] && groups["로케이터"].ids.length > healN) recs.push("보정 제안이 없는 로케이터 실패는 에디터에서 직접 수정");
-  if (groups["타이밍"]) recs.push("대기 조건 보정 후 다음 회차에서 재확인 (" + groups["타이밍"].ids.join(", ") + ")");
-  if (groups["검증"]) recs.push("검증 실패 " + groups["검증"].ids.length + "건은 결과 상세에서 증적 확인 후 결함 등록");
-  if (groups["환경"]) recs.push("대상 환경 · 서버 상태 확인 후 다시 실행");
+  if (byCause("요소 변경").length > healN) recs.push("보정 제안이 없는 요소 변경 실패는 에디터에서 요소를 다시 집기");
+  if (byCause("대기 부족 (불안정)").length) recs.push("대기 조건 보정 후 다음 회차에서 재확인 (" + byCause("대기 부족 (불안정)").join(", ") + ")");
+  if (groups["제품 결함 의심"]) recs.push("제품 결함 의심 " + groups["제품 결함 의심"].ids.length + "건은 결과 상세에서 증적 확인 후 원인 확정 · 결함 등록");
+  if (groups["백엔드 결함 의심"]) recs.push("서버 응답 실패 " + groups["백엔드 결함 의심"].ids.length + "건은 서버 개발에 전달");
+  if (groups["환경 문제"]) recs.push("대상 환경 · 서버 상태 확인 후 다시 실행");
   if (revN) recs.push("케이스가 바뀐 " + revN + "건은 케이스 변경분을 먼저 확인");
   if (runDiff) recs.push("같은 브라우저 · 러너 조건으로 다시 비교");
   if (!recs.length) recs.push(reg.length ? "실패 시점 증적으로 원인을 확인하세요" : "조치 필요 없음 — 다음 정기 실행에서 추이 확인");
@@ -485,7 +500,7 @@ function FqaRegAiPanel({ A, B, rows, summ, cls, rate, runDiff, cases, planName, 
           </div>
           {G.length > 0 && <div>
             <div className="mb-1.5 text-xs font-semibold text-slate-500">원인별 묶음</div>
-            <ul className="space-y-1.5">{G.map((g) => <li key={g.cause} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-700"><Badge kind={CAUSE_K[g.cause] || "draft"}>{g.cause}</Badge><span className="font-medium">{g.ids.length}건</span><span className="text-slate-500">{CAUSE_WHO[g.cause]}</span><span className="font-mono text-slate-500">— {g.ids.join(", ")}</span></li>)}</ul>
+            <ul className="space-y-1.5">{G.map((g) => <li key={g.kind} className="flex flex-wrap items-center gap-1.5 text-xs text-slate-700"><Badge kind={CAUSE_K[g.kind] || "draft"}>{g.kind}</Badge><span className="font-medium">{g.ids.length}건</span><span className="text-slate-500">{g.causes.join(", ")} · {KIND_WHO[g.kind]}</span><span className="font-mono text-slate-500">— {g.ids.join(", ")}</span></li>)}</ul>
           </div>}
           <div>
             <div className="mb-1.5 text-xs font-semibold text-slate-500">권장 조치</div>

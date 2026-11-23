@@ -210,7 +210,7 @@ export const INIT_FQA_CASES = [
      기타      규칙이 못 붙였다
 
    🔑 애매하면 "기타" 로 둔다. 모르는 것을 로케이터로 몰면 틀린 보정 제안이 쏟아진다.
-   🔑 자가보정은 "로케이터" 로 분류된 실패에만 발동한다 — 그래서 이게 0단계다.
+   🔑 자가보정은 "요소 변경" 으로 분류된 실패에만 발동한다 — 그래서 이게 0단계다.
       분류가 없으면 보정을 켤 자리 자체가 없다.
    🔑 원인은 케이스가 아니라 실행에 붙는다. 그 회차에 관측된 사실이기 때문이다(F5).      */
 const _rd = (offsetDays, hhmm) => { const t = new Date(); t.setDate(t.getDate() + offsetDays); const z = (n) => String(n).padStart(2, "0"); return t.getFullYear() + "-" + z(t.getMonth() + 1) + "-" + z(t.getDate()) + " " + hhmm; };
@@ -222,7 +222,7 @@ const RUNS0 = [
     { key: "5:TC-0401", suiteId: 5, suiteName: "API 연동", id: "TC-0401", name: "사용자 조회", rev: 1, v: "PASS", dur: "0.3s" },
     /* 데이터 구동 케이스 — 행 단위로 저장하고 판정은 케이스 단위로 접는다(1행이라도 실패 시 FAIL).
        data는 실행에 쓴 행의 스냅샷이다. 데이터셋을 참조하지 않으므로 데이터셋이 바뀌어도 이 결과는 그대로 유효하다. */
-    { key: "5:TC-0402", suiteId: 5, suiteName: "API 연동", id: "TC-0402", name: "사용자 생성 후 조회", rev: 1, v: "FAIL", cause: "검증", dur: "2.6s", ds: "signup_emails", rows: [
+    { key: "5:TC-0402", suiteId: 5, suiteName: "API 연동", id: "TC-0402", name: "사용자 생성 후 조회", rev: 1, v: "FAIL", cause: "API 응답 불일치", dur: "2.6s", ds: "signup_emails", rows: [
       { i: 1, data: { email: "valid@example.com", expected: "pass" }, v: "PASS", dur: "0.4s" },
       { i: 2, data: { email: "invalid-email", expected: "fail" }, v: "PASS", dur: "0.4s" },
       { i: 3, data: { email: "no@dot", expected: "fail" }, v: "FAIL", dur: "0.5s", err: "기대 400 · 실제 201 — 형식 검증 통과됨" },
@@ -240,7 +240,7 @@ const RUNS0 = [
     { key: "3:TC-0031", suiteId: 3, suiteName: "메인 화면", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
     { key: "3:TC-0101", suiteId: 3, suiteName: "메인 화면", id: "TC-0101", name: "메인 배너 노출", rev: 1, v: "PASS", dur: "0.6s" },
     { key: "3:TC-0102", suiteId: 3, suiteName: "메인 화면", id: "TC-0102", name: "추천 상품 카드 렌더", rev: 1, v: "PASS", dur: "0.9s" },
-    { key: "2:TC-0021", suiteId: 2, suiteName: "회원가입", id: "TC-0021", name: "회원가입 이메일 형식 검증", rev: 1, v: "FAIL", cause: "검증", dur: "4분 12초", ds: "signup_emails", stopped: "연속 3행 실패로 중단", rows: [
+    { key: "2:TC-0021", suiteId: 2, suiteName: "회원가입", id: "TC-0021", name: "회원가입 이메일 형식 검증", rev: 1, v: "FAIL", cause: "기대값 불일치", dur: "4분 12초", ds: "signup_emails", stopped: "연속 3행 실패로 중단", rows: [
       { i: 1, data: { email: "valid@example.com", expected: "pass" }, v: "PASS", dur: "0.4s" },
       { i: 2, data: { email: "user.name@shop.co.kr", expected: "pass" }, v: "PASS", dur: "0.4s" },
       { i: 3, data: { email: "invalid-email", expected: "fail" }, v: "PASS", dur: "0.4s" },
@@ -288,9 +288,9 @@ const RUNS0 = [
   ] },
   { id: "FRUN-502", pw: "1.49.1", brVer: "131.0.6778.33", name: "결제 회귀", plan: "결제 회귀 (웹+API)", planId: 3, suite: "결제 / 주문 · 쿠폰", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "2/2", dur: "3분 30초", at: "오늘 11:10", startedAt: _rd(0, "11:10"), endedAt: _rd(0, "11:13"), total: 2, pass: 0, fail: 2, warn: 0, tcs: [
     { key: "4:TC-0031", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "4:TC-0301", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0301", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", rev: 1, v: "FAIL", cause: "로케이터", dur: "8.4s", heal: { step: "추천 상품 카드", from: "[data-testid=product-featured]", to: "[data-testid=product-card-featured]", why: "data-testid 값만 바뀌었고 같은 위치·같은 태그입니다" } },
+    { key: "4:TC-0301", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0301", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", rev: 1, v: "FAIL", cause: "요소 변경", dur: "8.4s", heal: { step: "추천 상품 카드", from: "[data-testid=product-featured]", to: "[data-testid=product-card-featured]", why: "data-testid 값만 바뀌었고 같은 위치·같은 태그입니다" } },
     { key: "7:TC-0031", suiteId: 7, suiteName: "쿠폰", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "7:TC-0156", suiteId: 7, suiteName: "쿠폰", id: "TC-0156", name: "쿠폰 적용 상태 반영", rev: 1, v: "FAIL", cause: "검증", dur: "1.2s" },
+    { key: "7:TC-0156", suiteId: 7, suiteName: "쿠폰", id: "TC-0156", name: "쿠폰 적용 상태 반영", rev: 1, v: "FAIL", cause: "기대값 불일치", dur: "1.2s" },
   ] },
   /* 🔑 로케이터가 깨져서 생긴 '지속 실패' — 보정 제안이 결과 화면을 넘어
      불안정 화면·결함 등록까지 흘러가는 경로를 눈으로 볼 수 있게 둔 시드다.
@@ -300,9 +300,9 @@ const RUNS0 = [
      둘을 같은 목록에 나란히 두어야 "지속 실패라고 다 결함이 아니다" 가 드러난다. */
   { id: "FRUN-500", pw: "1.49.1", brVer: "131.0.6778.33", name: "결제 회귀", plan: "결제 회귀 (웹+API)", planId: 3, suite: "결제 / 주문 · 쿠폰", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "2/2", dur: "3분 26초", at: "어제 09:40", startedAt: _rd(-1, "09:40"), endedAt: _rd(-1, "09:44"), total: 2, pass: 0, fail: 2, warn: 0, tcs: [
     { key: "4:TC-0031", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "4:TC-0301", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0301", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", rev: 1, v: "FAIL", cause: "로케이터", dur: "8.1s", heal: { step: "추천 상품 카드", from: "[data-testid=product-featured]", to: "[data-testid=product-card-featured]", why: "data-testid 값만 바뀌었고 같은 위치·같은 태그입니다" } },
+    { key: "4:TC-0301", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0301", name: "상품 선택(웹) → 결제(API) → 주문 확인(웹)", rev: 1, v: "FAIL", cause: "요소 변경", dur: "8.1s", heal: { step: "추천 상품 카드", from: "[data-testid=product-featured]", to: "[data-testid=product-card-featured]", why: "data-testid 값만 바뀌었고 같은 위치·같은 태그입니다" } },
     { key: "7:TC-0031", suiteId: 7, suiteName: "쿠폰", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "7:TC-0156", suiteId: 7, suiteName: "쿠폰", id: "TC-0156", name: "쿠폰 적용 상태 반영", rev: 1, v: "FAIL", cause: "검증", dur: "1.3s" },
+    { key: "7:TC-0156", suiteId: 7, suiteName: "쿠폰", id: "TC-0156", name: "쿠폰 적용 상태 반영", rev: 1, v: "FAIL", cause: "기대값 불일치", dur: "1.3s" },
   ] },
   { id: "FRUN-497", pw: "1.49.1", brVer: "131.0.6778.33", name: "결제 회귀", plan: "결제 회귀 (웹+API)", planId: 3, suite: "결제 / 주문 · 쿠폰", target: "온마켓 · 스테이징", ver: "v5.11.9-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "2/2", dur: "3분 12초", at: "4일 전 20:30", startedAt: _rd(-4, "20:30"), endedAt: _rd(-4, "20:33"), total: 2, pass: 2, fail: 0, warn: 0, tcs: [
     { key: "4:TC-0031", suiteId: 4, suiteName: "결제 / 주문", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
@@ -310,11 +310,11 @@ const RUNS0 = [
     { key: "7:TC-0031", suiteId: 7, suiteName: "쿠폰", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
     { key: "7:TC-0156", suiteId: 7, suiteName: "쿠폰", id: "TC-0156", name: "쿠폰 적용 상태 반영", rev: 1, v: "PASS", dur: "1.1s" },
   ] },
-  { id: "FRUN-499", pw: "1.49.1", brVer: "131.0.6778.33", name: "API 스모크", plan: "API 스모크 (스테이징)", planId: 4, suite: "API 연동", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "", trig: "이벤트", by: "CI/CD Bot", status: "오류", prog: 0, progt: "연결 실패", dur: "-", at: "오늘 08:50", startedAt: _rd(0, "08:50"), endedAt: "-", total: 0, pass: 0, fail: 0, warn: 0, tcs: [] },
+  { id: "FRUN-499", pw: "1.49.1", brVer: "131.0.6778.33", name: "API 스모크", plan: "API 스모크 (스테이징)", planId: 4, suite: "API 연동", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "", trig: "이벤트", by: "CI/CD Bot", status: "실행 불가", note: "대상 환경에 연결하지 못함", prog: 0, progt: "연결 실패", dur: "-", at: "오늘 08:50", startedAt: _rd(0, "08:50"), endedAt: "-", total: 0, pass: 0, fail: 0, warn: 0, tcs: [] },
   { id: "FRUN-487", pw: "1.49.1", brVer: "131.0.6778.33", name: "로그인 회귀", plan: "로그인 회귀 (스테이징)", planId: 1, suite: "로그인 / 인증 · OTP", target: "온마켓 · 스테이징", ver: "v5.11.9-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "3/3", dur: "3분 22초", at: "6일 전 22:00", startedAt: _rd(-6, "22:00"), endedAt: _rd(-6, "22:03"), total: 3, pass: 2, fail: 0, warn: 1, tcs: [
     { key: "1:TC-0031", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.1s" },
     { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 1, v: "PASS", dur: "3.1s" },
-    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "WARN", cause: "타이밍", dur: "1.0s" },
+    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "WARN", cause: "대기 부족 (불안정)", dur: "1.0s" },
   ] },
   // ── 로그인 회귀 이력 (회귀 비교 · 불안정 시연용) — TC-0203=Flaky, TC-0055=지속 실패 패턴 ──
   { id: "FRUN-501", pw: "1.49.1", brVer: "131.0.6778.33", name: "로그인 회귀", plan: "로그인 회귀 (스테이징)", planId: 1, suite: "로그인 / 인증 · OTP", target: "온마켓 · 스테이징", ver: "v5.11.9-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "3/3", dur: "3분 05초", at: "4일 전 22:00", startedAt: _rd(-4, "22:00"), endedAt: _rd(-4, "22:03"), total: 3, pass: 3, fail: 0, warn: 0, tcs: [
@@ -324,18 +324,18 @@ const RUNS0 = [
   ] },
   { id: "FRUN-504", pw: "1.49.1", brVer: "131.0.6778.33", name: "로그인 회귀", plan: "로그인 회귀 (스테이징)", planId: 1, suite: "로그인 / 인증 · OTP", target: "온마켓 · 스테이징", ver: "v5.11.9-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "3/3", dur: "3분 18초", at: "3일 전 22:00", startedAt: _rd(-3, "22:00"), endedAt: _rd(-3, "22:04"), total: 3, pass: 1, fail: 2, warn: 0, tcs: [
     { key: "1:TC-0031", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 2, v: "FAIL", cause: "로케이터", dur: "3.2s" },
-    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "FAIL", cause: "타이밍", dur: "1.3s" },
+    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 2, v: "FAIL", cause: "요소 변경", dur: "3.2s" },
+    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "FAIL", cause: "대기 부족 (불안정)", dur: "1.3s" },
   ] },
   { id: "FRUN-506", pw: "1.50.0", brVer: "132.0.6834.83", name: "로그인 회귀", plan: "로그인 회귀 (스테이징)", planId: 1, suite: "로그인 / 인증 · OTP", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "3/3", dur: "3분 09초", at: "2일 전 22:00", startedAt: _rd(-2, "22:00"), endedAt: _rd(-2, "22:03"), total: 3, pass: 2, fail: 1, warn: 0, tcs: [
     { key: "1:TC-0031", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 3, v: "FAIL", cause: "로케이터", dur: "3.3s" },
+    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 3, v: "FAIL", cause: "요소 변경", dur: "3.3s" },
     { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "PASS", dur: "1.1s" },
   ] },
   { id: "FRUN-508", pw: "1.50.0", brVer: "132.0.6834.83", name: "로그인 회귀", plan: "로그인 회귀 (스테이징)", planId: 1, suite: "로그인 / 인증 · OTP", target: "온마켓 · 스테이징", ver: "v5.12.0-rc", brow: "Chromium", trig: "스케줄", by: "스케줄", status: "완료", prog: 100, progt: "3/3", dur: "3분 12초", at: "어제 22:00", startedAt: _rd(-1, "22:00"), endedAt: _rd(-1, "22:03"), total: 3, pass: 1, fail: 1, warn: 1, tcs: [
     { key: "1:TC-0031", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0031", name: "로그인 성공", rev: 1, v: "PASS", dur: "1.0s" },
-    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 3, v: "FAIL", cause: "로케이터", dur: "3.1s" },
-    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "WARN", cause: "타이밍", dur: "1.2s" },
+    { key: "1:TC-0055", suiteId: 1, suiteName: "로그인 / 인증", id: "TC-0055", name: "세션 만료 처리", rev: 3, v: "FAIL", cause: "요소 변경", dur: "3.1s" },
+    { key: "6:TC-0203", suiteId: 6, suiteName: "OTP", id: "TC-0203", name: "OTP 재발송", rev: 1, v: "WARN", cause: "대기 부족 (불안정)", dur: "1.2s" },
   ] },
 ];
 /* 완료 실행의 집계를 행에서 다시 낸다 — 손으로 적은 숫자가 행과 어긋나지 않게 (suiteLogic.tally) */

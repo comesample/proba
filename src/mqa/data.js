@@ -186,7 +186,9 @@ export const INIT_MQA_PLANS = [
 ];
 const st = (act, name, s, val) => ({ act, name, val: val || "", st: s || "통과", msg: "" });
 const TC1 = (s) => ({ id: "TC-001", name: "로그인", st: s || "통과", steps: [st("탭", "마이 탭"), st("입력", "아이디 입력칸", "통과", "${계정 ID}"), st("입력", "비밀번호 입력칸", "통과", "${계정 비밀번호}"), st("탭", "로그인 버튼"), st("화면 확인", "\"로그아웃\"")] });
-const TC6 = (fail) => ({ id: "TC-006", name: "장바구니 비우기", st: fail ? "실패" : "통과", ...(fail ? { failStep: 2, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
+/* fail === "warn" → 1차 실패 후 재시도에서 통과 (경고 · 불안정 신호) */
+const TC6 = (fail) => fail === "warn" ? ({ id: "TC-006", name: "장바구니 비우기", st: "경고", retried: 1, warnMsg: "1차 실패 후 재시도에서 통과 — 요소를 찾지 못했습니다 (10초 대기 초과)",
+  steps: [st("탭", "장바구니 탭"), st("탭", "전체 삭제"), st("화면 확인", "\"장바구니가 비어 있습니다\"")] }) : ({ id: "TC-006", name: "장바구니 비우기", st: fail ? "실패" : "통과", ...(fail ? { failStep: 2, failMsg: "요소를 찾지 못했습니다 — 10초 동안 기다렸지만 화면에 없습니다", retried: 1 } : {}),
   steps: [st("탭", "장바구니 탭"), fail ? { ...st("탭", "전체 삭제", "실패"), msg: "요소를 찾지 못했습니다" } : st("탭", "전체 삭제"), fail ? st("화면 확인", "\"장바구니가 비어 있습니다\"", "실행 안 함") : st("화면 확인", "\"장바구니가 비어 있습니다\"")] });
 const RUN = (id, build, at, end, trig, cases) => ({ id, planId: 1, planName: "야간 회귀 · 스테이징", systemId: 1, sysName: "샘플 쇼핑 앱", env: "스테이징", build, devId: "D-3", device: "Galaxy A54 (Android 14) — 10층 실행 PC", trigger: trig, status: "완료", startedAt: at, endedAt: end, gate: 90, retry: 1, note: "", cases, log: [] });
 /* API 스텝에서 실패한 회차 — 화면은 성공했는데 서버 반영이 안 됐다.
@@ -209,5 +211,5 @@ export const INIT_MQA_RUNS = [
   RUN("MRUN-003", "3.2.0", "2026-11-02 02:00", "2026-11-02 02:01", "예약", ROWS(false, false)),
   /* 한 회차에 원인이 둘 — 요소 변경(UI)과 백엔드 결함(API). 담당자가 갈리는 것을 보여준다 */
   RUN("MRUN-002", "3.2.0", "2026-11-01 02:00", "2026-11-01 02:02", "예약", ROWS(true, true)),
-  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", ROWS(false, false)),
+  RUN("MRUN-001", "3.1.4", "2026-10-31 02:00", "2026-10-31 02:01", "예약", ROWS("warn", false)),   // TC-006 재시도 통과 (경고)
 ];

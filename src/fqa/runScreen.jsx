@@ -28,7 +28,7 @@ export function FqaRunScreen({ nav }) {
   const [tab, setTab] = useState("진행");
   const [fSt, setFSt] = useState("전체 상태");
   const [fPlan, setFPlan] = useState("전체 계획");
-  const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "오류": "fail", "실패": "fail" };
+  const sK = { "실행 중": "warn", "대기 중": "info", "완료": "pass", "중단": "draft", "실행 불가": "fail" };
   // 예약 스케줄 = 오늘 시각에 발동하도록 스케줄된 활성 계획 수 (예보 — 발동하면 큐에 '대기'로 쌓인다)
   const _now = new Date();
   const _dow = _now.getDay(), _dom = _now.getDate(), _isWeekday = _dow >= 1 && _dow <= 5;
@@ -61,7 +61,7 @@ export function FqaRunScreen({ nav }) {
   const cnt = (fn) => fqaRuns.filter(fn).length;
   const today = nowStamp().slice(0, 10);
   const dateOf = (r) => String((r.endedAt && r.endedAt !== "-") ? r.endedAt : (r.startedAt || "")).slice(0, 10);
-  const KPI = [["실행 중", cnt((r) => r.status === "실행 중"), "text-amber-600"], ["대기", cnt((r) => r.status === "대기 중"), "text-slate-900"], ["예약 스케줄", scheduledToday, "text-sky-600"], ["완료", cnt((r) => r.status === "완료" && dateOf(r) === today), "text-emerald-600"], ["오류", cnt((r) => r.status === "오류" && dateOf(r) === today), "text-red-600"]];
+  const KPI = [["실행 중", cnt((r) => r.status === "실행 중"), "text-amber-600"], ["대기", cnt((r) => r.status === "대기 중"), "text-slate-900"], ["예약 스케줄", scheduledToday, "text-sky-600"], ["완료", cnt((r) => r.status === "완료" && dateOf(r) === today), "text-emerald-600"], ["오늘 실행 불가", cnt((r) => r.status === "실행 불가" && dateOf(r) === today), "text-red-600"]];
   // 계획의 대상·환경은 ID 참조 → 접점(웹/API)을 조회해 실행 옵션 표시에 사용
   const envRefOf = (plan) => RL.envRefOf(plan, fqaSystems);
   const ctx = { cases: fqaCases, suites: fqaSuites, runs: fqaRuns, systems: fqaSystems };
@@ -96,12 +96,13 @@ export function FqaRunScreen({ nav }) {
     /* 집계는 케이스 기준으로 합친다 — 같은 케이스(로그인 등)가 여러 스위트에서 돌아도 1건. 건너뜀은 분모에서 뺀다 (suiteLogic.tally) */
     const tl = SL.tally(next.tcs || []);
     const total = tl.total, fail = tl.fail, warn = tl.warn;   // warn = flaky(재시도 통과)
+    const tm = (fn, ms) => { const id = setTimeout(fn, ms); (procRef.current[next.id + ":t"] = procRef.current[next.id + ":t"] || []).push(id); };
     updateFqaRun(next.id, { status: "실행 중", prog: 12, progt: Math.max(1, Math.round(total * 0.12)) + "/" + total, dur: "0분 03초", startedAt: nowStamp() });
-    setTimeout(() => updateFqaRun(next.id, { prog: 42, progt: Math.max(1, Math.round(total * 0.42)) + "/" + total, dur: "0분 06초" }), 3000);
-    setTimeout(() => updateFqaRun(next.id, { prog: 74, progt: Math.max(1, Math.round(total * 0.74)) + "/" + total, dur: "0분 10초" }), 6000);
+    tm(() => updateFqaRun(next.id, { prog: 42, progt: Math.max(1, Math.round(total * 0.42)) + "/" + total, dur: "0분 06초" }), 3000);
+    tm(() => updateFqaRun(next.id, { prog: 74, progt: Math.max(1, Math.round(total * 0.74)) + "/" + total, dur: "0분 10초" }), 6000);
     /* 🔑 실행이 끝났다는 사실은 화면을 보고 있지 않은 사람에게도 가야 한다.
        LQA·NQA 는 보내는데 FQA 만 안 보내고 있었다. 목적지는 그 실행의 결과 화면이다. */
-    setTimeout(() => {
+    tm(() => {
       updateFqaRun(next.id, { status: "완료", prog: 100, progt: total + "/" + total, dur: "0분 " + (12 + total) + "초", endedAt: nowStamp(), total, pass: total - fail - warn, warn, fail, skip: tl.skip });
       if (notify) notify({ icon: "play", text: (next.plan || next.name) + " 완료 — PASS " + (total - fail - warn) + " / FAIL " + fail, to: { domain: "FQA", view: "fqa-result-detail", run: next.id } });
       /* 자동 알림 — 공통 발송 조건. '회귀'는 회귀 비교와 같은 기준: 같은 계획의 직전 완료 실행 대비 판정 하락 */
@@ -114,7 +115,17 @@ export function FqaRunScreen({ nav }) {
     }, 9000);
   }, [fqaRuns]);
   const cancelRun = (r) => { if (!window.confirm(r.id + " 실행을 큐에서 취소할까요?")) return; removeFqaRun(r.id); if (selRunId === r.id) setSelRunId(null); flash(r.id + " 취소됨 — 큐에서 제거"); };
-  const stopRun = (r) => { if (!window.confirm(r.id + " 실행을 중지할까요? — 러너에 취소 신호를 보내고 큐에서 제거합니다")) return; removeFqaRun(r.id); if (selRunId === r.id) setSelRunId(null); flash(r.id + " 중지됨 — 러너 취소 · 큐에서 제거"); };
+  /* 중지 — 기록을 지우지 않고 '중단' 으로 남긴다 (MQA 와 같은 규칙). 아직 돌지 않은 케이스는 건너뜀(중단).
+     중단 회차는 통과율 · 회귀 · 불안정 집계에서 빠진다 (완료 회차만 집계) */
+  const stopRun = (r) => {
+    if (!window.confirm(r.id + " 실행을 중지할까요? — 러너에 취소 신호를 보냅니다. 여기까지의 결과는 남습니다")) return;
+    (procRef.current[r.id + ":t"] || []).forEach(clearTimeout);
+    const done = Math.floor(((r.tcs || []).length * (r.prog || 0)) / 100);
+    const tcs = (r.tcs || []).map((t, i) => (i >= done && t.v !== "SKIP" ? { ...t, v: "SKIP", skipWhy: "중단", dur: "-" } : t));
+    const tl = SL.tally(tcs);
+    updateFqaRun(r.id, { status: "중단", endedAt: nowStamp(), tcs, total: tl.total, pass: tl.pass, fail: tl.fail, warn: tl.warn, skip: tl.skip });
+    flash(r.id + " 중단됨 — 여기까지의 결과는 실행 이력에 남습니다");
+  };
   const PlanInfo = ({ name }) => { const pl = fqaPlans.find((p) => p.name === name); if (!pl) return null; const { label } = envRefOf(pl); return <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">계획에서 상속 · 대상 <span className="text-slate-700">{label}</span> <Badge kind={SURF_K[surfLabel(pl)] || "info"}>{surfLabel(pl)}</Badge> · 스위트 <span className="text-slate-700">{planSuiteIds(pl).map((x) => suiteNm(fqaSuites, x)).join(", ") || "없음"}</span></div>; };
   return (
     <div className="space-y-4">
@@ -228,17 +239,17 @@ export function FqaHistoryScreen({ nav }) {
   const planNow = (r) => (fqaPlans.find((p) => p.id === r.planId) || {}).name;      // 계획의 현재(최종) 이름
   const planLabel = (r) => planNow(r) || r.plan || r.name;
   const tK = { "수동": "info", "스케줄": "pass", "이벤트": "warn" };
-  const hK = { "완료": "pass", "오류": "fail" };
+  const hK = { "완료": "pass", "중단": "draft", "실행 불가": "fail" };
   const vK = { "통과": "pass", "실패": "fail", "경고": "warn" };
   const verdict = (r) => { if (r.status !== "완료") return "-"; const tc = r.tcs || []; const hasFail = r.fail > 0 || tc.some((t) => t.v === "FAIL"); const hasWarn = r.warn > 0 || tc.some((t) => t.v === "WARN"); return hasFail ? "실패" : hasWarn ? "경고" : "통과"; };
-  const openRun = (r) => { if (r.status === "오류") { flash(r.id + " 오류로 종료 — 상세 결과 없음"); return; } if (nav) nav("fqa-result-detail", r.id); };
+  const openRun = (r) => { if (r.status === "실행 불가") { flash(r.id + " 실행하지 못함" + (r.note ? " — " + r.note : "") + " · 상세 결과 없음"); return; } if (nav) nav("fqa-result-detail", r.id); };
   const match = (r) => (fSt === "전체 상태" || r.status === fSt) && (fPlan === "전체 계획" || r.plan === fPlan);
-  const hist = fqaRuns.filter((r) => r.status === "완료" || r.status === "오류").filter(match);
+  const hist = fqaRuns.filter((r) => ["완료", "중단", "실행 불가"].includes(r.status)).filter(match);
   return (
     <div className="space-y-4">
-      <PageToolbar desc="완료된 실행 이력 · 행 클릭 시 결과 상세" />
+      <PageToolbar desc="끝난 실행 이력 · 행 클릭 시 결과 상세" />
       <div className="flex items-center gap-2">
-        <div style={{ width: 120 }}><Select value={fSt} onChange={(e) => setFSt(e.target.value)}><option>전체 상태</option><option>완료</option><option>오류</option></Select></div>
+        <div style={{ width: 120 }}><Select value={fSt} onChange={(e) => setFSt(e.target.value)}><option>전체 상태</option><option>완료</option><option>중단</option><option>실행 불가</option></Select></div>
         <div style={{ width: 200 }}><Select value={fPlan} onChange={(e) => setFPlan(e.target.value)}><option>전체 계획</option>{planNames.map((n) => (<option key={n}>{n}</option>))}</Select></div>
       </div>
       <Card className="overflow-hidden">
@@ -256,7 +267,7 @@ export function FqaHistoryScreen({ nav }) {
                 <td><RunTime start={r.startedAt} end={r.endedAt} /></td>
                 <td><Badge kind={hK[r.status]}>{r.status}</Badge></td>
                 <td>{verdict(r) === "-" ? <span className="text-xs text-slate-500">-</span> : <Badge kind={vK[verdict(r)]}>{verdict(r)}</Badge>}</td>
-                <td className="pr-4 text-xs text-slate-500">{r.status === "완료" ? r.pass + "/" + r.total : "-"}</td>
+                <td className="pr-4 text-xs text-slate-500">{r.status === "실행 불가" ? <span className="text-red-700" title={r.note}>실행하지 못함</span> : r.pass + "/" + r.total}</td>
               </tr>
             ))}
           </tbody>
