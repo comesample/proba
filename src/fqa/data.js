@@ -14,8 +14,9 @@ export const FQA_SECTIONS = [
   ] },
   { group: "준비 · 설계", items: [
     { id: "fqa-targets", label: "대상·환경", icon: Plug },
-    { id: "fqa-suites", label: "테스트 스위트", icon: Layers },
+    /* 먼저 있어야 하는 것이 위 — 케이스 → 케이스를 묶는 스위트 */
     { id: "fqa-cases", label: "테스트케이스", icon: Code2 },
+    { id: "fqa-suites", label: "테스트 스위트", icon: Layers },
     { id: "fqa-plan", label: "실행 계획", icon: ClipboardList },
   ] },
   { group: "실행 · 분석", items: [

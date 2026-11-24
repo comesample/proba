@@ -12,10 +12,11 @@ export const MQA_SECTIONS = [
     { id: "mqa-dashboard", label: "대시보드", icon: LayoutDashboard },
   ] },
   { group: "준비 · 설계", items: [
-    { id: "mqa-targets", label: "대상·환경", icon: Plug },
+    /* 먼저 있어야 하는 것이 위 — 기기(앱 실행 확인이 단말을 쓴다) → 대상·환경 → 케이스 → 케이스를 묶는 스위트 → 계획 */
     { id: "mqa-devices", label: "테스트 기기", icon: Smartphone },
-    { id: "mqa-suites", label: "테스트 스위트", icon: Layers },
+    { id: "mqa-targets", label: "대상·환경", icon: Plug },
     { id: "mqa-cases", label: "테스트케이스", icon: Code2 },
+    { id: "mqa-suites", label: "테스트 스위트", icon: Layers },
     { id: "mqa-plan", label: "실행 계획", icon: ClipboardList },
   ] },
   { group: "실행 · 분석", items: [
