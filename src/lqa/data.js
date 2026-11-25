@@ -3,7 +3,7 @@
 // App.jsx에서 분리(2026-07-01). App·LQA 화면이 import.
 // 도메인: 이커머스(온마켓) 고객상담 챗봇 — 중립 데이터
 // ============================================================
-import { ClipboardList, GitCompare, History, LayoutDashboard, MessageSquare, Play, Plug, SlidersHorizontal, FileText } from "lucide-react";
+import { BookOpen, ClipboardList, GitCompare, History, LayoutDashboard, MessageSquare, Play, Plug, SlidersHorizontal, FileText } from "lucide-react";
 
 export const SECTIONS = [
   { group: "모니터링", items: [
@@ -12,6 +12,7 @@ export const SECTIONS = [
   { group: "준비 · 설계", items: [
     { id: "targets", label: "챗봇 연결", icon: Plug },
     { id: "cases", label: "테스트케이스", icon: MessageSquare },
+    { id: "knowledge", label: "지식 소스", icon: BookOpen },
     { id: "settings", label: "Judge · Prompt", icon: SlidersHorizontal },
     { id: "plans", label: "평가 계획", icon: ClipboardList },
   ] },
@@ -88,9 +89,9 @@ export function mkResults(base, seed, dims, gates) {
 /* 계획의 TC 수는 저장하지 않는다 — caseIds가 유일한 진실이고 개수는 거기서 파생된다 */
 export const INIT_PLANS = [
   { id: 1, name: "결제/환불 상담 평가", status: "활성", caseIds: ["LC-0003", "LC-0012", "LC-0018"], sched: "매주 월요일 09:00", schedule: { mode: "schedule", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: {}, summary: "매주 월요일 09:00" },
-    bot: "온마켓 상담봇", promptTpl: "고객상담 평가 v3", passScore: 85, weights: { 관련성: 25, 정확성: 35, 안전성: 25, 일관성: 15 }, opts: { hall: true }, judgeList: ["Claude (sonnet-4-6)", "GPT-4o", "사내 LLM (온프렘)"] },
+    bot: "온마켓 상담봇", promptTpl: "고객상담 평가 v3", passScore: 85, weights: { 관련성: 25, 정확성: 35, 안전성: 25, 일관성: 15 }, kbId: "KB-1", opts: { hall: true }, judgeList: ["Claude (sonnet-4-6)", "GPT-4o", "사내 LLM (온프렘)"] },
   { id: 2, name: "주문/멤버십 안내", status: "활성", caseIds: ["LC-0007", "LC-0021", "LC-0024", "LC-0018"], sched: "매월 1일 09:00", schedule: { mode: "schedule", freq: "monthly", time: "09:00", dow: 1, dom: 1, cron: "0 9 1 * *", tz: "Asia/Seoul", active: true, ev: {}, summary: "매월 1일 09:00" },
-    bot: "온마켓 상담봇", promptTpl: "고객상담 평가 v3", passScore: 85, weights: { 관련성: 30, 정확성: 30, 안전성: 25, 일관성: 15 }, opts: { hall: true }, judgeList: ["Claude (sonnet-4-6)", "GPT-4o"] },
+    bot: "온마켓 상담봇", promptTpl: "고객상담 평가 v3", passScore: 85, weights: { 관련성: 30, 정확성: 30, 안전성: 25, 일관성: 15 }, kbId: "KB-1", opts: { hall: true }, judgeList: ["Claude (sonnet-4-6)", "GPT-4o"] },
   { id: 3, name: "VIP 고객 불만 처리", status: "초안", caseIds: ["LC-0012", "LC-0018"], sched: "예약 없음", schedule: { mode: "manual", freq: "weekly", time: "09:00", dow: 1, dom: 1, cron: "0 9 * * 1", tz: "Asia/Seoul", active: true, ev: {}, summary: "예약 없음" },
     bot: "고객센터 챗봇", promptTpl: "고객상담 평가 v3", passScore: 80, weights: { 관련성: 25, 정확성: 25, 안전성: 30, 일관성: 20 },
     opts: { hall: true, pii: true, policy: true,
@@ -168,4 +169,20 @@ export const INIT_CHATBOTS = [
   { id: "cb2", name: "온마켓 상담봇", env: "스테이징", channel: "Web 대화", endpoint: "https://stg.onmarket.io/chat", auth: "세션 쿠키", status: "연결됨", last: "5분 전" },
   { id: "cb3", name: "온마켓 앱 상담", env: "운영", channel: "REST API", endpoint: "https://api.onmarket.io/app/assist", auth: "API Key", status: "미확인", last: "-" },
   { id: "cb4", name: "고객센터 챗봇", env: "개발", channel: "Mobile 앱", endpoint: "appium://com.onmarket.app/chat", auth: "OAuth 2.0", status: "오류", last: "1시간 전" },
+];
+
+/* 지식 소스 — 평가 대상 챗봇이 답할 근거로 삼는 문서 묶음 (상품 안내 · 약관 · FAQ 등).
+   평가 계획에서 고르면 LLM Judge 가 이 문서를 근거로 '정확성'을 채점한다 — 골든 답변만으로는 놓치는 사실 오류를 잡는다.
+   문서는 올리면 처리(텍스트 추출 · 임베딩)를 거쳐 '완료'가 되어야 채점에 쓰인다 */
+export const INIT_KNOWLEDGE = [
+  { id: "KB-1", name: "온마켓 고객센터 지식문서", desc: "주문 · 배송 · 결제 · 환불 · 멤버십 안내", createdBy: "이민준", createdAt: "2026-05-20 10:12",
+    docs: [
+      { name: "온마켓_이용약관_2026.pdf", size: "1.2 MB", status: "완료", by: "이민준", at: "2026-05-20 10:14" },
+      { name: "환불_교환_정책_v4.docx", size: "340 KB", status: "완료", by: "이민준", at: "2026-05-20 10:14" },
+      { name: "멤버십_혜택안내.pptx", size: "4.8 MB", status: "완료", by: "박지영", at: "2026-06-02 15:30" },
+      { name: "배송_FAQ.xlsx", size: "92 KB", status: "완료", by: "박지영", at: "2026-06-02 15:31" },
+      { name: "구_배송정책_스캔본.pdf", size: "9.6 MB", status: "실패", by: "박지영", at: "2026-06-02 15:32", why: "텍스트를 추출할 수 없습니다 (스캔 이미지)" },
+    ] },
+  { id: "KB-2", name: "고객센터 상담 매뉴얼", desc: "VIP · 불만 처리 응대 기준", createdBy: "최서연", createdAt: "2026-06-05 09:40",
+    docs: [{ name: "VIP_응대매뉴얼_2026.pdf", size: "2.1 MB", status: "완료", by: "최서연", at: "2026-06-05 09:41" }] },
 ];

@@ -913,7 +913,7 @@ export function Dashboard() {
   );
 }
 export function Plans() {
-  const { plans, cases, prompts, openModal, toast, goto, chatbots, models, updatePlan, removePlan, jiraConfig, pendingSelect, setPendingSelect, goTo } = useApp();
+  const { plans, cases, prompts, openModal, toast, goto, chatbots, models, updatePlan, removePlan, jiraConfig, pendingSelect, setPendingSelect, goTo, knowledge = [] } = useApp();
   // TC 수는 계획에 저장하지 않고 caseIds에서 파생 — 삭제된 케이스는 자동으로 빠진다
   const caseCount = (p) => planCases(cases, p).length;
   /* 계획을 만들려면 대상 챗봇과 승인된 케이스가 있어야 한다 — NewPlanForm이 요구하는 것과 같은 기준이다.
@@ -933,6 +933,7 @@ export function Plans() {
   const [tpl, setTpl] = useState((cur || {}).promptTpl || (prompts[0] || {}).name || "");
   const [pass, setPass] = useState((cur || {}).passScore || 85);
   const [bot, setBot] = useState((cur || {}).bot || (chatbots[0] && chatbots[0].name) || "");
+  const [kbId, setKbId] = useState((cur || {}).kbId || "");   // 지식 소스(선택) — Judge 가 근거로 쓰는 문서
   const [planStatus, setPlanStatus] = useState((cur || {}).status || "초안");
   const [name, setName] = useState((cur || {}).name);
   const [weights, setWeights] = useState({});
@@ -967,6 +968,7 @@ export function Plans() {
     setTpl(seedTpl);
     setPass((cur || {}).passScore || 85);
     setBot((cur || {}).bot || (chatbots[0] && chatbots[0].name) || "");
+    setKbId((cur || {}).kbId || "");
     setPlanStatus((cur || {}).status || "초안");
     setName((cur || {}).name);
     setSched((cur || {}).schedule || DEFAULT_SCHED);
@@ -983,13 +985,14 @@ export function Plans() {
     if (needPolicyText && !policyText.trim()) { toast(policy ? "금지 행위를 입력해야 정책 위반을 판정할 수 있습니다" : "선택한 템플릿이 {{policy}}를 요구합니다 — 안전 정책을 입력하세요", "warn"); return; }
     const judgeList = Object.keys(jsel).filter((k) => jsel[k]);
     const nm = name.trim() || (cur || {}).name;
-    updatePlan((cur || {}).id, { name: nm, bot, promptTpl: tpl, passScore: pass, weights, opts: { hall, pii, policy, policyText }, judgeList, status: planStatus, schedule: sched, sched: (sched && sched.summary) || "예약 없음", jira });
+    updatePlan((cur || {}).id, { name: nm, bot, kbId, promptTpl: tpl, passScore: pass, weights, opts: { hall, pii, policy, policyText }, judgeList, status: planStatus, schedule: sched, sched: (sched && sched.summary) || "예약 없음", jira });
     toast(nm + " 설정이 저장되었습니다", "ok");
   };
   const baseJudges = defJudges(cur);
   const dirty =
     name !== (cur || {}).name ||
     bot !== ((cur || {}).bot || (chatbots[0] && chatbots[0].name) || "") ||
+    kbId !== ((cur || {}).kbId || "") ||
     planStatus !== ((cur || {}).status || "초안") ||
     tpl !== ((cur || {}).promptTpl || ((prompts[0] || {}).name) || "") ||
     pass !== ((cur || {}).passScore || 85) ||
@@ -1050,6 +1053,8 @@ export function Plans() {
           <div className="space-y-4">
             <Field label="대상 챗봇"><Select value={bot} onChange={(e) => setBot(e.target.value)}>{[...new Set(chatbots.map((c) => c.name))].map((n) => <option key={n}>{n}</option>)}</Select></Field>
             <Field label="테스트케이스"><div className="flex items-center gap-2"><div className="flex-1 rounded-lg bg-slate-100 border border-slate-300 px-3 py-2 text-sm text-slate-800">{caseCount(cur)}건 포함 <span className="text-xs text-slate-500">/ 전체 {cases.length}건</span></div><Btn onClick={() => openModal("planCases", { planId: cur.id })}>선택</Btn></div></Field>
+            {/* 지식 소스 — 고르면 Judge 가 이 문서를 근거로 정확성을 채점한다. '완료' 문서만 쓰인다 */}
+            <Field label="지식 소스 (선택)" hint="Judge 가 이 문서를 근거로 채점합니다"><Select value={kbId} onChange={(e) => setKbId(e.target.value)}><option value="">사용 안 함</option>{knowledge.map((k) => <option key={k.id} value={k.id}>{k.name} · 문서 {(k.docs || []).filter((d) => d.status === "완료").length}</option>)}</Select></Field>
             <Field label="Judge 모델 (다중)">
               <div className="space-y-2">
                 {models.filter((m) => m.status === "활성").map((j) => (
@@ -1061,8 +1066,7 @@ export function Plans() {
             </Field>
             <Field label="안전 게이트">
               <div className="text-xs text-slate-500 -mt-1 mb-2">위반 시 점수와 무관하게 해당 케이스 즉시 불합격</div>
-              {/* 환각 탐지는 AI 품질 평가의 본질 — 끌 수 없다 */}
-              <div className="flex items-center justify-between text-sm text-slate-700 mb-2"><span>환각(Hallucination) 탐지</span><Toggle on disabled /></div>
+              {/* 환각 탐지는 늘 한다 — 끌 수 없으므로 여기에 표시하지 않는다 (결과 · 대시보드에는 나온다) */}
               <div className="flex items-center justify-between text-sm text-slate-700 mb-2"><span>PII 노출 탐지</span><Toggle on={pii} onClick={() => setPii(!pii)} /></div>
               <div className="flex items-center justify-between text-sm text-slate-700"><span>정책 위반 탐지</span><Toggle on={policy} onClick={() => setPolicy(!policy)} /></div>
               {needPolicyText && (
@@ -2204,7 +2208,7 @@ export function MembersView() {
   };
   const tName = (tenants.find((t) => t.id === tenantId) || {}).name;
   const MENU_GROUPS = [
-    { id: "LQA", label: "AI 품질", menus: ["대시보드", "챗봇 연결", "테스트케이스", "Judge · Prompt", "평가 계획", "평가 실행", "실행 이력", "회귀 비교"] },
+    { id: "LQA", label: "AI 품질", menus: ["대시보드", "챗봇 연결", "테스트케이스", "지식 소스", "Judge · Prompt", "평가 계획", "평가 실행", "실행 이력", "회귀 비교"] },
     { id: "FQA", label: "웹 테스트", menus: ["대시보드", "대상·환경", "테스트케이스", "테스트 스위트", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "MQA", label: "앱 테스트", menus: ["대시보드", "테스트 기기", "대상·환경", "테스트케이스", "테스트 스위트", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "NQA", label: "부하", menus: ["대시보드", "환경", "부하 테스트", "측정 실행", "실행 이력"] },

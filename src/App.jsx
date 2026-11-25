@@ -18,7 +18,8 @@ import { AppCtx, useApp } from "./common/context.js";
 import { ConsoleShell, NewTenantForm, AssignAdminForm, NewModelForm, NewOperatorForm } from "./common/console.jsx";
 
 /* ============================ static data ============================ */
-import { SECTIONS, NAV, TREND, METRICS, INIT_CASES, APPROVED_INIT, mkResults, INIT_PLANS, INIT_RUNS, INIT_JUDGES, PROMPT_VARS, INIT_PROMPTS, INIT_DEFECTS, INIT_CHATBOTS, LQA_HIDDEN } from "./lqa/data.js";
+import { SECTIONS, NAV, TREND, METRICS, INIT_CASES, APPROVED_INIT, mkResults, INIT_PLANS, INIT_RUNS, INIT_JUDGES, PROMPT_VARS, INIT_PROMPTS, INIT_DEFECTS, INIT_CHATBOTS, INIT_KNOWLEDGE, LQA_HIDDEN } from "./lqa/data.js";
+import { KnowledgeScreen, AddKnowledgeForm } from "./lqa/knowledge.jsx";
 /* 로고 — 실서비스에서 복사. 🔑 "/images/…" 절대 경로는 vite base("/proba/") 때문에 404 — import 로 불러 빌드가 경로를 맞추게 한다 */
 import logoUrl from "./assets/proba-logo.png";
 import { DOMAINS, COMMON_SECTIONS, MEMBERS_ITEM, INIT_TENANTS, INIT_USERS, INIT_MODELS, INIT_VARIABLES, INIT_DATASETS } from "./common/data.js";
@@ -118,6 +119,7 @@ export default function App() {
   const [judges, setJudges] = useState(INIT_JUDGES);
   const [prompts, setPrompts] = useState(INIT_PROMPTS);
   const [chatbots, setChatbots] = useState(stampSeeds(INIT_CHATBOTS));
+  const [knowledge, setKnowledge] = useState(INIT_KNOWLEDGE);   // 지식 소스 — 평가 계획이 kbId 로 참조
   const [pendingSelect, setPendingSelect] = useState(null);
   /* 역할 전환은 데모용 — 기본은 Owner(고객사 QA 리더) 시점이다 */
   const ROLE_OPTS = [{ id: "admin", label: "Super Admin" }, { id: "tadmin", label: "Owner" }, { id: "user", label: "Member" }];
@@ -291,6 +293,9 @@ export default function App() {
     pendingSelect, setPendingSelect,
     /* 목록 화면으로 가면서 필터를 미리 건다 (대시보드 KPI → 결함 · 테스트케이스). 이동이 취소되면 필터도 남기지 않는다 */
     goList: (v, preset) => { if (goTo(v)) setPendingSelect(preset); },
+    knowledge, addKnowledge: (k) => setKnowledge((x) => [...x, withCreate(k)]),
+    updateKnowledge: (id, patch) => setKnowledge((x) => x.map((k) => (k.id === id ? { ...k, ...(typeof patch === "function" ? patch(k) : patch) } : k))),
+    removeKnowledge: (id) => setKnowledge((x) => x.filter((k) => k.id !== id)),
     chatbots, addChatbot: (c) => { setChatbots((x) => [withCreate(c), ...x]); setPendingSelect({ kind: "chatbot", id: c.id }); }, updateChatbot: (id, patch) => setChatbots((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate(patch) } : c))), removeChatbot: (id) => setChatbots((x) => x.filter((c) => c.id !== id)),
     setChatbotStatus: (id, status) => setChatbots((x) => x.map((c) => (c.id === id ? { ...c, ...withUpdate({ status }) } : c))),
     role, setRole, space, setSpace, domain, setDomain, tenants, tenantId, setTenantId,
@@ -314,7 +319,7 @@ export default function App() {
   const cur = [...ALL_SECTIONS.flatMap((s) => s.items), ...FQA_HIDDEN, ...MQA_HIDDEN, ...LQA_HIDDEN, MEMBERS_ITEM].find((n) => n.id === view) || NAV[0];
   const curSection = ((ALL_SECTIONS.find((s) => s.items.some((i) => i.id === view)) || {}).group) || (FQA_HIDDEN.find((i) => i.id === view) || {}).group || (MQA_HIDDEN.find((i) => i.id === view) || {}).group || (LQA_HIDDEN.find((i) => i.id === view) || {}).group;
   const tenantName = (tenants.find((t) => t.id === tenantId) || {}).name;
-  const screens = { dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <LqaRunScreen />, "lqa-result": <LqaResultScreen />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "mqa-dashboard": <MqaDashboardScreen nav={mqaNav} />, "mqa-targets": <MqaTargetScreen />, "mqa-devices": <MqaDevicesScreen />, "mqa-suites": <MqaSuiteScreen />, "mqa-cases": <MqaCasesScreen />, "mqa-plan": <MqaPlanScreen />, "mqa-run": <MqaRunScreen nav={mqaNav} />, "mqa-history": <MqaHistoryScreen nav={mqaNav} />, "mqa-regression": <MqaResultScreen mode="회귀" nav={mqaNav} />, "mqa-flaky": <MqaResultScreen mode="불안정" nav={mqaNav} />, "mqa-result-detail": <MqaResultScreen mode="상세" nav={mqaNav} runId={mqaResultRun} back={() => setView(mqaResultFrom || "mqa-history")} backLabel={{ "mqa-run": "실행", "mqa-history": "실행 이력", "mqa-dashboard": "대시보드", "mqa-regression": "회귀 비교" }[mqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen /> };
+  const screens = { knowledge: <KnowledgeScreen />, dashboard: <Dashboard />, plans: <Plans />, cases: <Cases />, run: <LqaRunScreen />, "lqa-result": <LqaResultScreen />, history: <RunHistory />, compare: <Compare />, variables: <VariablesScreen />, datasets: <DatasetsScreen />, defects: <Defects />, report: <Report />, targets: <Targets />, settings: <Settings />, members: <MembersView />, "fqa-dashboard": <FqaDashboardScreen nav={fqaNav} />, "fqa-targets": <FqaTargetScreen />, "fqa-suites": <FqaSuiteScreen />, "fqa-cases": <FqaCasesScreen />, "fqa-plan": <FqaPlanScreen />, "fqa-run": <FqaRunScreen nav={fqaNav} />, "fqa-history": <FqaHistoryScreen nav={fqaNav} />, "fqa-regression": <FqaResultScreen mode="회귀" nav={fqaNav} />, "fqa-flaky": <FqaResultScreen mode="불안정" nav={fqaNav} />, "fqa-result-detail": <FqaResultScreen mode="상세" runId={fqaResultRun} back={() => setView(fqaResultFrom || "fqa-history")} backLabel={{ "fqa-run": "실행", "fqa-history": "실행 이력", "fqa-dashboard": "대시보드", "fqa-regression": "회귀 비교" }[fqaResultFrom] || "뒤로"} />, "mqa-dashboard": <MqaDashboardScreen nav={mqaNav} />, "mqa-targets": <MqaTargetScreen />, "mqa-devices": <MqaDevicesScreen />, "mqa-suites": <MqaSuiteScreen />, "mqa-cases": <MqaCasesScreen />, "mqa-plan": <MqaPlanScreen />, "mqa-run": <MqaRunScreen nav={mqaNav} />, "mqa-history": <MqaHistoryScreen nav={mqaNav} />, "mqa-regression": <MqaResultScreen mode="회귀" nav={mqaNav} />, "mqa-flaky": <MqaResultScreen mode="불안정" nav={mqaNav} />, "mqa-result-detail": <MqaResultScreen mode="상세" nav={mqaNav} runId={mqaResultRun} back={() => setView(mqaResultFrom || "mqa-history")} backLabel={{ "mqa-run": "실행", "mqa-history": "실행 이력", "mqa-dashboard": "대시보드", "mqa-regression": "회귀 비교" }[mqaResultFrom] || "뒤로"} />, "nqa-dashboard": <NqaDashboardScreen nav={(v) => setView(v)} />, "nqa-targets": <NqaTargetScreen />, "nqa-scenarios": <NqaScenarioScreen />, "nqa-run": <NqaRunScreen nav={(v) => setView(v)} />, "nqa-history": <NqaHistoryScreen /> };
   const tk = { ok: "border-emerald-200 bg-emerald-50 text-emerald-800", warn: "border-amber-200 bg-amber-50 text-amber-800", err: "border-red-200 bg-red-50 text-red-800", info: "border-slate-200 bg-white text-slate-800" };
   const nIcon = { play: Play, bug: Bug, send: Send };
 
@@ -418,6 +423,7 @@ export default function App() {
             addPrompt: ["Prompt 템플릿 " + (modal.data ? "편집" : "추가"), <AddPromptForm close={close} data={modal.data} />],
             planCases: ["평가 계획 케이스 선택", <PlanCasesForm close={close} data={modal.data} />, true],
             addChatbot: ["챗봇 " + (modal.data ? "편집" : "연결 추가"), <AddChatbotForm close={close} data={modal.data} />, false],
+            addKnowledge: ["지식 소스 추가", <AddKnowledgeForm close={close} />],
             jiraConfig: ["Jira 연동 설정", <JiraConfigForm close={close} />, true],
             newTenant: ["조직 추가", <NewTenantForm close={close} />],
             assignAdmin: ["Owner 지정", <AssignAdminForm close={close} data={modal.data} />],
