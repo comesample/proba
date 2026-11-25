@@ -298,7 +298,7 @@ export function JiraForm({ close, data }) {
         <Toggle on={jira} onClick={() => { if (!jconn) { toast("Jira 미연동 — 결함 화면의 ‘Jira 연동’에서 먼저 연결하세요", "warn"); return; } setJira(!jira); }} />
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Field label="영역"><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="LQA">AI 품질</option><option value="FQA">웹 테스트</option><option value="MQA">앱 테스트</option><option value="NQA">부하</option></Select></Field>
+        <Field label="영역"><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="LQA">AI 품질</option><option value="MQA">앱 테스트</option><option value="FQA">웹 테스트</option><option value="NQA">부하</option></Select></Field>
         <Field label="심각도"><Select value={sev} onChange={(e) => { setSev(e.target.value); setPrio(prioMap[e.target.value] || "High"); }}><option>Critical</option><option>Major</option><option>Minor</option></Select></Field>
         <Field label="담당자"><Select value={assignee} onChange={(e) => setAssignee(e.target.value)}><option>QA Lead</option><option>챗봇 PO</option><option>미지정</option></Select></Field>
       </div>
@@ -1953,7 +1953,7 @@ export function Defects() {
   return (
     <div className="space-y-4">
       <PageToolbar desc="Jira 연계 · 전 도메인 공통">
-        <div style={{ width: 140 }}><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="전체">전체</option><option value="LQA">AI 품질</option><option value="FQA">웹 테스트</option><option value="MQA">앱 테스트</option><option value="NQA">부하</option></Select></div>
+        <div style={{ width: 140 }}><Select value={dom} onChange={(e) => setDom(e.target.value)}><option value="전체">전체</option><option value="LQA">AI 품질</option><option value="MQA">앱 테스트</option><option value="FQA">웹 테스트</option><option value="NQA">부하</option></Select></div>
         <div style={{ width: 130 }}><Select value={stf} onChange={(e) => setStf(e.target.value)}><option value="전체">전체 상태</option><option value="해결 전">해결 전</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="Resolved">Resolved</option></Select></div>
         <Btn icon={SlidersHorizontal} onClick={() => openModal("jiraConfig")}>Jira 연동</Btn>
         <Btn kind="primary" icon={Bug} onClick={() => openModal("jira", { tc: "수동", sev: "Major", title: "" })}>이슈 등록</Btn>
@@ -2209,8 +2209,8 @@ export function MembersView() {
   const tName = (tenants.find((t) => t.id === tenantId) || {}).name;
   const MENU_GROUPS = [
     { id: "LQA", label: "AI 품질", menus: ["대시보드", "챗봇 연결", "테스트케이스", "지식 소스", "Judge · Prompt", "평가 계획", "평가 실행", "실행 이력", "회귀 비교"] },
-    { id: "FQA", label: "웹 테스트", menus: ["대시보드", "대상·환경", "테스트케이스", "테스트 스위트", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "MQA", label: "앱 테스트", menus: ["대시보드", "테스트 기기", "대상·환경", "테스트케이스", "테스트 스위트", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
+    { id: "FQA", label: "웹 테스트", menus: ["대시보드", "대상·환경", "테스트케이스", "테스트 스위트", "실행 계획", "실행", "실행 이력", "회귀 비교", "불안정(Flaky)"] },
     { id: "NQA", label: "부하", menus: ["대시보드", "환경", "부하 테스트", "측정 실행", "실행 이력"] },
     { id: "COM", label: "공통", menus: ["결함", "리포트·알림", "데이터셋", "변수"] },
   ];
